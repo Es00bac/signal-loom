@@ -628,6 +628,20 @@ describe('external open queue', () => {
     expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
   });
 
+  it('returns committed again when the renderer retries after losing the first commit response', async () => {
+    const { createExternalOpenQueue } = await loadExternalOpenModule();
+    const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });
+    queue.enqueueValue('/home/user/comic.sloom', context);
+    const authorization = queue.authorizeRenderer('renderer-a');
+    const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
+    if (offer.status !== 'offered') throw new Error('Expected an offered intent.');
+    const request = { rendererId: 'renderer-a', epoch: authorization.epoch, intentId: offer.intent.id };
+    queue.acceptDocumentIntent(request);
+
+    expect(queue.commitDocumentIntent(request)).toMatchObject({ status: 'committed' });
+    expect(queue.commitDocumentIntent(request)).toMatchObject({ status: 'committed' });
+  });
+
   it('authorizes one renderer epoch and rejects stale or competing drains', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
     const queue = createExternalOpenQueue({ canonicalizeFile: canonicalizeByPath });

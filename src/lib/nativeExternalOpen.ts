@@ -17,9 +17,14 @@ export interface NativeExternalOpenHandlers {
   /** Apply a prepared project after main acknowledges acceptance. */
   applyProject: (result: NativeProjectFileResult) => Promise<void> | void;
   /** Publish renderer-local path/scratch ownership only after main commits. */
-  onProjectCommitted: (result: NativeProjectFileResult) => Promise<void> | void;
+  onProjectCommitted: (
+    result: NativeProjectFileResult,
+    transition: NativeExternalOpenTransitionResult,
+  ) => Promise<void> | void;
   applyPaper: (bytes: Uint8Array, filePath?: string) => Promise<void> | void;
   onError: (context: NativeExternalOpenErrorContext) => Promise<void> | void;
+  /** Roll back renderer-local accepted project state if the consumer is disposed mid-commit. */
+  onProjectAbandoned?: () => Promise<void> | void;
 }
 
 export interface NativeExternalOpenConsumerOptions {
@@ -121,6 +126,7 @@ export function registerNativeExternalOpenConsumer(
         const commitAcceptedIntent = async (): Promise<boolean> => {
           let lastError: unknown;
           let committed = false;
+          let committedTransition: NativeExternalOpenTransitionResult | undefined;
           for (let attempt = 0; attempt <= commitRetryDelaysMs.length; attempt += 1) {
             if (disposed) return false;
             try {
@@ -131,6 +137,7 @@ export function registerNativeExternalOpenConsumer(
               }
               assertTransition(result, 'committed');
               committed = true;
+              committedTransition = result;
               break;
             } catch (error) {
               lastError = error;
@@ -148,7 +155,7 @@ export function registerNativeExternalOpenConsumer(
           if (!committed || disposed) return false;
           if (intent.kind === 'project' && intent.result) {
             try {
-              await handlers.onProjectCommitted(intent.result);
+              await handlers.onProjectCommitted(intent.result, committedTransition!);
             } catch (error) {
               await handlers.onError({
                 kind: intent.kind,
@@ -213,7 +220,9 @@ export function registerNativeExternalOpenConsumer(
     disposed = true;
     unsubscribe?.();
     void chain.finally(() => {
-      if (epoch) void bridge?.releaseExternalOpenRenderer?.(epoch);
+      void Promise.resolve(handlers.onProjectAbandoned?.()).finally(() => {
+        if (epoch) void bridge?.releaseExternalOpenRenderer?.(epoch);
+      });
     });
   };
 }

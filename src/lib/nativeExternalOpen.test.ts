@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { registerNativeExternalOpenConsumer, type NativeExternalOpenErrorContext } from './nativeExternalOpen';
 import type {
   NativeExternalOpenNextResult,
+  NativeExternalOpenTransitionResult,
   NativeProjectFileResult,
   SignalLoomNativeBridge,
 } from './nativeApp';
@@ -13,7 +14,10 @@ function createHandlers() {
   return {
     authorizeProject: vi.fn(async (_result: NativeProjectFileResult): Promise<boolean | void> => {}),
     applyProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
-    onProjectCommitted: vi.fn(async (_result: NativeProjectFileResult) => {}),
+    onProjectCommitted: vi.fn(async (
+      _result: NativeProjectFileResult,
+      _transition: NativeExternalOpenTransitionResult,
+    ) => {}),
     applyPaper: vi.fn(async (_bytes: Uint8Array, _filePath?: string) => {}),
     onError: vi.fn(async (_context: NativeExternalOpenErrorContext) => {}),
   };
@@ -167,7 +171,10 @@ describe('registerNativeExternalOpenConsumer', () => {
     expect(handlers.applyProject).not.toHaveBeenCalled();
     expect(bridge.acceptExternalOpenIntent).not.toHaveBeenCalled();
     expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(1);
-    expect(handlers.onProjectCommitted).toHaveBeenCalledWith(projectResult);
+    expect(handlers.onProjectCommitted).toHaveBeenCalledWith(
+      projectResult,
+      expect.objectContaining({ status: 'committed' }),
+    );
   });
 
   it('autonomously retries a transient post-apply commit failure without rerunning replacement', async () => {
@@ -281,6 +288,39 @@ describe('registerNativeExternalOpenConsumer', () => {
     expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(1);
     expect(handlers.onError).not.toHaveBeenCalled();
     expect(bridge.releaseExternalOpenRenderer).toHaveBeenCalledWith('epoch-1');
+  });
+
+  it('asks the renderer to roll back accepted local state before releasing a disposed epoch', async () => {
+    let releaseWait = () => {};
+    const retryGate = new Promise<void>((resolve) => { releaseWait = resolve; });
+    const projectResult = { canceled: false, filePath: '/reload.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'abandoned-intent', kind: 'project', filePath: '/reload.sloom', result: projectResult },
+    }]);
+    vi.mocked((bridge as SignalLoomNativeBridge).commitExternalOpenIntent!)
+      .mockRejectedValue(new Error('renderer connection interrupted'));
+    const events: string[] = [];
+    const handlers = {
+      ...createHandlers(),
+      onProjectAbandoned: vi.fn(async () => { events.push('rollback-renderer'); }),
+    };
+    vi.mocked((bridge as SignalLoomNativeBridge).releaseExternalOpenRenderer!).mockImplementation(async () => {
+      events.push('release-main');
+      return { status: 'revoked' };
+    });
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers, {
+      commitRetryDelaysMs: [10],
+      wait: () => retryGate,
+    });
+    await flushMicrotasks(20);
+    dispose();
+    releaseWait();
+    await flushMicrotasks(30);
+
+    expect(handlers.onProjectAbandoned).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['rollback-renderer', 'release-main']);
   });
 
   it('rolls back an accepted intent when renderer application fails before commit', async () => {

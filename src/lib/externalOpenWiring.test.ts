@@ -50,11 +50,12 @@ describe('desktop external-open wiring guards', () => {
 
     expect(appSource).toContain('registerNativeExternalOpenConsumer(');
     // Shared dirty Paper/Image authorization precedes acceptance; renderer path follows commit.
-    expect(appSource).toMatch(/authorizeProject: authorizeCurrentProjectReplacement/);
-    expect(appSource).toContain('requestProjectReplacementDecision');
-    expect(appSource).toContain('runProjectLifecycleTransition');
-    expect(appSource).toMatch(/applyProject[\s\S]{0,700}resetSourceLibraryNativeSyncTracking\(\);[\s\S]{0,250}restoreProjectDocument\(result\.document, \{ allowDirtyImageReplacement: true \}\)/);
-    expect(appSource).toMatch(/onProjectCommitted[\s\S]{0,300}setNativeProjectPath\(result\.filePath\);/);
+    expect(appSource).toMatch(/authorizeProject: async \(\) => \{[\s\S]{0,700}requestProjectReplacementAuthorization/);
+    expect(appSource).toContain('lossPreventionSaveRef.current()');
+    expect(appSource).toContain('imageReplacementAuthorizationRef.current(projection)');
+    expect(appSource).toMatch(/applyProject[\s\S]{0,900}prepareProjectDocumentTransaction\(result\.document, \{[\s\S]{0,300}imageAuthorization:[\s\S]{0,200}paperAuthorization:[\s\S]{0,200}transactionBookkeeping: 'reset-source-library-native-sync'[\s\S]{0,300}assertCanCommit\(\)[\s\S]{0,150}\.commit\(\)/);
+    expect(appSource).toMatch(/onProjectCommitted[\s\S]{0,500}setNativeProjectPath\(result\.filePath\);[\s\S]{0,500}adoptSnapshot\(\{[\s\S]{0,200}authority: transition\.authority/);
+    expect(appSource).toContain('beginProjectAuthorityTransition()');
     // Paper entries reuse the canonical .slppr import transaction and land in the Paper workspace.
     expect(appSource).toMatch(/applyPaper[\s\S]{0,700}deserializeSlppr\(bytes, paperAssetRepository\)[\s\S]{0,300}openDocumentJson\(JSON\.stringify\(doc\)\)[\s\S]{0,200}setWorkspaceView\('paper'\);/);
     // The consumer must wait for the startup restore to settle so external opens win the race.

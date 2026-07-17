@@ -1621,6 +1621,7 @@ function FlowApp() {
         return;
       }
       case 'file:save': {
+        if (projectSwitchInProgressRef.current) return;
         if (!bridge) {
           await downloadCurrentProjectDocument();
           return;
@@ -1665,6 +1666,7 @@ function FlowApp() {
         return;
       }
       case 'file:save-as': {
+        if (projectSwitchInProgressRef.current) return;
         if (!bridge) {
           await downloadCurrentProjectDocument();
           return;
@@ -2501,6 +2503,8 @@ function FlowApp() {
     }
 
     let replacementAuthorization: ProjectReplacementAuthorization | undefined;
+    let rendererTransaction: Awaited<ReturnType<typeof prepareProjectDocumentTransaction>> | undefined;
+    let projectCommitPublished = false;
     return registerNativeExternalOpenConsumer(getSignalLoomNativeBridge(), {
       authorizeProject: async () => {
         replacementAuthorization = await requestProjectReplacementAuthorization({
@@ -2517,17 +2521,26 @@ function FlowApp() {
         const authorization = replacementAuthorization;
         replacementAuthorization = undefined;
         if (!authorization) throw new Error('Project replacement authorization expired.');
-        await restoreProjectDocument(result.document, {
+        rendererTransaction = await prepareProjectDocumentTransaction(result.document, {
           imageAuthorization: authorization.image,
           paperAuthorization: authorization.paper,
           transactionBookkeeping: 'reset-source-library-native-sync',
         });
+        rendererTransaction.assertCanCommit();
+        rendererTransaction.commit();
       },
-      onProjectCommitted: async (result) => {
+      onProjectCommitted: async (result, transition) => {
+        rendererTransaction?.finalize();
+        rendererTransaction = undefined;
+        projectCommitPublished = true;
         setNativeScratchDirectoryPath(result.scratchDirectoryPath);
         setNativeProjectPath(result.filePath);
-        const adoption = await getProjectAuthorityClient().reloadFromDisk();
-        if (!adoption.ok) throw new Error(adoption.error ?? 'The opened project could not be adopted.');
+        if (!transition.authority) throw new Error('The opened project committed without an authority receipt.');
+        await getProjectAuthorityClient().adoptSnapshot({
+          authority: transition.authority,
+          filePath: transition.filePath ?? result.filePath,
+        });
+        projectCommitPublished = false;
       },
       applyPaper: async (bytes) => {
         const doc = await deserializeSlppr(bytes, paperAssetRepository);
@@ -2537,16 +2550,35 @@ function FlowApp() {
         setWorkspaceView('paper');
       },
       onError: async ({ kind, message }) => {
-        if (kind === 'project') getProjectAuthorityClient().noteAdoptionFailure(message);
+        if (rendererTransaction) {
+          await rendererTransaction.rollback();
+          rendererTransaction = undefined;
+        } else if (kind === 'project' && projectCommitPublished) {
+          getProjectAuthorityClient().noteAdoptionFailure(message);
+        }
+        replacementAuthorization = undefined;
         await showAlertDialog({
           title: kind === 'paper' ? 'Open Paper Failed' : 'Open Project Failed',
           message,
           tone: 'danger',
         });
       },
+      onProjectAbandoned: async () => {
+        replacementAuthorization = undefined;
+        if (!rendererTransaction) return;
+        const endAbandonedTransition = beginProjectAuthorityTransition();
+        try {
+          await rendererTransaction.rollback();
+          rendererTransaction = undefined;
+        } finally {
+          endAbandonedTransition();
+        }
+      },
     }, {
       runProjectTransition: async <T,>(operation: () => Promise<T>): Promise<T> => {
-        if (projectSwitchInProgressRef.current) return undefined as T;
+        // A native callback can arrive while File Open/New is finishing. Keep the queued wakeup
+        // alive until that authority transaction releases instead of silently dropping it.
+        while (projectSwitchInProgressRef.current) await delay(16);
         projectSwitchInProgressRef.current = true;
         const endAuthorityTransition = beginProjectAuthorityTransition();
         try {

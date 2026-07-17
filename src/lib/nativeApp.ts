@@ -490,6 +490,9 @@ export interface NativeExternalOpenTransitionRequest {
 export interface NativeExternalOpenTransitionResult {
   status: 'accepted' | 'rejected' | 'committed' | 'revoked' | 'unauthorized' | 'not-found' | 'invalid-state' | 'error';
   error?: string;
+  authority?: NativeProjectAuthorityDescriptor;
+  filePath?: string;
+  scratchDirectoryPath?: string;
 }
 
 export interface NativePaperSaveResult {

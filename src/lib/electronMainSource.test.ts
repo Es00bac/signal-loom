@@ -362,22 +362,23 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toContain("ipcMain.handle('signal-loom:external-open-accept'");
     expect(source).toContain("ipcMain.handle('signal-loom:external-open-reject'");
     expect(source).toContain("ipcMain.handle('signal-loom:external-open-commit'");
-    expect(source).toMatch(/async function prepareProjectDocumentFromPath[\s\S]*prepareProjectDocumentForNativeOpen/);
+    expect(source).toMatch(/async function openProjectDocumentFromBytes[\s\S]*prepareProjectDocumentForNativeOpen/);
     const offerHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-next'"));
     expect(offerHandler.slice(0, 2400)).not.toContain('setCurrentProjectAssetRoots(');
     expect(offerHandler.slice(0, 2400)).not.toContain('broadcastProjectPathChanged(');
     expect(offerHandler.slice(0, 2400)).not.toContain('syncSourceLibraryFromDocument(');
     const acceptHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-accept'"));
-    expect(acceptHandler.slice(0, 2200)).toContain('stageAcceptedExternalProject(request.intentId, prepared.result)');
+    expect(acceptHandler.slice(0, 2200)).toContain('stageAcceptedExternalProject(request.intentId, prepared, event.sender)');
     const rejectHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-reject'"));
-    expect(rejectHandler.slice(0, 1200)).toContain('rollbackAcceptedExternalProject(request?.intentId)');
-    expect(source).toMatch(/async function commitAcceptedExternalProject[\s\S]*rememberProjectPath[\s\S]*commitDocumentIntent[\s\S]*broadcastSourceLibraryChanged[\s\S]*broadcastProjectPathChanged/);
-    expect(source).toMatch(/async function rollbackAcceptedExternalProject[\s\S]*sourceLibraryVersion === transaction\.stagedSourceLibraryVersion[\s\S]*mergeExternalOpenSourceRollback/);
+    expect(rejectHandler.slice(0, 1200)).toContain('releaseExternalOpenIntent(request?.intentId)');
+    expect(source).toMatch(/async function commitAcceptedExternalProject[\s\S]*projectAuthority\.commitPreparedProject[\s\S]*externalOpenQueue\.commitDocumentIntent/);
+    expect(source).toMatch(/async function rollbackAcceptedExternalProject[\s\S]*projectAuthority\.cancelPreparedProject/);
   });
 
   it('prepares queued documents from enqueue-time bytes rather than reopening a mutable path', () => {
     const offerHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-next'"));
-    expect(offerHandler.slice(0, 2400)).toContain('prepareProjectDocumentFromBytes(outcome.intent.filePath, outcome.intent.bytes)');
+    expect(offerHandler.slice(0, 2400)).toContain('openProjectDocumentFromBytes(');
+    expect(offerHandler.slice(0, 2400)).toContain('outcome.intent.bytes');
     expect(offerHandler.slice(0, 2400)).toContain('{ bytes: outcome.intent.bytes }');
     expect(offerHandler.slice(0, 2400)).not.toContain('readFile(outcome.intent.filePath)');
   });
@@ -390,10 +391,13 @@ describe('Electron single-instance and external-open source guards', () => {
   });
 
   it('serializes normal Open/New/Save state with accepted external project commits', () => {
-    expect(source).toMatch(/signal-loom:clear-project-path[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
-    expect(source).toMatch(/signal-loom:project-open'[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
-    expect(source).toMatch(/signal-loom:project-save'[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
-    expect(source).toMatch(/signal-loom:project-save-as'[\s\S]{0,500}serializeExternalOpenLifecycle[\s\S]{0,500}acceptedExternalProjectTransactions\.size/);
+    // An accepted external project holds the same authority mutation lease used by every
+    // ordinary open/new/save, so the FBL-003 gateway provides the cross-lifecycle serializer.
+    expect(source).toMatch(/async function stageAcceptedExternalProject[\s\S]*projectAuthority\.prepareOpenProject/);
+    expect(source).toMatch(/signal-loom:clear-project-path[\s\S]{0,700}projectAuthority\.prepareClearProject/);
+    expect(source).toMatch(/signal-loom:project-open'[\s\S]{0,900}projectAuthority\.prepareOpenProject/);
+    expect(source).toMatch(/signal-loom:project-save'[\s\S]{0,900}projectAuthority\.saveProject/);
+    expect(source).toMatch(/signal-loom:project-save-as'[\s\S]{0,900}projectAuthority\.saveProject/);
   });
 
   it('authorizes only the designated live Flow renderer and rotates authorization on reload or death', () => {

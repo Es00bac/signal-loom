@@ -376,6 +376,9 @@ function createExternalOpenQueue(options) {
 
   const pending = [];
   const committedReceipts = new Set();
+  // Retain intent ids as well as delivery receipts so a renderer retry after a committed IPC
+  // response was lost receives the same committed answer instead of an ambiguous not-found.
+  const committedIntentIds = new Set();
   let nextIntentSequence = 1;
   let nextEpochSequence = 1;
   let authorization;
@@ -584,6 +587,7 @@ function createExternalOpenQueue(options) {
 
   function commitDocumentIntent(request) {
     if (!isAuthorized(request)) return { status: 'unauthorized' };
+    if (committedIntentIds.has(request.intentId)) return { status: 'committed' };
     const index = pending.findIndex((entry) =>
       entry.id === request.intentId
       && entry.ownerRendererId === request.rendererId
@@ -594,6 +598,7 @@ function createExternalOpenQueue(options) {
     if (entry.state !== 'accepted') return { status: 'invalid-state', state: entry.state };
     pending.splice(index, 1);
     committedReceipts.add(entry.committedReceiptKey);
+    committedIntentIds.add(entry.id);
     return { status: 'committed' };
   }
 

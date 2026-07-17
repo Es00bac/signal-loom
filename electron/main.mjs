@@ -95,7 +95,6 @@ const {
   canonicalizeExternalOpenFilePath,
   createExternalOpenDeliveryId,
   createExternalOpenQueue,
-  mergeExternalOpenSourceRollback,
   parseSecondInstanceOpenPayload,
 } = externalOpenModule;
 const {
@@ -554,6 +553,7 @@ const externalOpenQueue = createExternalOpenQueue({
 });
 const preparedExternalOpenIntents = new Map();
 const acceptedExternalProjectTransactions = new Map();
+const completedExternalProjectCommits = new Map();
 let externalOpenRendererAuthorization = undefined;
 let externalOpenLifecycle = Promise.resolve();
 
@@ -593,7 +593,7 @@ function revokeExternalOpenRenderer(webContents) {
     if (externalOpenRendererAuthorization?.epoch !== authorization.epoch) return;
     const outcome = externalOpenQueue.revokeRenderer(authorization);
     for (const intentId of outcome.releasedIntentIds ?? []) {
-      await rollbackAcceptedExternalProject(intentId);
+      await releaseExternalOpenIntent(intentId);
     }
     externalOpenRendererAuthorization = undefined;
   });
@@ -1755,23 +1755,44 @@ async function rollbackAcceptedExternalProject(intentId) {
   });
 }
 
+async function releaseExternalOpenIntent(intentId) {
+  const wasAcceptedProject = acceptedExternalProjectTransactions.has(intentId);
+  await rollbackAcceptedExternalProject(intentId);
+  const prepared = preparedExternalOpenIntents.get(intentId);
+  if (!wasAcceptedProject && prepared?.staged) {
+    await prepared.staged.rollback().catch(() => undefined);
+  }
+  preparedExternalOpenIntents.delete(intentId);
+}
+
 async function commitAcceptedExternalProject(intentId, authorization) {
   const transaction = acceptedExternalProjectTransactions.get(intentId);
   if (!transaction) return { status: 'invalid-state' };
-  const authorityOutcome = await projectAuthority.commitPreparedProject({
-    transactionId: transaction.transactionId,
-    senderId: transaction.senderId,
-    rendererEpoch: transaction.rendererEpoch,
-    publish: publishCommittedProjectSnapshot,
-    restorePublish: restoreCommittedProjectSnapshot,
-  });
+  let authorityOutcome = transaction.authorityOutcome;
+  if (!authorityOutcome) {
+    authorityOutcome = await projectAuthority.commitPreparedProject({
+      transactionId: transaction.transactionId,
+      senderId: transaction.senderId,
+      rendererEpoch: transaction.rendererEpoch,
+      publish: publishCommittedProjectSnapshot,
+      restorePublish: restoreCommittedProjectSnapshot,
+    });
+  }
   if (!authorityOutcome.ok) {
     acceptedExternalProjectTransactions.delete(intentId);
+    preparedExternalOpenIntents.delete(intentId);
+    externalOpenQueue.rejectDocumentIntent({ ...authorization, intentId });
     return { status: 'error', error: authorityOutcome.rejected?.message ?? 'The external project commit failed.' };
   }
+  transaction.authorityOutcome = authorityOutcome;
   const outcome = externalOpenQueue.commitDocumentIntent({ ...authorization, intentId });
   if (outcome.status === 'committed') {
     acceptedExternalProjectTransactions.delete(intentId);
+    completedExternalProjectCommits.set(intentId, {
+      authority: authorityOutcome.authority,
+      filePath: authorityOutcome.filePath,
+      scratchDirectoryPath: authorityOutcome.scratchDirectoryPath,
+    });
     if (process.env.SIGNAL_LOOM_EXTERNAL_OPEN_PROBE === '1') {
       console.log(`[external-open-probe] committed project ${intentId}: ${transaction.result.filePath}`);
     }
@@ -3132,7 +3153,7 @@ function installIpcHandlers() {
       const rendererId = externalOpenRendererId(event.sender);
       const outcome = externalOpenQueue.authorizeRenderer(rendererId);
       for (const intentId of outcome.releasedIntentIds ?? []) {
-        await rollbackAcceptedExternalProject(intentId);
+        await releaseExternalOpenIntent(intentId);
       }
       externalOpenRendererAuthorization = { rendererId, epoch: outcome.epoch };
       return { authorized: true, epoch: outcome.epoch };
@@ -3206,9 +3227,8 @@ function installIpcHandlers() {
     serializeExternalOpenLifecycle(async () => {
       const authorization = { rendererId: externalOpenRendererId(event.sender), epoch: request?.epoch };
       if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
-      await rollbackAcceptedExternalProject(request?.intentId);
+      await releaseExternalOpenIntent(request?.intentId);
       const outcome = externalOpenQueue.rejectDocumentIntent({ ...authorization, intentId: request?.intentId });
-      if (outcome.status === 'rejected') preparedExternalOpenIntents.delete(request.intentId);
       return outcome;
     }));
 
@@ -3216,9 +3236,13 @@ function installIpcHandlers() {
     serializeExternalOpenLifecycle(async () => {
       const authorization = { rendererId: externalOpenRendererId(event.sender), epoch: request?.epoch };
       if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
+      const completedProject = completedExternalProjectCommits.get(request?.intentId);
       const outcome = acceptedExternalProjectTransactions.has(request?.intentId)
         ? await commitAcceptedExternalProject(request.intentId, authorization)
-        : externalOpenQueue.commitDocumentIntent({ ...authorization, intentId: request?.intentId });
+        : {
+            ...externalOpenQueue.commitDocumentIntent({ ...authorization, intentId: request?.intentId }),
+            ...(completedProject ?? {}),
+          };
       if (outcome.status === 'committed') preparedExternalOpenIntents.delete(request.intentId);
       return outcome;
     }));
@@ -3229,7 +3253,7 @@ function installIpcHandlers() {
       if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
       const outcome = externalOpenQueue.revokeRenderer(authorization);
       for (const intentId of outcome.releasedIntentIds ?? []) {
-        await rollbackAcceptedExternalProject(intentId);
+        await releaseExternalOpenIntent(intentId);
       }
       externalOpenRendererAuthorization = undefined;
       return outcome;
