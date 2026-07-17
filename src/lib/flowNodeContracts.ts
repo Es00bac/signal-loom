@@ -16,6 +16,7 @@ import { isFlowResultKind } from './flowValueTypes';
 import { getTextModelContract } from './modelContracts/textModelContracts';
 import { getVideoModelSupport } from './modelContracts/videoModelContracts';
 import { DEFAULT_MODELS } from './providerCatalog';
+import { getConnectedCompositionAudioHandles, resolveCompositionAudioTrackModel } from './compositionTracks';
 import {
   runtimeTypeFromResultType,
   type FlowDataType,
@@ -281,7 +282,7 @@ const resolvers = {
     output(null, 'Audio', [audioType]),
   ],
   settings: () => [output(null, 'Generation defaults', [jsonType])],
-  composition: (context) => resolveCompositionPorts(context.node.data),
+  composition: (context) => resolveCompositionPorts(context),
   sourceBin: () => [input(null, 'Asset to ingest', sourceBinInputTypes, { maxConnections: null })],
   valueNode: (context) => [output(null, 'Value', [primitiveType(context.node.data.valueKind)])],
   list: (context) => resolveListPorts(context),
@@ -604,8 +605,10 @@ function resolveVideoPorts(context: FlowNodeContractContext): readonly FlowPortC
   ];
 }
 
-function resolveCompositionPorts(data: NodeData): readonly FlowPortContract[] {
-  const count = Math.max(1, Math.min(4, Math.floor(finiteNumber(data.compositionAudioTrackCount, 1))));
+function resolveCompositionPorts(context: FlowNodeContractContext): readonly FlowPortContract[] {
+  const data = context.node.data;
+  const connectedAudioHandles = getConnectedCompositionAudioHandles(context.node.id, context.edges);
+  const { effectiveCount: count } = resolveCompositionAudioTrackModel(data.compositionAudioTrackCount, connectedAudioHandles);
   const presetId = data.editorExportPresetPlan?.presetId;
   const packageOutput = data.resultType === 'package'
     || presetId === 'png-image-sequence'

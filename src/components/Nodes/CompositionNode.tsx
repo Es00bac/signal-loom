@@ -23,7 +23,7 @@ import {
   COMPOSITION_VIDEO_HANDLE,
   getCompositionTrackKeys,
   getCompositionTrackSettings,
-  getVisibleCompositionAudioHandles,
+  resolveCompositionAudioTrackModel,
 } from '../../lib/compositionTracks';
 import { isCompositionVideoConnection } from '../../lib/compositionEdgeMigration';
 import { useEditorStore } from '../../store/editorStore';
@@ -84,18 +84,9 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
   const mediaSources = [connectedVideo, ...connectedAudioTracks].filter(Boolean) as ConnectedMedia[];
   const mediaSignature = buildCompositionMediaSignature(mediaSources);
   const stableMediaSources = useMemo(() => parseCompositionMediaSignature(mediaSignature), [mediaSignature]);
-  const visibleAudioHandles = getVisibleCompositionAudioHandles(data.compositionAudioTrackCount, connectedAudioTracks);
+  const connectedAudioHandleIds = COMPOSITION_AUDIO_HANDLES.filter((_, index) => connectedAudioTracks[index]);
+  const visibleAudioHandles = resolveCompositionAudioTrackModel(data.compositionAudioTrackCount, connectedAudioHandleIds).handles;
   const visibleAudioTrackCount = visibleAudioHandles.length;
-
-  useEffect(() => {
-    const highestConnectedIndex = connectedAudioTracks.reduce((highest, track, index) => (
-      track ? Math.max(highest, index + 1) : highest
-    ), 0);
-
-    if (highestConnectedIndex > visibleAudioTrackCount) {
-      data.onChange?.('compositionAudioTrackCount', highestConnectedIndex);
-    }
-  }, [connectedAudioTracks, data, visibleAudioTrackCount]);
 
   const hasPackageResult = data.resultType === 'package';
   const previewUrl = hasPackageResult

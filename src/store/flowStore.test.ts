@@ -10,7 +10,10 @@ import {
   collectTextMediaInputs as storeCollectTextMediaInputs,
   canRunNode as storeCanRunNode,
   getExecutionDependencies as storeGetExecutionDependencies,
+  buildExecutionContextForNode,
 } from './flowStore';
+import { resolveFlowNodePorts } from '../lib/flowNodeContracts';
+import { validateFlowConnection } from '../lib/flowConnectionContracts';
 import {
   collectTextInputs as costCollectTextInputs,
   collectUpstreamImageInput as costCollectUpstreamImageInput,
@@ -638,6 +641,191 @@ describe('flow store typed connections', () => {
         },
       },
     });
+  });
+});
+
+describe('flow store Composition audio track normalization (FBL-019)', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+  });
+
+  it('reopens a saved project with a stale count and an explicit track-3 edge exposing track 3 everywhere', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'e1', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-3' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    // 1) restored node data
+    expect(composition.data.compositionAudioTrackCount).toBe(3);
+    // 2) contract
+    const ports = resolveFlowNodePorts({
+      node: composition,
+      nodes: useFlowStore.getState().nodes,
+      edges: useFlowStore.getState().edges,
+    });
+    expect(ports.filter((port) => port.direction === 'input' && port.id?.startsWith('composition-audio-')).map((port) => port.id))
+      .toEqual(['composition-audio-1', 'composition-audio-2', 'composition-audio-3']);
+    // 3) connection validation agrees track 3 is a real target (rejected only because the
+    // single allowed connection on that handle is already the existing edge, not because the
+    // handle is unrecognized)
+    const revalidated = validateFlowConnection(
+      { source: 'audio-1', sourceHandle: null, target: 'composition-1', targetHandle: 'composition-audio-3' },
+      { nodes: useFlowStore.getState().nodes, edges: useFlowStore.getState().edges },
+    );
+    expect(revalidated.targetPort).toBeDefined();
+    expect(revalidated.reason).not.toContain('is not available on this node');
+    // 4) execution consumes track 3 exactly once
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+    expect(context.audioInputs).toHaveLength(1);
+    expect(context.audioInputs?.[0]).toMatchObject({ url: 'https://example.test/a1.mp3' });
+  });
+
+  it('normalizes at the supported track-4 boundary', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [{ id: 'e1', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-4' }],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.compositionAudioTrackCount).toBe(4);
+    const ports = resolveFlowNodePorts({
+      node: composition,
+      nodes: useFlowStore.getState().nodes,
+      edges: useFlowStore.getState().edges,
+    });
+    expect(ports.filter((port) => port.direction === 'input' && port.id?.startsWith('composition-audio-')).map((port) => port.id))
+      .toEqual(['composition-audio-1', 'composition-audio-2', 'composition-audio-3', 'composition-audio-4']);
+  });
+
+  it('assigns stable non-colliding handles to multiple legacy audio edges across repeated save/reopen while explicit handles stay fixed', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-explicit', 'audioGen', { result: 'https://example.test/explicit.mp3' }),
+        createNode('audio-legacy-1', 'audioGen', { result: 'https://example.test/legacy1.mp3' }),
+        createNode('audio-legacy-2', 'audioGen', { result: 'https://example.test/legacy2.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'explicit', source: 'audio-explicit', target: 'composition-1', targetHandle: 'composition-audio-2' },
+        { id: 'legacy-1', source: 'audio-legacy-1', target: 'composition-1' },
+        { id: 'legacy-2', source: 'audio-legacy-2', target: 'composition-1' },
+      ],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+    const firstEdges = useFlowStore.getState().edges;
+    expect(firstEdges.find((edge) => edge.id === 'explicit')?.targetHandle).toBe('composition-audio-2');
+    expect(firstEdges.find((edge) => edge.id === 'legacy-1')?.targetHandle).toBe('composition-audio-1');
+    expect(firstEdges.find((edge) => edge.id === 'legacy-2')?.targetHandle).toBe('composition-audio-3');
+
+    // Simulate reopening the just-saved project again: re-hydrating from the settled state must
+    // be a byte-equivalent no-op (idempotent), not a second round of renumbering.
+    useFlowStore.getState().hydratePersistedState();
+    expect(useFlowStore.getState().edges).toEqual(firstEdges);
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    expect(composition.data.compositionAudioTrackCount).toBe(3);
+  });
+
+  it('keeps a larger authored count visible after reopen and after its higher track disconnects', () => {
+    useFlowStore.setState({
+      nodes: [createNode('composition-1', 'composition', { compositionAudioTrackCount: 4 })],
+      edges: [],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+    expect(useFlowStore.getState().nodes[0]?.data.compositionAudioTrackCount).toBe(4);
+
+    // Disconnecting (there was never a connected higher track in this case, but re-hydrating a
+    // fully-disconnected composition must not shrink the authored count).
+    useFlowStore.setState({ edges: [] });
+    useFlowStore.getState().hydratePersistedState();
+    expect(useFlowStore.getState().nodes[0]?.data.compositionAudioTrackCount).toBe(4);
+  });
+
+  it('clamps invalid, zero, fractional, and oversize saved counts deterministically without an update loop', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('zero', 'composition', { compositionAudioTrackCount: 0 }),
+        createNode('fractional', 'composition', { compositionAudioTrackCount: 2.9 }),
+        createNode('oversize', 'composition', { compositionAudioTrackCount: 99 }),
+      ],
+      edges: [],
+    });
+
+    useFlowStore.getState().hydratePersistedState();
+    const byId = (id: string) => useFlowStore.getState().nodes.find((node) => node.id === id)!;
+    expect(byId('zero').data.compositionAudioTrackCount).toBe(1);
+    expect(byId('fractional').data.compositionAudioTrackCount).toBe(2);
+    expect(byId('oversize').data.compositionAudioTrackCount).toBe(4);
+
+    const settledNodes = useFlowStore.getState().nodes;
+    useFlowStore.getState().hydratePersistedState();
+    expect(useFlowStore.getState().nodes).toEqual(settledNodes);
+  });
+
+  it('rejects an explicit connection attempt to an out-of-range audio handle instead of hiding it behind the UI/contract', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+    });
+
+    useFlowStore.getState().onConnect({
+      source: 'audio-1',
+      sourceHandle: null,
+      target: 'composition-1',
+      targetHandle: 'composition-audio-9',
+    });
+
+    expect(useFlowStore.getState().edges).toEqual([]);
+    expect(useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')?.data.error)
+      .toContain('composition-audio-9');
+  });
+
+  it('collects per-track offset, volume, and enabled settings in normalized handle order without treating the video source as an audio lane', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('video-1', 'videoGen', { result: 'https://example.test/video.mp4' }),
+        createNode('audio-1', 'audioGen', { result: 'https://example.test/a1.mp3' }),
+        createNode('audio-2', 'audioGen', { result: 'https://example.test/a2.mp3' }),
+        createNode('composition-1', 'composition', {
+          compositionAudioTrackCount: 2,
+          compositionAudio1OffsetMs: 250,
+          compositionAudio1Volume: 40,
+          compositionAudio1Enabled: false,
+          compositionAudio2OffsetMs: 500,
+          compositionAudio2Volume: 80,
+          compositionAudio2Enabled: true,
+        }),
+      ],
+      edges: [
+        { id: 'video-edge', source: 'video-1', target: 'composition-1', targetHandle: 'composition-video' },
+        { id: 'a1', source: 'audio-1', target: 'composition-1', targetHandle: 'composition-audio-1' },
+        { id: 'a2', source: 'audio-2', target: 'composition-1', targetHandle: 'composition-audio-2' },
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.videoInput).toBe('https://example.test/video.mp4');
+    expect(context.audioInputs).toEqual([
+      { url: 'https://example.test/a1.mp3', sourceNodeId: 'audio-1', delayMs: 250, volumePercent: 40, enabled: false },
+      { url: 'https://example.test/a2.mp3', sourceNodeId: 'audio-2', delayMs: 500, volumePercent: 80, enabled: true },
+    ]);
   });
 });
 

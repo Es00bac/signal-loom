@@ -1,12 +1,18 @@
 import type { Connection, Edge } from '@xyflow/react';
-import type { AppNode } from '../types/flow';
-import { COMPOSITION_AUDIO_HANDLES, COMPOSITION_VIDEO_HANDLE } from './compositionTracks';
+import type { AppNode, CompositionTargetHandle } from '../types/flow';
+import {
+  classifyCompositionAudioHandle,
+  COMPOSITION_AUDIO_HANDLES,
+  COMPOSITION_VIDEO_HANDLE,
+  isCompositionAudioHandle,
+} from './compositionTracks';
 import { resolveEffectiveSourceNode } from './virtualNodes';
 
-type CompositionAudioHandle = (typeof COMPOSITION_AUDIO_HANDLES)[number];
-
-function isCompositionAudioHandle(handle: string | null | undefined): handle is CompositionAudioHandle {
-  return COMPOSITION_AUDIO_HANDLES.includes(handle as CompositionAudioHandle);
+export interface CompositionAudioEdgeMigrationDiagnostic {
+  targetNodeId: string;
+  edgeId: string;
+  handle: string;
+  reason: 'overflow' | 'malformed';
 }
 
 export function isCompositionVideoConnection(edge: Pick<Edge, 'targetHandle'>): boolean {
@@ -14,9 +20,23 @@ export function isCompositionVideoConnection(edge: Pick<Edge, 'targetHandle'>): 
 }
 
 export function normalizeCompositionEdges(nodes: AppNode[], edges: Edge[]): Edge[] {
+  return normalizeCompositionEdgesWithDiagnostics(nodes, edges).edges;
+}
+
+/**
+ * Same migration as `normalizeCompositionEdges`, plus diagnostics for audio-track-shaped handles
+ * beyond the supported 1-4 range or otherwise malformed. Those edges are honestly dropped rather
+ * than silently renumbered into range (FBL-019) or hidden behind ports that never expose them.
+ * A truly legacy edge — no target handle at all — is still migrated to the next open lane.
+ */
+export function normalizeCompositionEdgesWithDiagnostics(
+  nodes: AppNode[],
+  edges: Edge[],
+): { edges: Edge[]; diagnostics: CompositionAudioEdgeMigrationDiagnostic[] } {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const preserved: Edge[] = [];
   const legacyByTarget = new Map<string, Edge[]>();
+  const diagnostics: CompositionAudioEdgeMigrationDiagnostic[] = [];
 
   for (const edge of edges) {
     const rawSourceNode = nodesById.get(edge.source);
@@ -38,9 +58,26 @@ export function normalizeCompositionEdges(nodes: AppNode[], edges: Edge[]): Edge
     }
 
     if (sourceNode?.type === 'audioGen' && !isCompositionAudioHandle(edge.targetHandle)) {
-      const bucket = legacyByTarget.get(edge.target) ?? [];
-      bucket.push(edge);
-      legacyByTarget.set(edge.target, bucket);
+      if (edge.targetHandle == null) {
+        const bucket = legacyByTarget.get(edge.target) ?? [];
+        bucket.push(edge);
+        legacyByTarget.set(edge.target, bucket);
+        continue;
+      }
+
+      const classification = classifyCompositionAudioHandle(edge.targetHandle);
+
+      if (classification && classification.status !== 'valid') {
+        diagnostics.push({
+          targetNodeId: edge.target,
+          edgeId: edge.id,
+          handle: classification.handle,
+          reason: classification.status,
+        });
+        continue;
+      }
+
+      preserved.push(edge);
       continue;
     }
 
@@ -52,7 +89,7 @@ export function normalizeCompositionEdges(nodes: AppNode[], edges: Edge[]): Edge
     const occupiedAudioHandles = new Set(
       targetEdges
         .map((edge) => edge.targetHandle)
-        .filter((handle): handle is CompositionAudioHandle => isCompositionAudioHandle(handle)),
+        .filter((handle): handle is CompositionTargetHandle => isCompositionAudioHandle(handle)),
     );
     const explicitVideoEdgeExists = targetEdges.some((edge) => edge.targetHandle === COMPOSITION_VIDEO_HANDLE);
     const legacyVideoEdges = legacyEdges.filter((edge) => {
@@ -93,7 +130,7 @@ export function normalizeCompositionEdges(nodes: AppNode[], edges: Edge[]): Edge
     }
   }
 
-  return dedupeExclusiveCompositionEdges(nodesById, preserved);
+  return { edges: dedupeExclusiveCompositionEdges(nodesById, preserved), diagnostics };
 }
 
 export function normalizeCompositionConnectionTargetHandle(
@@ -123,12 +160,12 @@ export function normalizeCompositionConnectionTargetHandle(
     return connection;
   }
 
-  if (sourceNode?.type === 'audioGen' && !isCompositionAudioHandle(connection.targetHandle)) {
+  if (sourceNode?.type === 'audioGen' && connection.targetHandle == null) {
     const occupiedHandles = new Set(
       edges
         .filter((edge) => edge.target === connection.target)
         .map((edge) => edge.targetHandle)
-        .filter((handle): handle is CompositionAudioHandle => isCompositionAudioHandle(handle)),
+        .filter((handle): handle is CompositionTargetHandle => isCompositionAudioHandle(handle)),
     );
     const nextHandle = COMPOSITION_AUDIO_HANDLES.find((handle) => !occupiedHandles.has(handle));
 

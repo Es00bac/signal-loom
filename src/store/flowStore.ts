@@ -22,6 +22,7 @@ import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
   getCompositionTrackSettings,
+  normalizeCompositionAudioTrackCounts,
 } from '../lib/compositionTracks';
 import {
   isCompositionVideoConnection,
@@ -2216,7 +2217,7 @@ function buildNodeExecutionResolution(
   return { promptSignals, referenceSlots, context };
 }
 
-function buildExecutionContextForNode(
+export function buildExecutionContextForNode(
   node: AppNode,
   nodes: AppNode[],
   edges: Edge[],
@@ -3459,9 +3460,10 @@ export const useFlowStore = create<FlowState>()(
             : node
         ));
 
+        const pastedEdges = normalizeFlowEdges(nodesWithIdentity, pasted.nextEdges);
         set({
-          nodes: attachRuntimeDataToNodes(nodesWithIdentity, get),
-          edges: normalizeFlowEdges(nodesWithIdentity, pasted.nextEdges),
+          nodes: normalizeCompositionAudioTrackCounts(attachRuntimeDataToNodes(nodesWithIdentity, get), pastedEdges),
+          edges: pastedEdges,
         });
         return true;
       },
@@ -3829,9 +3831,10 @@ export const useFlowStore = create<FlowState>()(
         const safe = sanitizePersistedFlowState(get());
         const normalizedNodes = attachHydratedRuntimeDataToNodes(safe.nodes, get);
         hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
+        const edges = normalizeFlowEdges(normalizedNodes, safe.edges);
         set({
-          nodes: normalizedNodes,
-          edges: normalizeFlowEdges(normalizedNodes, safe.edges),
+          nodes: normalizeCompositionAudioTrackCounts(normalizedNodes, edges),
+          edges,
           bookmarkSidebarOpen: safe.bookmarkSidebarOpen,
         });
       },
@@ -3952,13 +3955,17 @@ export const useFlowStore = create<FlowState>()(
           invalidateHydratedRunGraphs(get().nodes.map((node) => node.id));
         }
         hydratedFlowGraphGeneration += 1;
-        set(replaceFlowSnapshotState(
+        const nextSnapshot = replaceFlowSnapshotState(
           snapshot,
           (nodes) => isWorkspaceSwitch
             ? attachRuntimeDataToNodes(nodes, get)
             : attachHydratedRuntimeDataToNodes(nodes, get),
           normalizeFlowEdges,
-        ));
+        );
+        set({
+          ...nextSnapshot,
+          nodes: normalizeCompositionAudioTrackCounts(nextSnapshot.nodes, nextSnapshot.edges),
+        });
         hydratedCanvasWorkspaceId = targetWorkspaceId;
       },
       applyRemoteFlowGraphChange: (change) => {

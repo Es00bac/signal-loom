@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Edge } from '@xyflow/react';
 import { FLOW_NODE_TYPES, type AppNode, type FlowNodeType, type NodeData } from '../types/flow';
 import {
   FLOW_NODE_CONTRACTS,
@@ -297,6 +298,48 @@ describe('dynamic Flow node contracts', () => {
   it('distinguishes Portal entrance and exit directions', () => {
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'entry' })).map((port) => port.direction)).toEqual(['input']);
     expect(resolveFlowNodePorts(context('portal', { portalRole: 'exit' })).map((port) => port.direction)).toEqual(['output']);
+  });
+
+  it('exposes an explicitly connected higher audio track even when the saved count is stale (FBL-019)', () => {
+    const compositionNode = node('composition', { compositionAudioTrackCount: 1 });
+    const audioNode = { id: 'audio-1', type: 'audioGen', position: { x: 0, y: 0 }, data: {} } as AppNode;
+    const context: FlowNodeContractContext = {
+      node: compositionNode,
+      nodes: [compositionNode, audioNode],
+      edges: [{
+        id: 'e1',
+        source: 'audio-1',
+        target: compositionNode.id,
+        targetHandle: 'composition-audio-3',
+      } satisfies Edge],
+    };
+
+    const audioInputIds = resolveFlowNodePorts(context)
+      .filter((port) => port.direction === 'input' && port.id?.startsWith('composition-audio-'))
+      .map((port) => port.id);
+
+    expect(audioInputIds).toEqual(['composition-audio-1', 'composition-audio-2', 'composition-audio-3']);
+  });
+
+  it('never exposes a Composition audio port beyond the supported track-4 boundary', () => {
+    const compositionNode = node('composition', { compositionAudioTrackCount: 1 });
+    const audioNode = { id: 'audio-1', type: 'audioGen', position: { x: 0, y: 0 }, data: {} } as AppNode;
+    const context: FlowNodeContractContext = {
+      node: compositionNode,
+      nodes: [compositionNode, audioNode],
+      edges: [{
+        id: 'e1',
+        source: 'audio-1',
+        target: compositionNode.id,
+        targetHandle: 'composition-audio-9',
+      } satisfies Edge],
+    };
+
+    const audioInputIds = resolveFlowNodePorts(context)
+      .filter((port) => port.direction === 'input' && port.id?.startsWith('composition-audio-'))
+      .map((port) => port.id);
+
+    expect(audioInputIds).toEqual(['composition-audio-1']);
   });
 
   it('declares image-sequence Composition output as a package instead of video', () => {
