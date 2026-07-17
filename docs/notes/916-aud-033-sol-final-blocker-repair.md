@@ -17,9 +17,11 @@ attempt. The regression coverage verifies false Boolean and image attempts
 through both sanitizers, variable interpolation, and Source Bin URL
 resolution.
 
-Verification passed: the focused AUD-033 20-file Vitest matrix with
-`--configLoader runner`; forced non-incremental app and node TypeScript;
-changed-file ESLint; `git diff --check`; `npm run verify:flow-production`
-(9 files/325 tests; 63 nodes/182 contracts); and `npm run build`. A fresh
-independent Sol gate is the only remaining requested confirmation; no live paid
-provider call was used for this repair.
+## Superseding final review BLOCK
+
+This note's `c4649f1` verification/build-passed claim is retracted. Sol's
+following fresh review found five blockers: proxy Boolean/metadata disagreement,
+paid resubmission after a processed malformed response, Source Library Boolean
+retyping, unbounded metadata, and build-graph `it.each` typing. `7a33a66`
+addresses all five. See note 917 for current command results; a fresh Sol gate
+is still required and no approval is implied.

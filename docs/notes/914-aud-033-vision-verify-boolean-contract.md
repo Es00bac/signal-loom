@@ -69,6 +69,20 @@ Commit `1c627bc` is the production/test repair.
   - `npm run verify:flow-production` passed: 9 files / 325 tests and the
     63-node / 182-contract production verifier.
 
-Residual: the bounded code/test evidence is green; a fresh independent Sol
-gate remains the requested final confirmation. No live paid provider request
-was made by this repair.
+## Superseding Sol follow-up — final review BLOCK
+
+The green/build-passed claims for `c4649f1` above are retracted. Sol's next
+fresh final review returned **BLOCK** on five remaining defects: proxy strings
+were still accepted as Boolean decisions and metadata claims were ignored;
+processed malformed proxy JSON could resubmit paid work; a colliding text
+Source item could retype a Vision false result; metadata had no bounded size
+policy; and two `it.each` tables did not type-check under the real build
+graph.
+
+Commit `7a33a66` is the bounded correction. Its proxy protocol requires a
+literal Boolean, `resultType: 'boolean'`, and matching required
+`outputMetadata.decision`/`outputMetadata.resultType`; processed JSON/schema
+failures are non-retryable. Browser and Electron now share bounded metadata
+validation and compatible media-only Source Library hydration. The final
+evidence is in note 917; no approval is claimed and no live paid request was
+made.

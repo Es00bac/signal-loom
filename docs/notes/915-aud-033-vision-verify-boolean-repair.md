@@ -26,3 +26,12 @@ The repair adds regressions for Electron/app sanitizer parity, true/false
 attempt history and variable selection, loop envelopes, direct/proxy execution,
 and Boolean rejection from media/project/video helpers. The corrected evidence
 and red/green command record are maintained in note 914.
+
+## Superseding Sol follow-up — final review BLOCK
+
+The `c4649f1` build-passed statement is retracted. A subsequent Sol final
+review blocked it on strict proxy Boolean/metadata agreement, no-resubmit
+handling after processed malformed proxy payloads, Source Library collision
+hydration, bounded metadata parity, and real TypeScript table typing.
+`7a33a66` corrects those five findings; note 917 records the exact final gate
+results. This remains evidence for a new independent review, not approval.
