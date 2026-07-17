@@ -98,8 +98,10 @@ describe('decodeBackendProxyResultEnvelope — Blob round-trip', () => {
   it('round-trips non-UTF-8 bytes byte-for-byte as a real Blob with the correct type and length', async () => {
     const raw = new Uint8Array([0x00, 0xff, 0xfe, 0x80, 0x7f, 0x01, 0xc3, 0x28]); // 0xC3 0x28 is invalid UTF-8
     const blob = new Blob([raw], { type: 'application/octet-stream' });
+    // The primary result and the binary describe the SAME asset: the data URL carries the identical
+    // bytes and MIME as the Blob, which the decoder now binds and enforces.
     const envelope = await encodeBackendProxyResultEnvelope({
-      result: 'data:video/mp4;base64,AAAA',
+      result: `data:application/octet-stream;base64,${Buffer.from(raw).toString('base64')}`,
       resultType: 'video',
       blob,
     });
@@ -118,6 +120,79 @@ describe('decodeBackendProxyResultEnvelope — Blob round-trip', () => {
       binary: { encoding: 'base64', mimeType: 'application/octet-stream', byteLength: 0, data: '' },
     }));
     expect(decoded.blob?.size).toBe(0);
+  });
+});
+
+describe('decodeBackendProxyResultEnvelope — primary/binary binding', () => {
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+  const b64 = Buffer.from(bytes).toString('base64');
+  const matchingDataUrl = `data:image/png;base64,${b64}`;
+  const binary = { encoding: 'base64' as const, mimeType: 'image/png', byteLength: bytes.byteLength, data: b64 };
+
+  it('accepts a primary data URL that matches the binary byte-for-byte and derives runtime MIME from the binary', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({ result: matchingDataUrl, resultType: 'image', binary }));
+    expect(decoded.blob?.size).toBe(bytes.byteLength);
+    // No top-level mimeType supplied → runtime MIME is derived from the (matching) binary.
+    expect(decoded.mimeType).toBe('image/png');
+  });
+
+  it('honours a top-level MIME that agrees with the binary and data URL', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({ result: matchingDataUrl, resultType: 'image', mimeType: 'image/png', binary }));
+    expect(decoded.mimeType).toBe('image/png');
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['data-URL MIME disagrees with the binary', versioned({ result: `data:image/webp;base64,${b64}`, resultType: 'image', binary })],
+    ['top-level MIME disagrees with the binary', versioned({ result: matchingDataUrl, resultType: 'image', mimeType: 'image/webp', binary })],
+    ['primary bytes differ from the binary at the same length', versioned({
+      result: `data:image/png;base64,${Buffer.from(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0b])).toString('base64')}`,
+      resultType: 'image', binary,
+    })],
+    ['HTTP(S) primary cannot prove local bytes', versioned({ result: 'https://cdn.example/img.png', resultType: 'image', binary })],
+    ['a binary requires an asset result type', versioned({ result: matchingDataUrl, resultType: 'json', binary })],
+  ])('rejects when %s', (_label, payload) => {
+    expect(() => decodeBackendProxyResultEnvelope(payload)).toThrow(NonRetryableError);
+  });
+
+  it('keeps an HTTP(S) primary valid when there is NO binary (unprovable is only rejected alongside binary)', () => {
+    const decoded = decodeBackendProxyResultEnvelope(versioned({ result: 'https://cdn.example/img.png', resultType: 'image' }));
+    expect(decoded.result).toBe('https://cdn.example/img.png');
+    expect(decoded.blob).toBeUndefined();
+  });
+});
+
+describe('decodeBackendProxyResultEnvelope — usage allowlist', () => {
+  const usage = (overrides: Record<string, unknown>) => versioned({
+    result: 'x', resultType: 'text', usage: { source: 'actual', confidence: 'measured', ...overrides },
+  });
+
+  it('accepts provider/modelId at the exact length bound and preserves a legitimate zero', () => {
+    const limits = tinyLimits({ maxUsageStringLength: 8 });
+    const decoded = decodeBackendProxyResultEnvelope(usage({
+      provider: 'a'.repeat(8), modelId: 'b'.repeat(8), costUsd: 0, imageCount: 0, inputTokens: 12,
+    }), limits);
+    expect(decoded.usage).toEqual({
+      source: 'actual', confidence: 'measured', provider: 'a'.repeat(8), modelId: 'b'.repeat(8),
+      costUsd: 0, imageCount: 0, inputTokens: 12,
+    });
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['invalid source enum', { source: 'guess' }],
+    ['invalid confidence enum', { confidence: 'vibes' }],
+    ['negative cost', { costUsd: -0.01 }],
+    ['negative token count', { inputTokens: -1 }],
+    ['fractional token count', { outputTokens: 1.5 }],
+    ['fractional image count', { imageCount: 2.5 }],
+    ['unknown field', { surprise: true }],
+    ['oversized provider string', { provider: 'p'.repeat(4096) }],
+  ])('rejects usage with %s', (_label, overrides) => {
+    // source/confidence overrides land in the object; the enum cases override those exact keys.
+    expect(() => decodeBackendProxyResultEnvelope(usage(overrides))).toThrow(NonRetryableError);
+  });
+
+  it('does not cast unknown keys through even when every known field is valid', () => {
+    expect(() => decodeBackendProxyResultEnvelope(usage({ inputTokens: 3, extraneous: 'x' }))).toThrow(/unsupported field/);
   });
 });
 
@@ -145,16 +220,16 @@ describe('decodeBackendProxyResultEnvelope — bounds (exact edge + edge+1)', ()
     const limits = tinyLimits({ maxDecodedBinaryBytes: 4, maxEncodedBinaryLength: 1024 });
     const okData = Buffer.from(new Uint8Array([1, 2, 3, 4])).toString('base64');
     const ok = decodeBackendProxyResultEnvelope(versioned({
-      result: 'data:application/octet-stream;base64,AA==',
+      result: `data:application/octet-stream;base64,${okData}`,
       resultType: 'package',
       binary: { encoding: 'base64', mimeType: 'application/octet-stream', byteLength: 4, data: okData },
     }), limits);
     expect(ok.blob?.size).toBe(4);
 
-    // Declared 5 bytes with a matching-length payload: rejected because 5 > 4.
+    // Declared 5 bytes with a matching-length payload: rejected because 5 > 4 (before binding).
     const overData = Buffer.from(new Uint8Array([1, 2, 3, 4, 5])).toString('base64');
     expect(() => decodeBackendProxyResultEnvelope(versioned({
-      result: 'data:application/octet-stream;base64,AA==',
+      result: `data:application/octet-stream;base64,${overData}`,
       resultType: 'package',
       binary: { encoding: 'base64', mimeType: 'application/octet-stream', byteLength: 5, data: overData },
     }), limits)).toThrow(NonRetryableError);

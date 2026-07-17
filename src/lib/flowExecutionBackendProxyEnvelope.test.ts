@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { executeNodeRequest } from './flowExecution';
+import { executeNodeRequest, readBoundedResponseText } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import { NonRetryableError } from './exponentialBackoff';
-import { BACKEND_PROXY_RESULT_ENVELOPE_VERSION } from './backendProxyResultEnvelope';
+import { BACKEND_PROXY_RESULT_ENVELOPE_VERSION, MAX_BACKEND_PROXY_RESULT_WIRE_BYTES } from './backendProxyResultEnvelope';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
 /**
@@ -43,11 +43,14 @@ function proxySettings(overrides: Partial<RuntimeSettingsSnapshot['providerSetti
   } as RuntimeSettingsSnapshot;
 }
 
-function imageNode(): AppNode {
-  return { id: 'image-proxy-1', type: 'imageGen', position: { x: 0, y: 0 }, data: { provider: 'stability', modelId: 'stable-image-core' } } as AppNode;
+function imageNode(data: AppNode['data'] = {}): AppNode {
+  return { id: 'image-proxy-1', type: 'imageGen', position: { x: 0, y: 0 }, data: { provider: 'stability', modelId: 'stable-image-core', ...data } } as AppNode;
 }
 function textNodeGen(): AppNode {
   return { id: 'text-proxy-1', type: 'textNode', position: { x: 0, y: 0 }, data: { provider: 'gemini', mode: 'model' } } as AppNode;
+}
+function videoNode(): AppNode {
+  return { id: 'video-proxy-1', type: 'videoGen', position: { x: 0, y: 0 }, data: { provider: 'gemini', modelId: 'veo-3.1-generate-preview' } } as AppNode;
 }
 
 function jsonResponse(payload: unknown): Response {
@@ -89,37 +92,51 @@ describe('backend proxy result envelope through executeNodeRequest', () => {
     ]);
   });
 
-  it('retains file metadata and nested JSON-safe outputMetadata exactly', async () => {
-    const outputMetadata = { width: 2048, height: 1152, layers: [{ name: 'bg' }, { name: 'fg', blend: 'multiply' }] };
+  it('retains file metadata and nested JSON-safe outputMetadata exactly (matching node type)', async () => {
+    const outputMetadata = { width: 2048, height: 1152, tracks: [{ name: 'main' }, { name: 'alt', codec: 'av1' }] };
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
       envelopeVersion: V,
-      result: 'data:application/zip;base64,UEsDBAo=',
-      resultType: 'package',
-      mimeType: 'application/zip',
-      extension: 'zip',
-      fileName: 'frames.zip',
+      result: 'data:video/mp4;base64,AAAAFGZ0eXA=',
+      resultType: 'video',
+      mimeType: 'video/mp4',
+      extension: 'mp4',
+      fileName: 'clip.mp4',
       outputMetadata,
     })));
 
-    const result = await run(imageNode(), proxySettings());
-    expect(result).toMatchObject({ mimeType: 'application/zip', extension: 'zip', fileName: 'frames.zip' });
+    // videoGen — a semantically matching node — carries file metadata through the versioned envelope.
+    const result = await run(videoNode(), proxySettings());
+    expect(result).toMatchObject({ mimeType: 'video/mp4', extension: 'mp4', fileName: 'clip.mp4' });
     expect(result.outputMetadata).toEqual(outputMetadata);
   });
 
-  it('reconstructs a real Blob from base64 with the correct type and byte length', async () => {
+  it('reconstructs a real Blob whose bytes match the bound primary data URL', async () => {
     const bytes = Buffer.from([0x00, 0xff, 0x10, 0x80, 0x7f]);
+    const base64 = bytes.toString('base64');
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
       envelopeVersion: V,
-      result: 'data:video/mp4;base64,AAAA',
+      // The primary result and the binary describe the SAME asset, byte-for-byte and MIME-aligned.
+      result: `data:video/mp4;base64,${base64}`,
       resultType: 'video',
-      binary: { encoding: 'base64', mimeType: 'video/mp4', byteLength: bytes.byteLength, data: bytes.toString('base64') },
+      binary: { encoding: 'base64', mimeType: 'video/mp4', byteLength: bytes.byteLength, data: base64 },
     })));
 
-    const result = await run(imageNode(), proxySettings());
+    const result = await run(videoNode(), proxySettings());
     expect(result.blob).toBeInstanceOf(Blob);
     expect(result.blob?.type).toBe('video/mp4');
     expect(result.blob?.size).toBe(bytes.byteLength);
     expect(new Uint8Array(await result.blob!.arrayBuffer())).toEqual(new Uint8Array(bytes));
+  });
+
+  it.each<[string, () => AppNode, Record<string, unknown>]>([
+    ['imageGen must reject a well-formed video envelope', imageNode, { envelopeVersion: V, result: 'data:video/mp4;base64,AAAA', resultType: 'video' }],
+    ['imageGen must reject a well-formed package envelope', imageNode, { envelopeVersion: V, result: 'data:application/zip;base64,UEsDBAo=', resultType: 'package' }],
+    ['textNode must reject a well-formed image envelope', textNodeGen, { envelopeVersion: V, result: 'data:image/png;base64,AAAA', resultType: 'image' }],
+  ])('enforces node/result-type compatibility: %s', async (_label, makeNode, payload) => {
+    const fetchMock = vi.fn(async () => jsonResponse(payload));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(run(makeNode(), proxySettings({ batchMaxRetries: 3 }))).rejects.toBeInstanceOf(NonRetryableError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('carries a text result with status and usage through unchanged', async () => {
@@ -179,6 +196,67 @@ describe('backend proxy result envelope — processed terminal responses call th
 
     await expect(run(textNodeGen(), proxySettings({ batchMaxRetries: 3 })))
       .rejects.toThrow(/content policy violation/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+function streamResponse(chunks: Uint8Array[], headers: Record<string, string> = {}): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers });
+}
+
+describe('bounded proxy wire reader (readBoundedResponseText)', () => {
+  const OVER = 'over the limit';
+
+  it('has a reconciled overall cap that stays firmly sub-gigabyte', () => {
+    expect(MAX_BACKEND_PROXY_RESULT_WIRE_BYTES).toBeGreaterThan(0);
+    expect(MAX_BACKEND_PROXY_RESULT_WIRE_BYTES).toBeLessThan(1024 * 1024 * 1024);
+  });
+
+  it('rejects an oversized declared Content-Length before JSON allocation', async () => {
+    // A stream body preserves the (mismatched) declared length; the reader rejects on the header alone.
+    const response = streamResponse([new Uint8Array([1, 2, 3])], { 'content-length': '100' });
+    await expect(readBoundedResponseText(response, 8, OVER)).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it('accepts a streamed body at the exact cap and rejects one byte over', async () => {
+    const atCap = await readBoundedResponseText(streamResponse([new Uint8Array([65, 66, 67, 68, 69, 70, 71, 72])]), 8, OVER);
+    expect(atCap).toBe('ABCDEFGH');
+
+    await expect(
+      readBoundedResponseText(streamResponse([new Uint8Array([65, 66, 67, 68]), new Uint8Array([69, 70, 71, 72, 73])]), 8, OVER),
+    ).rejects.toBeInstanceOf(NonRetryableError);
+  });
+
+  it('surfaces an in-flight abort as an AbortError during consumption', async () => {
+    const controller = new AbortController();
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(ctrl) {
+        pulls += 1;
+        if (pulls === 1) { ctrl.enqueue(new Uint8Array([1])); return undefined; }
+        return new Promise<void>(() => { /* never settles: body hangs mid-stream */ });
+      },
+    });
+    const pending = readBoundedResponseText(new Response(stream), 1024, OVER, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('rejects an oversized declared Content-Length through the proxy route without resubmitting', async () => {
+    const fetchMock = vi.fn(async () => streamResponse(
+      [new TextEncoder().encode(JSON.stringify({ envelopeVersion: V, result: 'x', resultType: 'text' }))],
+      { 'content-type': 'application/json', 'content-length': String(MAX_BACKEND_PROXY_RESULT_WIRE_BYTES + 1) },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(run(textNodeGen(), proxySettings({ batchMaxRetries: 3 }))).rejects.toBeInstanceOf(NonRetryableError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

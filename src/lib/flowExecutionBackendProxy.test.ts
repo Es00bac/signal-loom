@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeNodeRequest } from './flowExecution';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import { NonRetryableError } from './exponentialBackoff';
+import { BACKEND_PROXY_RESULT_ENVELOPE_VERSION } from './backendProxyResultEnvelope';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
 /**
@@ -326,6 +327,57 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
     );
 
     expect(result.result).toBe(PROXY_IMAGE_RESULT.result);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AUD-013 finding 2: proxied Vision Verify passes through the common versioned envelope', () => {
+  function nest(depth: number): unknown {
+    let value: unknown = 1;
+    for (let index = 0; index < depth; index += 1) value = { a: value };
+    return value;
+  }
+
+  function runVision(settings = proxySettings()) {
+    return executeNodeRequest(
+      proxiedVisionVerifyNode(),
+      { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG },
+      settings,
+    );
+  }
+
+  it('accepts a VERSIONED Vision Verify payload with the same decision contract as the legacy shape', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      envelopeVersion: BACKEND_PROXY_RESULT_ENVELOPE_VERSION,
+      result: true,
+      resultType: 'boolean',
+      outputMetadata: { decision: true, resultType: 'boolean' },
+      statusMessage: 'Verified: TRUE',
+    })));
+
+    const result = await runVision();
+    expect(result).toMatchObject({ result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' } });
+    expect(typeof result.result).toBe('boolean');
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['an unknown envelope version', {
+      envelopeVersion: 999, result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' },
+    }],
+    ['metadata nested past the common depth bound', {
+      result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean', deep: nest(64) },
+    }],
+    ['metadata over the common serialized-size bound', {
+      result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean', filler: 'x'.repeat(1024 * 1024 + 16) },
+    }],
+    ['usage that fails the common enum validation', {
+      result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' }, usage: { source: 'guess', confidence: 'measured' },
+    }],
+  ])('rejects %s through the shared decoder without resubmitting', async (_label, payload) => {
+    const fetchMock = vi.fn(async () => jsonResponse(payload));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(runVision(proxySettings({ batchMaxRetries: 2 }))).rejects.toBeInstanceOf(NonRetryableError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

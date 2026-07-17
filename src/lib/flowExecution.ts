@@ -130,7 +130,11 @@ import {
   buildBackendProxyExecuteRequest,
   shouldUseBackendProxy,
 } from './backendProxy';
-import { decodeBackendProxyResultEnvelope } from './backendProxyResultEnvelope';
+import {
+  MAX_BACKEND_PROXY_RESULT_WIRE_BYTES,
+  decodeBackendProxyResultEnvelope,
+  type DecodedBackendProxyResult,
+} from './backendProxyResultEnvelope';
 import {
   buildGeminiTextConfig,
   buildGeminiTextInlinePart,
@@ -666,10 +670,21 @@ function hasPersistedApiRequesterCredential(rawHeaders: string, rawBody: string)
   }
 }
 
-async function readBoundedApiResponse(response: Response, signal?: AbortSignal): Promise<string> {
+/**
+ * Read a response body as text with a hard overall byte ceiling. Both the DECLARED Content-Length and
+ * the actually-streamed bytes are checked; an over-limit body rejects non-retryably before it is fully
+ * buffered (and, for the declared case, before the body is read at all). The reader is cancelled and
+ * its lock released on every exit, and an in-flight abort is surfaced as an AbortError, never swallowed.
+ */
+export async function readBoundedResponseText(
+  response: Response,
+  maxBytes: number,
+  overLimitMessage: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > API_REQUESTER_MAX_RESPONSE_BYTES) {
-    throw new NonRetryableError('API response exceeds the 5 MB safety limit.');
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new NonRetryableError(overLimitMessage);
   }
   if (!response.body) return '';
 
@@ -724,9 +739,9 @@ async function readBoundedApiResponse(response: Response, signal?: AbortSignal):
       const { done, value } = await readNext();
       if (done) break;
       size += value.byteLength;
-      if (size > API_REQUESTER_MAX_RESPONSE_BYTES) {
+      if (size > maxBytes) {
         cancelReaderOnce();
-        throw new NonRetryableError('API response exceeds the 5 MB safety limit.');
+        throw new NonRetryableError(overLimitMessage);
       }
       chunks.push(value);
     }
@@ -742,6 +757,15 @@ async function readBoundedApiResponse(response: Response, signal?: AbortSignal):
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(bytes);
+}
+
+function readBoundedApiResponse(response: Response, signal?: AbortSignal): Promise<string> {
+  return readBoundedResponseText(
+    response,
+    API_REQUESTER_MAX_RESPONSE_BYTES,
+    'API response exceeds the 5 MB safety limit.',
+    signal,
+  );
 }
 
 function redactApiRequesterMessage(message: string): string {
@@ -793,19 +817,24 @@ async function executeNodeViaBackendProxy(
     throw new HttpStatusError(response.status, 'Backend proxy request failed');
   }
 
-  const payload = await decodeBackendProxyExecutionPayload(response);
+  const payload = await decodeBackendProxyExecutionPayload(response, signal);
 
   if (node.type === 'visionVerifyNode') {
-    const verification = validateBackendProxyVisionVerificationResult(payload);
-    const existingNotes = payload.usage?.notes ?? [];
+    // Vision Verify shares the common versioned/legacy decoder — same version, status, usage, and
+    // metadata (depth/size/JSON-safe) validation as every other result — and then layers its stricter
+    // literal-Boolean and decision-agreement contract on top of the already-validated result.
+    const decoded = decodeBackendProxyResultEnvelope(payload);
+    const verification = validateBackendProxyVisionVerificationResult(decoded);
+    const existingNotes = decoded.usage?.notes ?? [];
+    const hasExplicitStatus = typeof payload.statusMessage === 'string' && payload.statusMessage.length > 0;
     return {
       result: verification.value,
       resultType: 'boolean',
-      statusMessage: payload.statusMessage ?? `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
+      statusMessage: hasExplicitStatus ? decoded.statusMessage : `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
       usage: {
-        source: payload.usage?.source ?? 'actual',
-        confidence: payload.usage?.confidence ?? 'unknown',
-        ...payload.usage,
+        source: decoded.usage?.source ?? 'actual',
+        confidence: decoded.usage?.confidence ?? 'unknown',
+        ...decoded.usage,
         notes: verification.explanation && !existingNotes.includes(verification.explanation)
           ? [verification.explanation, ...existingNotes]
           : existingNotes,
@@ -819,21 +848,55 @@ async function executeNodeViaBackendProxy(
   // the versioned envelope so a proxied result is semantically equivalent to the same direct result.
   // A malformed or unsupported envelope is a processed terminal response: it throws a non-retryable
   // error here, and is never resubmitted through the outer retry wrapper.
-  return decodeBackendProxyResultEnvelope(payload);
+  const decoded = decodeBackendProxyResultEnvelope(payload);
+  // The generic decoder accepts any well-formed result type; the execution boundary additionally
+  // demands the type each node's direct executor actually produces, so imageGen can never accept a
+  // package/video envelope merely because it is well-formed.
+  assertProxyResultTypeMatchesNode(node.type, decoded.resultType);
+  return decoded;
+}
+
+/** The single result type each proxied node's direct executor produces (Vision Verify handled separately). */
+const PROXIED_NODE_RESULT_TYPE: Partial<Record<AppNode['type'], ResultType>> = {
+  textNode: 'text',
+  imageGen: 'image',
+  videoGen: 'video',
+  audioGen: 'audio',
+};
+
+function assertProxyResultTypeMatchesNode(nodeType: AppNode['type'], resultType: ResultType): void {
+  const expected = PROXIED_NODE_RESULT_TYPE[nodeType];
+  if (expected === undefined) {
+    throw new NonRetryableError(`Backend proxy returned a result for an unsupported node type: ${String(nodeType)}.`);
+  }
+  if (resultType !== expected) {
+    throw new NonRetryableError(`Backend proxy returned a ${resultType} result for a ${String(nodeType)} node, which requires ${expected}.`);
+  }
 }
 
 type BackendProxyExecutionPayload = Record<string, unknown> & Partial<ExecutionResult>;
 
 /**
- * Once a proxy has replied 200, the provider run has been processed and must
- * never be re-submitted merely because its response cannot be decoded. Keep
- * transport/network failures outside this boundary so their existing retry
- * policy remains unchanged.
+ * Once a proxy has replied 200, the provider run has been processed and must never be re-submitted
+ * merely because its response cannot be decoded. The body is read through a bounded streaming reader
+ * (one named overall wire cap) so an oversized declared Content-Length or streamed body is rejected
+ * non-retryably BEFORE any JSON allocation. Transport/network failures stay outside this boundary so
+ * their existing retry policy is unchanged; an in-flight abort surfaces as an AbortError.
  */
-async function decodeBackendProxyExecutionPayload(response: Response): Promise<BackendProxyExecutionPayload> {
+async function decodeBackendProxyExecutionPayload(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<BackendProxyExecutionPayload> {
+  const wireText = await readBoundedResponseText(
+    response,
+    MAX_BACKEND_PROXY_RESULT_WIRE_BYTES,
+    `Backend proxy completed the request but its response exceeds the ${MAX_BACKEND_PROXY_RESULT_WIRE_BYTES}-byte safety limit.`,
+    signal,
+  );
+
   let payload: unknown;
   try {
-    payload = await response.json();
+    payload = JSON.parse(wireText);
   } catch (cause) {
     throw new NonRetryableError('Backend proxy completed the request but returned malformed JSON.', { cause });
   }
@@ -846,36 +909,30 @@ async function decodeBackendProxyExecutionPayload(response: Response): Promise<B
 }
 
 /**
- * Vision Verify is deliberately stricter than direct/Vertex text parsing:
- * the proxy protocol transports a typed decision, so its result must already
- * be a literal Boolean. Metadata repeats the typed decision for downstream
- * auditability and is required to agree exactly with the primary fields.
+ * Vision Verify is deliberately stricter than direct/Vertex text parsing: the proxy protocol transports
+ * a typed decision, so its result must already be a literal Boolean. This runs on the ALREADY-decoded
+ * result (the common envelope decoder has validated version, the literal-Boolean primary, status, usage,
+ * and metadata bounds, and rejected any provider error); here we add the decision-agreement contract —
+ * metadata repeats the typed decision for downstream auditability and must agree exactly with the primary.
  */
 function validateBackendProxyVisionVerificationResult(
-  payload: BackendProxyExecutionPayload,
+  decoded: DecodedBackendProxyResult,
 ): { value: boolean; explanation: string; outputMetadata: Record<string, unknown> } {
-  if (Object.prototype.hasOwnProperty.call(payload, 'error')) {
-    throw new NonRetryableError('Vision Verify provider rejected the request through the backend proxy.');
-  }
-  if (typeof payload.result !== 'boolean') {
+  if (decoded.resultType !== 'boolean' || typeof decoded.result !== 'boolean') {
     throw new NonRetryableError('Backend proxy returned a Vision Verify result that is not a literal Boolean.');
   }
-  if (payload.resultType !== 'boolean') {
-    throw new NonRetryableError('Backend proxy returned a Vision Verify result with a non-Boolean result type.');
-  }
-  if (!isRecord(payload.outputMetadata) || Array.isArray(payload.outputMetadata)) {
+  const metadata = decoded.outputMetadata;
+  if (!isRecord(metadata) || Array.isArray(metadata)) {
     throw new NonRetryableError('Backend proxy returned Vision Verify without required Boolean decision metadata.');
   }
-
-  const metadata = payload.outputMetadata;
   if (typeof metadata.decision !== 'boolean' || metadata.resultType !== 'boolean') {
     throw new NonRetryableError('Backend proxy returned incomplete Vision Verify Boolean decision metadata.');
   }
-  if (metadata.decision !== payload.result) {
+  if (metadata.decision !== decoded.result) {
     throw new NonRetryableError('Backend proxy returned contradictory Vision Verify Boolean decisions.');
   }
 
-  return { value: payload.result, explanation: '', outputMetadata: metadata };
+  return { value: decoded.result, explanation: '', outputMetadata: metadata };
 }
 
 async function executeVisionVerifyNode(
@@ -2368,10 +2425,19 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
   });
   throwIfAborted(input.abortSignal);
 
+  // The upscale replaced the primary bytes. Every field DERIVED from the original bytes is now stale and
+  // must not ride along on the `...input.result` spread: the Source Library persists `blob` in preference
+  // to the result URL, so a retained original Blob would store the pre-upscale image; extension, fileName,
+  // and outputMetadata (e.g. width/height) likewise describe the old bytes. Clear them so the store
+  // re-derives from the upscaled data URL. Any additional (unscaled) sibling results are left untouched.
   return {
     ...input.result,
     result: upscaled.result,
     mimeType: upscaled.mimeType ?? input.result.mimeType,
+    blob: undefined,
+    extension: undefined,
+    fileName: undefined,
+    outputMetadata: undefined,
     statusMessage: `${input.result.statusMessage}; auto-upscaled with ${plan.label}`,
     usage: mergeImageUpscaleUsage(input.result.usage, plan),
   };
