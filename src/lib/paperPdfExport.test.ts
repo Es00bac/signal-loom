@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { buildPaperBookletProofPdfExportRequest, buildPaperPdfExportRequest, buildPaperRasterBookletProofPdfExportRequest, buildPaperRasterPdfExportRequest, buildPaperRasterReaderSpreadPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest, safePaperHtmlFileName, safePaperPdfFileName } from './paperPdfExport';
 
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    count += 1;
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return count;
+}
+
 describe('paperPdfExport', () => {
   it('builds a native PDF export request from a Paper document', () => {
     let doc = createDefaultPaperDocument({
@@ -48,12 +59,25 @@ describe('paperPdfExport', () => {
     expect(safePaperPdfFileName('cover.pdf')).toBe('cover.pdf');
   });
 
-  it('builds a raster page PDF request so final PDF text is the flattened editor snapshot', () => {
+  it('builds a fully-raster page PDF request with exactly one page image and no live author overlay', () => {
+    // AUD-020: a "-raster" mode must ship only the flattened page image. Author text/shapes belong
+    // baked into that image once, never re-drawn as a live vector frame on top (which changes
+    // opacity/compositing and makes the mode dishonest).
     let doc = createDefaultPaperDocument({
       title: 'Raster Text Proof',
       preset: 'comic-book',
       dpi: 300,
     });
+    doc = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'shape',
+      shapeKind: 'ellipse',
+      fillColor: '#3366ff',
+      fillOpacity: 0.5,
+      xMm: 12,
+      yMm: 14,
+      widthMm: 40,
+      heightMm: 40,
+    }).document;
     doc = addFrameToPaperPage(doc, doc.pages[0].id, {
       kind: 'speechBubble',
       xMm: 20,
@@ -78,7 +102,14 @@ describe('paperPdfExport', () => {
     expect(request.html).toContain('src="data:image/png;base64,flattened-page"');
     expect(request.html).toContain('width: 170mm;');
     expect(request.html).toContain('height: 260mm;');
-    expect(request.html).toContain('This line must not be reflowed by PDF text layout.');
+    // The supplied page image appears exactly once for its one page placement.
+    expect(countOccurrences(request.html, 'data:image/png;base64,flattened-page')).toBe(1);
+    // No live author text is re-emitted into the PDF HTML; it is only in the page image.
+    expect(request.html).not.toContain('This line must not be reflowed by PDF text layout.');
+    // No live authored frame overlay markup at all (the shape is not double-painted).
+    expect(request.html).not.toContain('class="frame');
+    expect(request.html).not.toContain('frame-shape');
+    expect(request.html).not.toContain('paper-page');
   });
 
   it('builds a browser-safe reader-spread HTML export request', () => {
@@ -140,12 +171,24 @@ describe('paperPdfExport', () => {
     expect(spreads.html).not.toContain('paper-raster-gutter');
     expect(spreads.html).not.toContain('rgba(239, 68, 68');
     expect(spreads.html).not.toContain('Blank left');
+    // Each supplied page image appears exactly once in its single reader-spread slot.
+    expect(countOccurrences(spreads.html, 'data:image/png;base64,page-one')).toBe(1);
+    expect(countOccurrences(spreads.html, 'data:image/png;base64,page-two')).toBe(1);
+    // AUD-020: reader spreads ship only the page images; no live authored frame overlay/text.
+    expect(spreads.html).not.toContain('class="frame');
+    expect(spreads.html).not.toContain('paper-page');
+    expect(spreads.html).not.toContain('Do not keep this live in spread PDFs.');
     expect(booklet.mode).toBe('booklet-proof-raster');
     expect(booklet.html).toContain('data-signal-loom-paper-raster-pdf="booklet-proof"');
     expect(booklet.html).not.toContain('paper-raster-gutter');
     expect(booklet.html).not.toContain('aria-label="Fold"');
     expect(booklet.html).not.toContain('>Blank<');
-    expect(booklet.html).toContain('Do not keep this live in spread PDFs.');
+    // Booklet imposition places each page image once (blank slots pad the signature).
+    expect(countOccurrences(booklet.html, 'data:image/png;base64,page-one')).toBe(1);
+    expect(countOccurrences(booklet.html, 'data:image/png;base64,page-two')).toBe(1);
+    expect(booklet.html).not.toContain('class="frame');
+    expect(booklet.html).not.toContain('paper-page');
+    expect(booklet.html).not.toContain('Do not keep this live in spread PDFs.');
   });
 
   it('sanitizes unsafe HTML filenames and always adds the HTML extension', () => {

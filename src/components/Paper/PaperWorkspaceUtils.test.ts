@@ -508,9 +508,87 @@ describe('PaperWorkspaceUtils export', () => {
     expect(request.mode).toBe('pages-raster');
     expect(request.html).toContain('data-signal-loom-paper-raster-pdf="true"');
     expect(request.html).toContain('data:image/png;base64,flattened-page');
-    expect(request.html).toContain('PDF parity text');
+    // AUD-020: the flattened page image carries the author text; the "-raster" PDF HTML must not
+    // re-emit it as a live vector frame on top of the raster.
+    expect(request.html).not.toContain('PDF parity text');
+    expect(request.html).not.toContain('class="frame');
     expect(statuses[0]).toContain('Rasterizing 1 Paper page');
     expect(statuses.at(-1)).toContain('/tmp/PDF-Parity.pdf');
+    vi.unstubAllGlobals();
+  });
+
+  it('bakes a translucent shape and author text into the page image once and ships no live overlay', async () => {
+    // AUD-020 double-paint proof through the real default PDF-export boundary: the flattened page
+    // snapshot (the SVG we rasterize) must contain BOTH the translucent shape and the author text so
+    // they are painted exactly once; the delivered "-raster" PDF HTML must then contain only that page
+    // image, never a second live copy of the shape/text that would alter opacity and compositing.
+    let doc = createDefaultPaperDocument({ title: 'Flatten Once' });
+    doc = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'shape',
+      shapeKind: 'ellipse',
+      fillColor: '#3366ff',
+      fillOpacity: 0.5,
+      xMm: 12,
+      yMm: 14,
+      widthMm: 40,
+      heightMm: 40,
+    }).document;
+    doc = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'speechBubble',
+      text: 'Baked once into raster',
+      xMm: 20,
+      yMm: 60,
+      widthMm: 70,
+      heightMm: 24,
+    }).document;
+
+    const exportPaperPdf = vi.fn().mockResolvedValue({
+      canceled: false,
+      filePath: '/tmp/Flatten-Once.pdf',
+      bytes: 4096,
+    });
+    vi.stubGlobal('window', { signalLoomNative: { exportPaperPdf } });
+    const imageSrcs: string[] = [];
+    vi.stubGlobal('Image', class {
+      decoding = 'sync';
+      #src = '';
+      set src(value: string) {
+        this.#src = value;
+        imageSrcs.push(value);
+      }
+      get src(): string {
+        return this.#src;
+      }
+      decode = vi.fn().mockResolvedValue(undefined);
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({
+        width: 0,
+        height: 0,
+        getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+        toDataURL: vi.fn(() => 'data:image/png;base64,flattened-page'),
+      })),
+    });
+
+    await exportPaperPdfDocument(doc, vi.fn());
+
+    // The rasterized input SVG carries both the translucent shape (once) and the author text (once).
+    const svgSrc = imageSrcs.find((src) => src.startsWith('data:image/svg+xml'));
+    expect(svgSrc).toBeDefined();
+    const svg = decodeURIComponent(svgSrc!.replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
+    expect(svg).toContain('frame-shape');
+    // The shape's 50% opacity is carried in its own fill (painted once into the page image).
+    expect(svg).toContain('rgba(51, 102, 255, 0.5)');
+    expect(svg).toContain('Baked once into raster');
+
+    // The delivered PDF HTML is only the flattened page image — no live shape/text overlay.
+    const request = exportPaperPdf.mock.calls[0][0];
+    expect(request.mode).toBe('pages-raster');
+    expect(request.html).toContain('data:image/png;base64,flattened-page');
+    expect(request.html).not.toContain('class="frame');
+    expect(request.html).not.toContain('frame-shape');
+    expect(request.html).not.toContain('paper-page');
+    expect(request.html).not.toContain('Baked once into raster');
     vi.unstubAllGlobals();
   });
 

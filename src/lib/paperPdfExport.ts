@@ -1,9 +1,6 @@
 import type { PaperDocument } from '../types/paper';
 import {
   exportPaperDocumentToPrintHtml,
-  resolvePaperPageFramesForOutput,
-  renderPrintBubbleConnectors,
-  renderPrintFrame,
   effectiveRtlBinding,
   formatMm,
   escapeHtml,
@@ -195,27 +192,6 @@ function sanitizePositiveDpi(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined;
 }
 
-function renderPageVectorOverlay(document: PaperDocument, pageId: string | undefined, pageNumber: number): string {
-  const paperPage = document.pages.find((p) => (pageId && p.id === pageId) || p.pageNumber === pageNumber);
-  if (!paperPage) return '';
-
-  const outputFrames = resolvePaperPageFramesForOutput(document, paperPage).sort((a, b) => a.zIndex - b.zIndex);
-  const pageSpec = {
-    ...document.page,
-    widthMm: document.page.widthMm,
-    heightMm: document.page.heightMm,
-  };
-  const connectors = renderPrintBubbleConnectors(outputFrames, pageSpec);
-  const frames = outputFrames
-    .map((frame) => renderPrintFrame(document, frame))
-    .join('\n');
-
-  return `<div class="paper-page" style="position: absolute; inset: 0; overflow: visible; background: transparent; pointer-events: auto; z-index: 1;">
-${connectors}
-${frames}
-</div>`;
-}
-
 function exportPaperRasterPagesToPdfHtml(
   document: PaperDocument,
   pages: PaperRasterPdfPage[],
@@ -271,71 +247,12 @@ html, body {
   pointer-events: none;
   display: block;
 }
-.paper-page {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: ${formatMm(pageWidthMm)};
-  height: ${formatMm(pageHeightMm)};
-  overflow: visible;
-  background: transparent;
-}
-.frame { position: absolute; margin: 0; overflow: visible; }
-.frame-content { position: absolute; inset: 0; overflow: hidden; }
-.frame img { width: 100%; height: 100%; display: block; object-position: center; transform-origin: center; }
-.frame-text-content, .frame-speechBubble, .frame-thoughtBubble {
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-.frame-speechBubble, .frame-thoughtBubble {
-  background: white;
-  border: 0.45mm solid #111827;
-  border-radius: 50%;
-  padding: 4mm;
-}
-.frame-thoughtBubble {
-  border-style: dashed;
-}
-.bubble-tail {
-  position: absolute;
-  pointer-events: none;
-}
-.bubble-tail-speech {
-  width: 7mm;
-  height: 7mm;
-  transform: translate(-50%, -50%) rotate(45deg);
-  border-right: 0.45mm solid #111827;
-  border-bottom: 0.45mm solid #111827;
-  background: white;
-}
-.bubble-tail-thought, .bubble-tail-thought-small {
-  transform: translate(-50%, -50%);
-  border: 0.45mm solid #111827;
-  border-radius: 50%;
-  background: white;
-}
-.bubble-tail-thought { width: 4mm; height: 4mm; }
-.bubble-tail-thought-small { width: 2.5mm; height: 2.5mm; }
-/* No .frame-caption box: fill/border/corner-radius/padding come from per-frame .frame-content.
-   A duplicate border plus 2.5mm padding here double-outlined captions and clipped fitting text. */
-.frame-panel {
-  border: 0.6mm solid #111827;
-  background: transparent;
-}
-.frame-image img, .frame-panel img { display: none !important; }
-.frame-panel .frame-content, .frame-image .frame-content {
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
-}
 </style>
 </head>
 <body>
 ${rasterPages.map((page) => {
-  const vectorOverlay = renderPageVectorOverlay(document, page.pageId, page.pageNumber);
   return `<section class="paper-raster-page" data-page="${page.pageNumber}" data-page-id="${escapeHtml(page.pageId)}" data-raster-width="${page.widthPx}" data-raster-height="${page.heightPx}">
   <img class="paper-raster-backdrop" alt="${escapeHtml(document.title)} page ${page.pageNumber}" src="${escapeHtml(page.dataUrl)}" width="${page.widthPx}" height="${page.heightPx}" />
-  ${vectorOverlay}
 </section>`;
 }).join('\n')}
 </body>
@@ -352,10 +269,8 @@ function exportPaperRasterSpreadsToPdfHtml(
     if (!pageNumber) return '<div class="paper-raster-spread-slot paper-raster-blank"></div>';
     const page = pageByNumber.get(pageNumber);
     if (!page) return `<div class="paper-raster-spread-slot paper-raster-blank"><span>Missing page ${pageNumber}</span></div>`;
-    const vectorOverlay = renderPageVectorOverlay(document, page.pageId, page.pageNumber);
     return `<div class="paper-raster-spread-slot" data-page="${page.pageNumber}" data-page-id="${escapeHtml(page.pageId)}">
   <img class="paper-raster-backdrop" alt="${escapeHtml(document.title)} page ${page.pageNumber}" src="${escapeHtml(page.dataUrl)}" width="${page.widthPx}" height="${page.heightPx}" />
-  ${vectorOverlay}
 </div>`;
   };
   const spreadsMarkup = mode === 'reader-spreads'
@@ -433,63 +348,6 @@ html, body {
   z-index: 0;
   pointer-events: none;
   display: block;
-}
-.paper-page {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: ${formatMm(document.page.widthMm)};
-  height: ${formatMm(document.page.heightMm)};
-  overflow: visible;
-  background: transparent;
-}
-.frame { position: absolute; margin: 0; overflow: visible; }
-.frame-content { position: absolute; inset: 0; overflow: hidden; }
-.frame img { width: 100%; height: 100%; display: block; object-position: center; transform-origin: center; }
-.frame-text-content, .frame-speechBubble, .frame-thoughtBubble {
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-.frame-speechBubble, .frame-thoughtBubble {
-  background: white;
-  border: 0.45mm solid #111827;
-  border-radius: 50%;
-  padding: 4mm;
-}
-.frame-thoughtBubble {
-  border-style: dashed;
-}
-.bubble-tail {
-  position: absolute;
-  pointer-events: none;
-}
-.bubble-tail-speech {
-  width: 7mm;
-  height: 7mm;
-  transform: translate(-50%, -50%) rotate(45deg);
-  border-right: 0.45mm solid #111827;
-  border-bottom: 0.45mm solid #111827;
-  background: white;
-}
-.bubble-tail-thought, .bubble-tail-thought-small {
-  transform: translate(-50%, -50%);
-  border: 0.45mm solid #111827;
-  border-radius: 50%;
-  background: white;
-}
-.bubble-tail-thought { width: 4mm; height: 4mm; }
-.bubble-tail-thought-small { width: 2.5mm; height: 2.5mm; }
-/* No .frame-caption box: fill/border/corner-radius/padding come from per-frame .frame-content.
-   A duplicate border plus 2.5mm padding here double-outlined captions and clipped fitting text. */
-.frame-panel {
-  border: 0.6mm solid #111827;
-  background: transparent;
-}
-.frame-image img, .frame-panel img { display: none !important; }
-.frame-panel .frame-content, .frame-image .frame-content {
-  background: transparent !important;
-  background-color: transparent !important;
-  background-image: none !important;
 }
 .paper-raster-blank {
   background: #f8fafc;

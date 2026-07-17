@@ -1278,7 +1278,9 @@ async function buildDefaultRasterPaperPdfRequest(
     quality: rasterSettings.quality,
     includeBleed: false,
     outputDpi: rasterSettings.outputDpi,
-    backdropOnly: true,
+    // AUD-020: the ordinary flattened PDF is honestly fully raster. Capture every authored frame —
+    // shapes, text, and placed content — into the page image exactly once. No `backdropOnly`: the
+    // raster PDF HTML no longer re-draws any live vector frame on top of this snapshot.
     fontFaceCss: exact.fontFaceCss,
     onPageRasterized: ({ pageNumber, pageIndex, pageCount }) => {
       setStatus(`Rasterized page ${pageNumber} (${pageIndex + 1}/${pageCount}) for PDF export...`);
