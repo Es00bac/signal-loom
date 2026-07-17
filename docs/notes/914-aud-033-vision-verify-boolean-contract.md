@@ -1,36 +1,46 @@
-# AUD-033 — Vision Verify Boolean contract — 2026-07-16
+# AUD-033 — Vision Verify Boolean contract — correction — 2026-07-16
 
-Commit `45e51a8` fixes the Vision Verify result-type mismatch.
+The prior claim that commit `45e51a8` passed the production build is
+retracted. The fresh Sol gate correctly found that the committed branch did
+not compile under the strict build graph and that its renderer/Electron
+sanitizers, Boolean history migration, loop transport, variable binding, and
+media consumers did not agree on the value contract.
+
+Commit `1c627bc` is the production/test repair.
 
 ## Canonical representation and path
 
-- `executeNodeRequest` now receives a real `boolean` from both Gemini API-key
-  and Vertex routes. The provider's second-line explanation remains in
-  `usage.notes`; status retains the human-readable `Verified: TRUE/FALSE`.
-- The backend-proxy boundary normalizes legacy string decisions too, so it
-  cannot reintroduce `resultType: 'text'` for a Vision Verify node.
-- `flowStore` persists that Boolean through its normal result patch and
-  `appendResultAttempt` path. Selection restores the exact Boolean result.
-  Project hydration converts legacy Vision Verify `"true"`/`"false"` results
-  and result-history entries to the Boolean representation.
-- `evaluateNodeSignal` emits a Boolean value; the legacy generic monitor
-  serializer deliberately renders it as `true` or `false`, never by string
-  truthiness. Source Bin does not materialize Boolean-only values as text or
-  media assets.
+- `ResultValue` is the canonical scalar result type. Boolean node state,
+  attempts, selected attempts, and project data retain real `boolean` values.
+  List/envelope payloads deliberately serialize Boolean items as canonical
+  `"true"`/`"false"` strings and restore them to Booleans at scalar boundaries.
+- Direct Gemini/Vertex and backend-proxy Vision Verify execution agree on
+  true/false. Function execution follows the same scalar restoration rule.
+- App and Electron project sanitizers preserve real Boolean attempts, migrate
+  only Vision Verify's legacy text-tagged canonical decisions (including each
+  history entry), restore a selected false attempt, and leave ordinary text
+  `"true"` untouched.
+- Media URL consumers now explicitly require strings. Attempt previews,
+  source/project/video helpers, image/audio/video/composition UI, execution,
+  and cost helpers cannot use Boolean values as URLs.
+- Flow variables retain Boolean kind while deterministically presenting both
+  values as `true`/`false`; false is no longer filtered by truthiness.
 - `FLOW_NODE_CONTRACTS` and the generated Flow audit now identify Vision
   Verify's runtime result as `boolean`.
 
 ## Evidence
 
-- Executor-to-port parity covers Gemini `true` and `false`, including the
-  output-port declaration and retained explanation:
-  `src/lib/flowExecutionVisionVerify.test.ts`.
-- Signal, generic monitor serialization, result history, selected attempt,
-  and saved-project restoration have explicit Boolean regressions.
-- Focused production Flow suite: 13 files, 378 tests passed with
-  `--configLoader runner`.
-- Forced non-incremental TypeScript, changed-file ESLint, `git diff --check`,
-  `npm run build`, and `node scripts/verify-flow-production.mjs` passed.
-
-The audit generator also refreshed its pre-existing stale Switch Case matrix
-row so the checked-in generated artifact matches the production gate.
+- Red evidence: the strict `npm run build` exposed the invalid `string |
+  boolean` boundaries in media nodes, Video Workspace, executor/proxy,
+  list/source/project helpers, costs, and contracts. The earlier app-only
+  check was therefore insufficient evidence for a production build claim.
+- Green evidence after `1c627bc`:
+  - reviewer matrix plus new focused coverage: 20 files / 465 tests passed
+    with `npx vitest run --configLoader runner …`;
+  - forced `npx tsc -p tsconfig.app.json --noEmit --incremental false` and
+    `npx tsc -p tsconfig.node.json --noEmit --incremental false` passed;
+  - changed-file ESLint had 0 errors (14 existing warnings), and
+    `git diff --check` passed;
+  - `npm run build` passed;
+  - `npm run verify:flow-production` passed: 9 files / 325 tests and the
+    63-node / 182-contract production verifier.
