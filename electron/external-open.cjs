@@ -9,7 +9,7 @@
 'use strict';
 
 const { realpathSync, statSync } = require('node:fs');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { posix, win32 } = require('node:path');
 
 const EXTERNAL_OPEN_DEEP_LINK_SCHEME = 'signal-loom';
@@ -24,8 +24,6 @@ const MAX_EXTERNAL_OPEN_TARGET_LENGTH = 4096;
 const MAX_SECOND_INSTANCE_ARGV_ENTRIES = 64;
 const DEFAULT_MAX_PENDING_REQUESTS = 16;
 const MAX_EXTERNAL_OPEN_DELIVERY_ID_LENGTH = 256;
-const COMMITTED_RECEIPT_FILTER_WORDS = 2_048;
-const COMMITTED_RECEIPT_FILTER_BITS = COMMITTED_RECEIPT_FILTER_WORDS * 32;
 
 function hasControlCharacters(value) {
   for (const character of value) {
@@ -299,41 +297,15 @@ function parseSecondInstanceOpenPayload(value) {
   };
 }
 
-function hashReceipt(value, seed) {
-  let hash = seed >>> 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-    hash ^= hash >>> 13;
-  }
-  return hash >>> 0;
-}
-
-function createCommittedReceiptFilter() {
-  const words = new Uint32Array(COMMITTED_RECEIPT_FILTER_WORDS);
-
-  function bitIndexes(value) {
-    const first = hashReceipt(value, 0x811c9dc5);
-    const second = hashReceipt(value, 0x9e3779b9) | 1;
-    return [0, 1, 2, 3].map((probe) => (first + Math.imul(probe, second)) >>> 0)
-      .map((hash) => hash % COMMITTED_RECEIPT_FILTER_BITS);
-  }
-
-  return {
-    has(value) {
-      return bitIndexes(value).every((bit) => (words[bit >>> 5] & (1 << (bit & 31))) !== 0);
-    },
-    add(value) {
-      for (const bit of bitIndexes(value)) words[bit >>> 5] |= 1 << (bit & 31);
-    },
-  };
+function digestReceipt(value) {
+  return createHash('sha256').update(value).digest('base64url');
 }
 
 /**
  * Main-owned transactional queue for validated external-open intents. Documents remain owned by
  * main until the designated renderer accepts and commits them. A rejection removes the intent
- * without creating an idempotency receipt. A commit records the bounded delivery identity in a
- * fixed-memory, non-expiring replay filter: capacity pressure and wall-clock delay cannot make an
+ * without creating an idempotency receipt. A commit records the bounded delivery identity as a
+ * fixed-size, non-expiring receipt digest: capacity pressure and wall-clock delay cannot make an
  * already committed OS event authoritative again, while a later user open carries a new delivery
  * identity and remains eligible.
  */
@@ -349,7 +321,7 @@ function createExternalOpenQueue(options) {
   }
 
   const pending = [];
-  const committedReceipts = createCommittedReceiptFilter();
+  const committedReceipts = new Set();
   let nextIntentSequence = 1;
   let nextEpochSequence = 1;
   let authorization;
@@ -359,7 +331,7 @@ function createExternalOpenQueue(options) {
   }
 
   function receiptKey(key, deliveryId) {
-    return `${deliveryId || 'legacy-delivery'}\n${key}`;
+    return digestReceipt(`${deliveryId || 'legacy-delivery'}\n${key}`);
   }
 
   function publicIntent(entry) {
