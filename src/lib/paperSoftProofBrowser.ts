@@ -19,8 +19,7 @@ import {
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
-import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
-import { buildPaperPlacedSourceItemMimeTypeLookup } from './paperPlacedPdf';
+import { createPaperPlacedDocumentRasterizationGuard } from './paperPlacedDocumentRasterization';
 
 export interface SoftProofPreviewOptions extends SoftProofOptions {
   /** Preview render resolution. Lower than print DPI keeps the round-trip fast (default 150). */
@@ -44,10 +43,11 @@ export async function softProofPaperPageInBrowser(
 ): Promise<SoftProofPreviewResult> {
   // The current Source Library items are authoritative for linked frames whose persisted metadata
   // predates an in-place source replacement.
-  const sourceItems = useSourceBinStore.getState().getAllItems();
-  assertPaperDocumentSupportsRasterization(document, [pageId], {
-    resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
-  });
+  const assertCurrentSources = createPaperPlacedDocumentRasterizationGuard(
+    document,
+    () => useSourceBinStore.getState().getAllItems(),
+    [pageId],
+  );
   const outputProfile = await resolveExactPaperOutputProfile({
     profiles: document.managedIccProfiles ?? [],
     getAsset: (id) => paperAssetRepository.get(id),
@@ -61,10 +61,13 @@ export async function softProofPaperPageInBrowser(
   const { previewDpi, ...proofOptions } = options;
   const proof = await createSoftProofTransform(iccBytes, proofOptions);
   return usingOwnedPaperResource(proof, async () => {
+    assertCurrentSources();
+    const sourceItems = useSourceBinStore.getState().getAllItems();
     const materializedDocument = await materializePaperDocumentAssetUrls(
       document,
       sourceItems,
     );
+    assertCurrentSources();
     const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
     const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exact.document, pageId, {
       includeBleed: false,
@@ -83,6 +86,7 @@ export async function softProofPaperPageInBrowser(
     const imageData = ctx.createImageData(raster.widthPx, raster.heightPx);
     imageData.data.set(proofed);
     ctx.putImageData(imageData, 0, 0);
+    assertCurrentSources();
 
     return {
       dataUrl: canvas.toDataURL('image/png'),

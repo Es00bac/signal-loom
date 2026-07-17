@@ -4,8 +4,10 @@
 // decodes: every raster target must stop before it starts a page transaction.
 
 import type { PaperDocument, PaperFrame } from '../types/paper';
+import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import { resolvePaperPageFramesForOutput } from './paperDocument';
 import {
+  buildPaperPlacedSourceItemMimeTypeLookup,
   classifyPaperPlacedPdf,
   type PaperPlacedDocumentClassificationOptions,
   type PaperPlacedPdfClassification,
@@ -22,6 +24,8 @@ export interface PaperPlacedDocumentRasterizationIssue {
   isPdf: boolean;
   message: string;
 }
+
+type PaperPlacedSourceItem = Pick<SourceBinLibraryItem, 'id' | 'mimeType' | 'assetUrl'>;
 
 /** Typed, actionable failure shared by PNG/CBZ/KDP/PDF/X and soft-proof raster routes. */
 export class PaperPlacedDocumentRasterizationError extends Error {
@@ -71,6 +75,33 @@ export function assertPaperDocumentSupportsRasterization(
   if (issues.length > 0) throw new PaperPlacedDocumentRasterizationError(issues);
 }
 
+/**
+ * Starts a current-source raster transaction and returns its repeatable compatibility assertion.
+ * Only linked items that existed at the start become required, so an unrelated Source Library
+ * change cannot cancel the operation and an older dangling link keeps its existing fallback path.
+ */
+export function createPaperPlacedDocumentRasterizationGuard(
+  document: PaperDocument,
+  readSourceItems: () => readonly PaperPlacedSourceItem[],
+  pageIds?: readonly string[],
+): () => void {
+  const initialSourceItems = readSourceItems();
+  const initiallyAvailableIds = new Set(initialSourceItems.map((item) => item.id));
+
+  const assertAgainstSourceItems = (sourceItems: readonly PaperPlacedSourceItem[]): void => {
+    const currentIds = new Set(sourceItems.map((item) => item.id));
+    assertPaperDocumentSupportsRasterization(document, pageIds, {
+      resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
+      isSourceItemMissing: (sourceBinItemId) => (
+        initiallyAvailableIds.has(sourceBinItemId) && !currentIds.has(sourceBinItemId)
+      ),
+    });
+  };
+
+  assertAgainstSourceItems(initialSourceItems);
+  return () => assertAgainstSourceItems(readSourceItems());
+}
+
 export function isPaperPlacedDocumentRasterizationError(value: unknown): value is PaperPlacedDocumentRasterizationError {
   return value instanceof PaperPlacedDocumentRasterizationError
     || (Boolean(value) && typeof value === 'object'
@@ -83,6 +114,18 @@ function createIssue(
   frame: PaperFrame,
   classification: PaperPlacedPdfClassification,
 ): PaperPlacedDocumentRasterizationIssue {
+  if (classification.sourceItemMissing) {
+    return {
+      code: 'paper-placed-document-rasterization-unsupported',
+      pageId,
+      pageNumber,
+      frameId: frame.id,
+      frameLabel: frame.asset?.label || frame.label,
+      mimeType: classification.mimeType,
+      isPdf: classification.isPdf,
+      message: `Page ${pageNumber}, frame "${frame.asset?.label || frame.label}" cannot rasterize because its linked Source Library item is no longer available. Restore or relink the source item, or replace the placement with a raster image before raster export.`,
+    };
+  }
   const livePrintRemediation = classification.canEmbedForLivePrint
     ? 'Print HTML/live print will emit this URL-backed PDF as a real <object>; use that route or replace it with a raster image before raster export.'
     : 'Restore or relink this PDF to a URL-backed asset before live print, or replace it with a raster image before raster export.';

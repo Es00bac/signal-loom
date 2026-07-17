@@ -899,7 +899,7 @@ describe('current-source placed document boundary for shipping export routes', (
     vi.unstubAllGlobals();
   });
 
-  it('does not falsely block a stale persisted PDF frame whose current linked item is an image', async () => {
+  it('does not falsely block a stale persisted PDF frame whose current linked item is an image (race guard)', async () => {
     // A data-URL-backed item keeps the whole route runnable in Node; blob-backed replacement is
     // covered by the PaperAssetRuntime MIME-stamp test and the PDF/X browser boundary test.
     sourceStoreMocks.items = [{
@@ -934,6 +934,185 @@ describe('current-source placed document boundary for shipping export routes', (
 
     expect(outcome.state).toBe('success');
     expect(exportPaperPdf).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('stops native PDF output when the linked item becomes a PDF while its destination chooser is open', async () => {
+    sourceStoreMocks.items = [{
+      id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,iVBORw0KGgo=', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Replacement race' });
+    const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    const outputDocument = await materializePaperDocumentAssetUrls(paperDoc, sourceStoreMocks.items);
+    const exportPaperPdf = vi.fn();
+    const createElement = vi.fn();
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        choosePaperPdfExportPath: vi.fn().mockImplementation(async () => {
+          sourceStoreMocks.items = [{
+            id: 'linked-art', label: 'Linked art', kind: 'document', mimeType: 'application/pdf',
+            assetUrl: 'data:application/pdf;base64,JVBERi0=', createdAt: 2,
+          }];
+          return { canceled: false, filePath: '/tmp/Replacement-Race.pdf' };
+        }),
+        exportPaperPdf,
+      },
+    });
+    vi.stubGlobal('document', { createElement });
+    const statuses: string[] = [];
+
+    const outcome = await exportPaperPdfDocument(outputDocument, (status) => statuses.push(status));
+
+    expect(outcome).toMatchObject({ state: 'error', message: expect.stringContaining('cannot rasterize') });
+    expect(exportPaperPdf).not.toHaveBeenCalled();
+    expect(createElement).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('stops page-image output when its linked item is deleted while the directory chooser is open', async () => {
+    sourceStoreMocks.items = [{
+      id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,iVBORw0KGgo=', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Deletion race' });
+    const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    const outputDocument = await materializePaperDocumentAssetUrls(paperDoc, sourceStoreMocks.items);
+    const exportPaperImages = vi.fn();
+    const createElement = vi.fn();
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        choosePaperImageExportDirectory: vi.fn().mockImplementation(async () => {
+          sourceStoreMocks.items = [];
+          return { canceled: false, directoryPath: '/tmp/Deletion-Race-images' };
+        }),
+        exportPaperImages,
+      },
+    });
+    vi.stubGlobal('document', { createElement });
+
+    const outcome = await exportPaperWebcomicImages(outputDocument, vi.fn(), { format: 'png' });
+
+    expect(outcome).toMatchObject({ state: 'error', message: expect.stringContaining('no longer available') });
+    expect(exportPaperImages).not.toHaveBeenCalled();
+    expect(createElement).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['PDF/X', exportPaperPdfxAndSave],
+    ['KDP PDF', exportPaperKdpPdfAndSave],
+  ] as const)('stops %s generation when the linked item disappears during production preparation', async (_label, runExport) => {
+    sourceStoreMocks.items = [{
+      id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,iVBORw0KGgo=', createdAt: 1,
+    }];
+    const { document: base } = strictPdfDocument('Preparation deletion race');
+    const imageSha256 = 'c'.repeat(64);
+    const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: {
+        sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png',
+        pixelWidth: 2400, pixelHeight: 1920,
+        locator: { kind: 'managed', ref: {
+          id: `sha256:${imageSha256}`, sha256: imageSha256, mimeType: 'image/png', byteLength: 1024,
+        } },
+      },
+    }).document;
+    const dependencies = passingPdfxDependencies();
+    const downloadPdf = vi.fn();
+    dependencies.assetExists = vi.fn(async () => {
+      sourceStoreMocks.items = [];
+      return true;
+    });
+    const statuses: string[] = [];
+
+    await runExport(paperDoc, (status) => statuses.push(status), { ...dependencies, downloadPdf });
+
+    expect(statuses.at(-1)).toContain('no longer available');
+    expect(dependencies.exportPdfx).not.toHaveBeenCalled();
+    expect(downloadPdf).not.toHaveBeenCalled();
+  });
+
+  it('does not cancel page-image output when only an unrelated Source item changes', async () => {
+    sourceStoreMocks.items = [
+      {
+        id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+        assetUrl: 'data:image/png;base64,iVBORw0KGgo=', createdAt: 1,
+      },
+      {
+        id: 'unrelated', label: 'Unrelated', kind: 'image', mimeType: 'image/png',
+        assetUrl: 'data:image/png;base64,AAAA', createdAt: 1,
+      },
+    ];
+    const base = createDefaultPaperDocument({ title: 'Unrelated race' });
+    const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    const outputDocument = await materializePaperDocumentAssetUrls(paperDoc, sourceStoreMocks.items);
+    const exportPaperImages = vi.fn().mockResolvedValue({
+      canceled: false, directoryPath: '/tmp/Unrelated-Race-images', files: ['Page-001.png'], bytes: 512,
+    });
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        choosePaperImageExportDirectory: vi.fn().mockImplementation(async () => {
+          sourceStoreMocks.items = [
+            sourceStoreMocks.items[0],
+            {
+              id: 'unrelated', label: 'Unrelated', kind: 'document', mimeType: 'application/pdf',
+              assetUrl: 'data:application/pdf;base64,JVBERi0=', createdAt: 2,
+            },
+          ];
+          return { canceled: false, directoryPath: '/tmp/Unrelated-Race-images' };
+        }),
+        exportPaperImages,
+      },
+    });
+    vi.stubGlobal('Image', class {
+      decoding = 'sync';
+      src = '';
+      decode = vi.fn().mockResolvedValue(undefined);
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({
+        width: 0,
+        height: 0,
+        getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+        toDataURL: vi.fn(() => 'data:image/png;base64,unrelated-change'),
+      })),
+    });
+
+    const outcome = await exportPaperWebcomicImages(outputDocument, vi.fn(), { format: 'png' });
+
+    expect(outcome.state).toBe('success');
+    expect(exportPaperImages).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('blocks uppercase incomplete PDF data text before the page-image destination chooser', async () => {
+    const base = createDefaultPaperDocument({ title: 'Incomplete PDF data' });
+    const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Thumbnail', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: {
+        label: 'thumbnail.png', kind: 'image', mimeType: 'image/png',
+        locator: { kind: 'external', url: 'DATA:APPLICATION/PDF;base64' },
+      },
+    }).document;
+    const choosePaperImageExportDirectory = vi.fn();
+    const exportPaperImages = vi.fn();
+    vi.stubGlobal('window', { signalLoomNative: { choosePaperImageExportDirectory, exportPaperImages } });
+
+    await expect(exportPaperWebcomicImages(paperDoc, vi.fn(), { format: 'png' }))
+      .rejects.toThrow('cannot rasterize');
+    expect(choosePaperImageExportDirectory).not.toHaveBeenCalled();
+    expect(exportPaperImages).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });

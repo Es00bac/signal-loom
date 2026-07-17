@@ -12,6 +12,8 @@ export interface PaperPlacedPdfClassification {
   isPdf: boolean;
   /** A resolved image MIME must use the ordinary Paper image path, even with a stale PDF label. */
   isImage: boolean;
+  /** A linked item that existed when output began but disappeared before the next boundary. */
+  sourceItemMissing: boolean;
   /** A confirmed or conservatively PDF-like placement must not reach the image-only flatten path. */
   blocksRasterization: boolean;
   mimeType?: string;
@@ -26,6 +28,8 @@ export interface PaperPlacedDocumentClassificationOptions {
    * so a decisive current-source MIME outranks every persisted frame metadata field.
    */
   resolveSourceItemMimeType?: (sourceBinItemId: string) => string | undefined;
+  /** Marks a linked item that disappeared during the current output transaction. */
+  isSourceItemMissing?: (sourceBinItemId: string) => boolean;
 }
 
 /**
@@ -37,10 +41,13 @@ export function classifyPaperPlacedPdf(
   options?: PaperPlacedDocumentClassificationOptions,
 ): PaperPlacedPdfClassification {
   if (frame.kind !== 'document' && frame.kind !== 'image') {
-    return { isPdf: false, isImage: false, blocksRasterization: false, canEmbedForLivePrint: false };
+    return { isPdf: false, isImage: false, sourceItemMissing: false, blocksRasterization: false, canEmbedForLivePrint: false };
   }
 
   const asset = frame.asset;
+  const sourceItemMissing = Boolean(
+    asset?.sourceBinItemId && options?.isSourceItemMissing?.(asset.sourceBinItemId),
+  );
   // The current linked Source Library item is what materialization will actually hand to output
   // work, so its media type outranks everything the frame persisted. Below it, the managed
   // reference is content-addressed and verified before export materialization, and a valid data
@@ -63,7 +70,8 @@ export function classifyPaperPlacedPdf(
   return {
     isPdf,
     isImage,
-    blocksRasterization: isPdf,
+    sourceItemMissing,
+    blocksRasterization: isPdf || sourceItemMissing,
     mimeType: resolvedMimeType,
     canEmbedForLivePrint: isPdf && isUsableLivePrintPdfUrl(asset?.locator?.kind === 'external' ? asset.locator.url : undefined),
   };
@@ -116,16 +124,20 @@ function mimeTypeFromBoundedDataUrl(value: string | undefined): string | undefin
   if (typeof value !== 'string' || !/^data:/i.test(value)) return undefined;
   const boundedHeader = value.slice(0, 512);
   const comma = boundedHeader.indexOf(',');
-  // A data URL without a comma is incomplete. Do not bless its claimed media type as resolved
-  // content; a PDF-looking label remains a conservative fallback instead.
-  if (comma < 0) return undefined;
-  const header = boundedHeader.slice(5, comma);
-  return normalizeMimeType(header);
+  const header = boundedHeader.slice(5, comma < 0 ? undefined : comma);
+  const mimeType = normalizeMimeType(header);
+  // An incomplete image data URL remains unusable image input. An explicit PDF claim is still
+  // definitive for the capability boundary, however, so stale image metadata cannot route it to
+  // HTMLImageElement merely because its comma/payload separator is missing.
+  return comma >= 0 || isPaperPdfMimeType(mimeType) ? mimeType : undefined;
 }
 
 function isUsableLivePrintPdfUrl(value: string | undefined): boolean {
   if (typeof value !== 'string' || value.length === 0) return false;
-  if (/^data:/i.test(value)) return isPaperPdfMimeType(mimeTypeFromBoundedDataUrl(value));
+  if (/^data:/i.test(value)) {
+    const boundedHeader = value.slice(0, 512);
+    return boundedHeader.includes(',') && isPaperPdfMimeType(mimeTypeFromBoundedDataUrl(value));
+  }
   // Blob/object URLs have no inspectable header. Their MIME was already resolved from the current
   // asset metadata above; retain them for the browser's compatible <object> path.
   return /^(?:blob:|https?:|file:|signal-loom-asset:)/i.test(value);

@@ -16,8 +16,9 @@ import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../.
 import { buildProvenanceLabel } from '../../lib/exportProvenance';
 import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
-import { assertPaperDocumentSupportsRasterization } from '../../lib/paperPlacedDocumentRasterization';
-import { buildPaperPlacedSourceItemMimeTypeLookup } from '../../lib/paperPlacedPdf';
+import {
+  createPaperPlacedDocumentRasterizationGuard,
+} from '../../lib/paperPlacedDocumentRasterization';
 import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
 import { exportValidatedPaperPdfx, type PaperProductionPreflightOptions } from '../../lib/paperProductionPreflight';
 import { formatProductionValidationStatus } from '../../lib/paperProductionReport';
@@ -870,9 +871,18 @@ export function assertPaperDocumentSupportsRasterizationWithCurrentSources(
   document: PaperDocument,
   pageIds?: readonly string[],
 ): void {
-  assertPaperDocumentSupportsRasterization(document, pageIds, {
-    resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(useSourceBinStore.getState().getAllItems()),
-  });
+  createCurrentSourceRasterizationGuard(document, pageIds);
+}
+
+function createCurrentSourceRasterizationGuard(
+  document: PaperDocument,
+  pageIds?: readonly string[],
+): () => void {
+  return createPaperPlacedDocumentRasterizationGuard(
+    document,
+    () => useSourceBinStore.getState().getAllItems(),
+    pageIds,
+  );
 }
 
 export async function exportPaperPdfDocument(
@@ -894,7 +904,8 @@ export async function exportPaperPdfDocument(
 
   // The default native PDF route first builds page rasters. Do not open a destination chooser or
   // report progress until the complete document has passed the PDF-placement capability boundary.
-  if (!request) assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+  const assertCurrentSources = request ? undefined : createCurrentSourceRasterizationGuard(document);
+  const recheckCurrentSources = (): void => assertCurrentSources?.();
 
   let result: NativePaperPdfExportResult;
   try {
@@ -921,19 +932,33 @@ export async function exportPaperPdfDocument(
       }
       filePath = destination.filePath;
       setStatus(`Preparing PDF export for ${filePath}...`);
+      recheckCurrentSources();
     }
     // Every native route resolves and validates the exact payload before it hands HTML to Electron.
     // A caller-provided vector request is rebuilt from the alias-bearing document; raster requests
     // have already passed the same payload through the shared flatten path below.
-    const exact = await buildPaperDocumentExactManagedFontOutput(document);
     const pdfRequest = request
-      ? (request.mode === 'pages'
-        ? { ...buildPaperPdfExportRequest(exact.document), html: exportPaperDocumentToPrintHtml(exact.document, { mediaBox: 'trim', fontFaceCss: exact.fontFaceCss }) }
-        : request)
-      : await buildDefaultRasterPaperPdfRequest(document, setStatus, options);
+      ? await (async () => {
+        if (request.mode !== 'pages') return request;
+        const exact = await buildPaperDocumentExactManagedFontOutput(document);
+        return {
+          ...buildPaperPdfExportRequest(exact.document),
+          html: exportPaperDocumentToPrintHtml(exact.document, {
+            mediaBox: 'trim',
+            fontFaceCss: exact.fontFaceCss,
+          }),
+        };
+      })()
+      : await buildDefaultRasterPaperPdfRequest(
+        document,
+        setStatus,
+        options,
+        recheckCurrentSources,
+      );
     if (request) {
       setStatus('Preparing print-quality PDF...');
     }
+    recheckCurrentSources();
     result = await nativeBridge.exportPaperPdf({
       ...pdfRequest,
       ...(filePath ? { filePath } : {}),
@@ -1049,16 +1074,20 @@ export async function exportPaperPdfxAndSave(
   try {
     // Strict production preflight may inspect managed assets. The raster capability boundary comes
     // first so a placed PDF cannot trigger those reads or an overridable generic preflight path.
-    assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+    const assertCurrentSources = createCurrentSourceRasterizationGuard(document);
     setStatus(`Checking managed assets and production constraints for ${standardLabel} (${profileLabel})…`);
     const transaction = await exportValidatedPaperPdfx(document, {
       standard,
-      generate: (frozenDocument) => (dependencies.exportPdfx ?? exportPaperDocumentToPdfxInBrowser)(frozenDocument, {
-        standard,
-        title: frozenDocument.title,
-      }),
+      generate: (frozenDocument) => {
+        assertCurrentSources();
+        return (dependencies.exportPdfx ?? exportPaperDocumentToPdfxInBrowser)(frozenDocument, {
+          standard,
+          title: frozenDocument.title,
+        });
+      },
       validate: dependencies.validatePdfx ?? validatePaperPdfx,
       download: async (bytes) => {
+        assertCurrentSources();
         delivery = await deliverValidatedPaperPdf(
           bytes,
           `${safeFileName(document.title)}-${standard}.pdf`,
@@ -1110,7 +1139,7 @@ export async function exportPaperKdpPdfAndSave(
   const profileLabel = profile?.description ?? 'managed CMYK profile';
   let delivery: NativePaperPdfExportResult | undefined;
   try {
-    assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+    const assertCurrentSources = createCurrentSourceRasterizationGuard(document);
     setStatus(`Checking managed assets and production constraints for a ${dpi} DPI KDP PDF/X-1a…`);
     const kdpDocument = updatePaperDocumentSetup(document, {
       bleedMm: KDP_BLEED_MM,
@@ -1120,14 +1149,18 @@ export async function exportPaperKdpPdfAndSave(
       standard: 'pdf-x-1a',
       requiredPpi: dpi,
       allowFullPageFlatten: true,
-      generate: (frozenDocument) => (dependencies.exportPdfx ?? exportPaperDocumentToPdfxInBrowser)(frozenDocument, {
-        standard: 'pdf-x-1a',
-        outputDpi: dpi,
-        flattenAllPages: true,
-        title: frozenDocument.title,
-      }),
+      generate: (frozenDocument) => {
+        assertCurrentSources();
+        return (dependencies.exportPdfx ?? exportPaperDocumentToPdfxInBrowser)(frozenDocument, {
+          standard: 'pdf-x-1a',
+          outputDpi: dpi,
+          flattenAllPages: true,
+          title: frozenDocument.title,
+        });
+      },
       validate: dependencies.validatePdfx ?? validatePaperPdfx,
       download: async (bytes) => {
+        assertCurrentSources();
         delivery = await deliverValidatedPaperPdf(
           bytes,
           `${safeFileName(document.title)}-KDP-interior.pdf`,
@@ -1211,8 +1244,9 @@ async function buildDefaultRasterPaperPdfRequest(
   document: PaperDocument,
   setStatus: (status: string) => void,
   options: PaperPdfDocumentExportOptions,
+  assertCurrentSources: () => void,
 ): Promise<PaperPdfExportRequest> {
-  assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+  assertCurrentSources();
   const exact = await buildPaperDocumentExactManagedFontOutput(document);
   const rasterSettings = buildPaperPdfRasterExportSettings(document, options);
   const pageCount = document.pages.length;
@@ -1246,7 +1280,7 @@ export async function exportPaperWebcomicImages(
   setStatus: (status: string) => void,
   options: PaperWebcomicImageExportOptions = {},
 ): Promise<PaperExportOutcome> {
-  assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+  const assertCurrentSources = createCurrentSourceRasterizationGuard(document);
   const exact = await buildPaperDocumentExactManagedFontOutput(document);
   const outputDocument = exact.document;
   const exactOptions = { ...options, fontFaceCss: exact.fontFaceCss };
@@ -1279,6 +1313,7 @@ export async function exportPaperWebcomicImages(
         }
         directoryPath = destination.directoryPath;
         setStatus(`Preparing ${plan.format.toUpperCase()} page images for ${directoryPath}...`);
+        assertCurrentSources();
       }
       setStatus(`Rasterizing ${plan.pages.length} Paper page${plan.pages.length === 1 ? '' : 's'} for ${plan.format.toUpperCase()} export...`);
       const pages = await buildPaperWebcomicImageDataPages(outputDocument, {
@@ -1288,6 +1323,7 @@ export async function exportPaperWebcomicImages(
           setStatus(`Rasterized page ${pageNumber} (${pageIndex + 1}/${pageCount}) for ${plan.format.toUpperCase()} export...`);
         },
       });
+      assertCurrentSources();
       const result = await nativeBridge.exportPaperImages({
         title: plan.title,
         directoryName: plan.directoryName,
@@ -1335,6 +1371,7 @@ export async function exportPaperWebcomicImages(
 
     setStatus(`Building browser ZIP fallback for ${plan.pages.length} Paper page image${plan.pages.length === 1 ? '' : 's'}...`);
     const archive = await buildPaperWebcomicImageArchiveExport(outputDocument, exactOptions);
+    assertCurrentSources();
     downloadSharedBlob(archive.blob, archive.fileName);
     return finishPaperExport(setStatus, {
       state: 'success',

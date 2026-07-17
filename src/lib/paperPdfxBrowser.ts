@@ -23,8 +23,7 @@ import {
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
-import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
-import { buildPaperPlacedSourceItemMimeTypeLookup } from './paperPlacedPdf';
+import { createPaperPlacedDocumentRasterizationGuard } from './paperPlacedDocumentRasterization';
 
 async function loadManagedPaperFont(assetRef: BinaryAssetRef): Promise<Uint8Array> {
   const record = await paperAssetRepository.get(assetRef.id);
@@ -43,10 +42,10 @@ export async function exportPaperDocumentToPdfxInBrowser(
   // adapter. Stop before profile/materialization work so no mixed-page handoff is created. The
   // current Source Library items are authoritative for linked frames whose persisted metadata
   // predates an in-place source replacement.
-  const sourceItems = useSourceBinStore.getState().getAllItems();
-  assertPaperDocumentSupportsRasterization(document, undefined, {
-    resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
-  });
+  const assertCurrentSources = createPaperPlacedDocumentRasterizationGuard(
+    document,
+    () => useSourceBinStore.getState().getAllItems(),
+  );
   const outputProfile = await resolveExactPaperOutputProfile({
     profiles: document.managedIccProfiles ?? [],
     getAsset: (id) => paperAssetRepository.get(id),
@@ -55,10 +54,13 @@ export async function exportPaperDocumentToPdfxInBrowser(
     const detail = outputProfile.status === 'invalid' ? `: ${outputProfile.reason}` : '';
     throw new Error(`The selected managed CMYK output profile is unavailable${detail}`);
   }
+  assertCurrentSources();
+  const sourceItems = useSourceBinStore.getState().getAllItems();
   const materializedDocument = await materializePaperDocumentAssetUrls(
     document,
     sourceItems,
   );
+  assertCurrentSources();
   const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
   const exportDocument = exact.document;
   return exportPaperDocumentToPdfx(exportDocument, { ...options, outputProfile }, {

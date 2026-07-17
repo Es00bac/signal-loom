@@ -55,7 +55,7 @@ describe('placed Paper asset MIME precedence', () => {
     expect(classification).toMatchObject({ isPdf: true, isImage: false, blocksRasterization: true, mimeType, canEmbedForLivePrint: true });
   });
 
-  it('uses a bounded PDF-label fallback for missing or malformed MIME without treating it as resolved content', () => {
+  it('uses a bounded PDF-label fallback for missing MIME and keeps explicit incomplete PDF data definitive', () => {
     const missing = classifyPaperPlacedPdf(placedFrame({ asset: { label: 'missing.pdf', kind: 'image' } }));
     const malformed = classifyPaperPlacedPdf(placedFrame({
       label: 'malformed.pdf',
@@ -63,7 +63,25 @@ describe('placed Paper asset MIME precedence', () => {
     }));
 
     expect(missing).toMatchObject({ isPdf: true, blocksRasterization: true, canEmbedForLivePrint: false, mimeType: undefined });
-    expect(malformed).toMatchObject({ isPdf: true, blocksRasterization: true, canEmbedForLivePrint: false, mimeType: undefined });
+    expect(malformed).toMatchObject({ isPdf: true, blocksRasterization: true, canEmbedForLivePrint: false, mimeType: 'application/pdf' });
+  });
+
+  it('does not let uppercase incomplete PDF data text fall through to older image metadata', () => {
+    const classification = classifyPaperPlacedPdf(placedFrame({
+      label: 'thumbnail.png',
+      asset: {
+        label: 'thumbnail.png', kind: 'image', mimeType: 'image/png',
+        locator: { kind: 'external', url: 'DATA:APPLICATION/PDF;base64' },
+      },
+    }));
+
+    expect(classification).toMatchObject({
+      isPdf: true,
+      isImage: false,
+      blocksRasterization: true,
+      mimeType: 'application/pdf',
+      canEmbedForLivePrint: false,
+    });
   });
 
   it('does not invent a PDF classification for an ambiguous non-PDF image URL', () => {
