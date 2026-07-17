@@ -1,6 +1,7 @@
 import { packContainer, unpackContainer } from '../../shared/files/SignalLoomContainer';
 import type { ImageDocument, ImageDocumentSnapshot, ImageLayer, LayerBitmap, SelectionMaskSnapshot } from '../../types/imageEditor';
 import {
+  buildImageDocumentSnapshotIntegrity,
   disposeImageDocumentSnapshotResources,
   inspectImageDocumentSnapshotIntegrity,
   markImageDocumentSnapshotOwned,
@@ -84,6 +85,9 @@ export async function serializeSlimg(doc: ImageDocument, codec: SlimgCodec): Pro
       selectionMask: complete ? encodeSelection(snapshot.selectionMask, 'snapshot-selection') : null,
       selectionMaskData: undefined,
       pixelState: complete ? 'complete' as const : 'unavailable' as const,
+      ...(complete
+        ? { integrity: buildImageDocumentSnapshotIntegrity(snapshot.layers, snapshot.selectionMask) }
+        : {}),
     };
   }));
 
@@ -128,34 +132,43 @@ export async function deserializeSlimg(bytes: Uint8Array, codec: SlimgCodec): Pr
   const decodeLayer = async (rawLayer: Record<string, unknown>): Promise<ImageLayer> => {
     let bitmap: LayerBitmap | null = null;
     let mask: LayerBitmap | null = null;
-
-    if (rawLayer.bitmap !== null && rawLayer.bitmap !== undefined && !isAssetRef(rawLayer.bitmap)) {
-      throw new Error('.slimg invalid bitmap asset reference');
-    }
-    if (isAssetRef(rawLayer.bitmap)) {
-      const ref = rawLayer.bitmap;
-      const data = assets.get(ref.asset);
-      if (!data) throw new Error('.slimg missing asset ' + ref.asset);
-      bitmap = await codec.decode(data, ref.width, ref.height);
-      if (bitmap.width !== ref.width || bitmap.height !== ref.height) {
-        throw new Error('.slimg decoded bitmap dimensions do not match ' + ref.asset);
+    try {
+      if (rawLayer.bitmap !== null && rawLayer.bitmap !== undefined && !isAssetRef(rawLayer.bitmap)) {
+        throw new Error('.slimg invalid bitmap asset reference');
       }
-    }
-
-    if (rawLayer.mask !== null && rawLayer.mask !== undefined && !isAssetRef(rawLayer.mask)) {
-      throw new Error('.slimg invalid mask asset reference');
-    }
-    if (isAssetRef(rawLayer.mask)) {
-      const ref = rawLayer.mask;
-      const data = assets.get(ref.asset);
-      if (!data) throw new Error('.slimg missing asset ' + ref.asset);
-      mask = await codec.decode(data, ref.width, ref.height);
-      if (mask.width !== ref.width || mask.height !== ref.height) {
-        throw new Error('.slimg decoded mask dimensions do not match ' + ref.asset);
+      if (isAssetRef(rawLayer.bitmap)) {
+        const ref = rawLayer.bitmap;
+        const data = assets.get(ref.asset);
+        if (!data) throw new Error('.slimg missing asset ' + ref.asset);
+        bitmap = await codec.decode(data, ref.width, ref.height);
+        if (bitmap.width !== ref.width || bitmap.height !== ref.height) {
+          throw new Error('.slimg decoded bitmap dimensions do not match ' + ref.asset);
+        }
       }
-    }
 
-    return { ...rawLayer, bitmap, mask } as unknown as ImageLayer;
+      if (rawLayer.mask !== null && rawLayer.mask !== undefined && !isAssetRef(rawLayer.mask)) {
+        throw new Error('.slimg invalid mask asset reference');
+      }
+      if (isAssetRef(rawLayer.mask)) {
+        const ref = rawLayer.mask;
+        const data = assets.get(ref.asset);
+        if (!data) throw new Error('.slimg missing asset ' + ref.asset);
+        mask = await codec.decode(data, ref.width, ref.height);
+        if (mask.width !== ref.width || mask.height !== ref.height) {
+          throw new Error('.slimg decoded mask dimensions do not match ' + ref.asset);
+        }
+      }
+
+      return { ...rawLayer, bitmap, mask } as unknown as ImageLayer;
+    } catch (error) {
+      for (const decoded of new Set([bitmap, mask].filter((value): value is LayerBitmap => Boolean(value)))) {
+        if (decoded.width !== 0 || decoded.height !== 0) {
+          decoded.width = 0;
+          decoded.height = 0;
+        }
+      }
+      throw error;
+    }
   };
 
   const decodeSelection = (raw: unknown): SelectionMaskSnapshot | undefined => {
@@ -187,13 +200,19 @@ export async function deserializeSlimg(bytes: Uint8Array, codec: SlimgCodec): Pr
   const restoredSnapshots: ImageDocumentSnapshot[] = [];
   try {
     for (const rawLayer of rawDoc.layers) restoredLayers.push(await decodeLayer(rawLayer));
-    const decodedSnapshots = await Promise.all((rawDoc.snapshots ?? []).map(async (rawSnapshot, index) => {
+    for (const [index, rawSnapshot] of (rawDoc.snapshots ?? []).entries()) {
       const rawLayers = Array.isArray(rawSnapshot.layers)
         ? rawSnapshot.layers.filter((layer): layer is Record<string, unknown> => typeof layer === 'object' && layer !== null)
         : [];
       const pixelState = rawSnapshot.pixelState === 'complete' ? 'complete' : 'unavailable';
-      if (pixelState !== 'complete' || typeof rawSnapshot.integrity !== 'object' || rawSnapshot.integrity === null) {
-        return unavailableSnapshot(rawSnapshot, rawLayers, index);
+      if (
+        pixelState !== 'complete'
+        || typeof rawSnapshot.integrity !== 'object'
+        || rawSnapshot.integrity === null
+        || (rawSnapshot.integrity as { version?: unknown }).version !== 2
+      ) {
+        restoredSnapshots.push(unavailableSnapshot(rawSnapshot, rawLayers, index));
+        continue;
       }
       const decodedLayers: ImageLayer[] = [];
       try {
@@ -209,21 +228,22 @@ export async function deserializeSlimg(bytes: Uint8Array, codec: SlimgCodec): Pr
         if (!inspectImageDocumentSnapshotIntegrity(decoded).complete) {
           throw new Error('.slimg snapshot integrity proof failed');
         }
-        return markImageDocumentSnapshotOwned(decoded);
-      } catch {
+        restoredSnapshots.push(markImageDocumentSnapshotOwned(decoded));
+      } catch (error) {
         const unique = new Set<LayerBitmap>();
         for (const layer of decodedLayers) {
           if (layer.bitmap) unique.add(layer.bitmap);
           if (layer.mask) unique.add(layer.mask);
         }
         for (const bitmap of unique) {
-          bitmap.width = 0;
-          bitmap.height = 0;
+          if (bitmap.width !== 0 || bitmap.height !== 0) {
+            bitmap.width = 0;
+            bitmap.height = 0;
+          }
         }
-        return unavailableSnapshot(rawSnapshot, rawLayers, index);
+        throw new Error('.slimg snapshot content integrity verification failed', { cause: error });
       }
-    }));
-    restoredSnapshots.push(...decodedSnapshots);
+    }
     const selectionMask = decodeSelection(rawDoc.selectionMask);
     const hasSelection = Boolean(
       rawDoc.hasSelection
@@ -249,8 +269,10 @@ export async function deserializeSlimg(bytes: Uint8Array, codec: SlimgCodec): Pr
       if (layer.mask) unique.add(layer.mask);
     }
     for (const bitmap of unique) {
-      bitmap.width = 0;
-      bitmap.height = 0;
+      if (bitmap.width !== 0 || bitmap.height !== 0) {
+        bitmap.width = 0;
+        bitmap.height = 0;
+      }
     }
     throw error;
   }

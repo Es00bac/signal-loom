@@ -11,7 +11,20 @@ import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 
 // Fake bitmaps + a codec that maps bitmap<->string, so the round-trip wiring is tested without a
 // real OffscreenCanvas backend (unavailable in the node test environment).
-const fakeBitmap = (id: string): LayerBitmap => ({ __id: id, width: 1, height: 1 } as unknown as LayerBitmap);
+const fakeBitmap = (id: string): LayerBitmap => ({
+  __id: id,
+  width: 1,
+  height: 1,
+  getContext: () => ({
+    getImageData: () => ({
+      width: 1,
+      height: 1,
+      data: new Uint8ClampedArray(
+        Array.from({ length: 4 }, (_, index) => id.charCodeAt(index % id.length)),
+      ),
+    }),
+  }),
+} as unknown as LayerBitmap);
 const bitmapId = (bitmap: LayerBitmap | null): string | null =>
   bitmap ? (bitmap as unknown as { __id: string }).__id : null;
 
@@ -68,7 +81,7 @@ describe('image layer project pixels', () => {
     )).rejects.toThrow('corrupt');
   });
 
-  it('round-trips complete named snapshot pixels and marks corrupt snapshot payloads unavailable', async () => {
+  it('round-trips complete named snapshot pixels and rejects corrupt current-format payloads', async () => {
     const snapshotLayers = [baseLayer({ bitmap: fakeBitmap('red'), mask: fakeBitmap('mask') })];
     const snapshot = {
       id: 'snapshot-red',
@@ -92,7 +105,7 @@ describe('image layer project pixels', () => {
     expect(bitmapId(decoded.layers[0].bitmap)).toBe('red');
     expect(bitmapId(decoded.layers[0].mask)).toBe('mask');
 
-    const corrupt = await decodeImageDocumentSnapshotProjectPixels(
+    await expect(decodeImageDocumentSnapshotProjectPixels(
       { ...encoded, layers: [{ ...encoded.layers[0], bitmapData: 'corrupt' }] },
       {
         encode: stubCodec.encode,
@@ -101,8 +114,7 @@ describe('image layer project pixels', () => {
           return stubCodec.decode(payload);
         },
       },
-    );
-    expect(corrupt.pixelState).toBe('unavailable');
+    )).rejects.toThrow(/integrity/i);
   });
 
   it('rejects stripped, dimension-mismatched, and selection-incomplete claimed-complete snapshots', async () => {
@@ -127,30 +139,32 @@ describe('image layer project pixels', () => {
       integrity: buildImageDocumentSnapshotIntegrity(layers, selectionMask),
     }, stubCodec);
 
-    const strippedBitmap = await decodeImageDocumentSnapshotProjectPixels({
+    await expect(decodeImageDocumentSnapshotProjectPixels({
       ...encoded,
       layers: [{ ...encoded.layers[0], bitmapData: undefined }],
-    }, stubCodec);
-    expect(strippedBitmap.pixelState).toBe('unavailable');
-    expect(strippedBitmap.layers[0].bitmap).toBeNull();
+    }, stubCodec)).rejects.toThrow(/integrity/i);
 
-    const wrongDimensions = await decodeImageDocumentSnapshotProjectPixels(encoded, {
+    await expect(decodeImageDocumentSnapshotProjectPixels(encoded, {
       ...stubCodec,
       decode: async () => ({ width: 2, height: 1, __id: 'wrong' } as unknown as LayerBitmap),
-    });
-    expect(wrongDimensions.pixelState).toBe('unavailable');
+    })).rejects.toThrow(/integrity/i);
 
-    const missingSelection = await decodeImageDocumentSnapshotProjectPixels({
+    await expect(decodeImageDocumentSnapshotProjectPixels({
       ...encoded,
       selectionMaskData: undefined,
-    }, stubCodec);
-    expect(missingSelection.pixelState).toBe('unavailable');
-    expect(missingSelection.hasSelection).toBe(false);
+    }, stubCodec)).rejects.toThrow(/integrity/i);
 
     const legacyWithoutProof = await decodeImageDocumentSnapshotProjectPixels({
       ...encoded,
       integrity: undefined,
     }, stubCodec);
     expect(legacyWithoutProof.pixelState).toBe('unavailable');
+
+    const legacyVersionOne = await decodeImageDocumentSnapshotProjectPixels({
+      ...encoded,
+      integrity: { ...encoded.integrity!, version: 1 } as unknown as typeof encoded.integrity,
+    }, stubCodec);
+    expect(legacyVersionOne.pixelState).toBe('unavailable');
+    expect(legacyVersionOne.integrity?.version as number).toBe(1);
   });
 });

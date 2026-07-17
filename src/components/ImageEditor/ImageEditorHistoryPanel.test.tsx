@@ -493,6 +493,44 @@ describe('ImageEditorHistoryPanel', () => {
     expect(container.textContent).toContain('Pixels unavailable');
   });
 
+  it('keeps Restore disabled while a current snapshot content digest is mismatched', () => {
+    const selectionMask = { width: 2, height: 2, data: new Uint8ClampedArray([0, 255, 0, 1]) };
+    const layers: ImageLayer[] = [];
+    const snapshot = {
+      id: 'digest-mismatch-snapshot',
+      name: 'Digest mismatch',
+      createdAt: 2,
+      width: 2,
+      height: 2,
+      layers,
+      activeLayerId: null,
+      hasSelection: true,
+      selectionVersion: 1,
+      selectionMask,
+      pixelState: 'complete' as const,
+      integrity: buildImageDocumentSnapshotIntegrity(layers, selectionMask),
+    };
+    selectionMask.data[3] ^= 1;
+    const doc = {
+      ...createEmptyImageDocument({
+        id: 'doc-history-digest-mismatch',
+        title: 'Digest Mismatch',
+        width: 2,
+        height: 2,
+      }),
+      snapshots: [snapshot],
+    };
+    useImageEditorStore.getState().openDocument(doc);
+
+    act(() => {
+      root.render(<ImageEditorHistoryPanel />);
+    });
+
+    const restoreButton = container.querySelector<HTMLButtonElement>('button[aria-label="Restore snapshot Digest mismatch"]');
+    expect(restoreButton?.disabled).toBe(true);
+    expect(container.textContent).toContain('Pixels unavailable');
+  });
+
   it('creates and renames snapshots with custom names from the history panel', () => {
     const doc = createEmptyImageDocument({
       id: 'doc-history-named-snapshot',

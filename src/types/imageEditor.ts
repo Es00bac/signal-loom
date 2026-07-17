@@ -821,7 +821,7 @@ export interface ImageDocumentSnapshot {
   selectionMaskData?: string;
   /** Complete snapshots own immutable bitmap/mask pixels; unavailable is a legacy/metadata-only record. */
   pixelState?: 'complete' | 'unavailable';
-  /** Structural proof for every expected layer bitmap/mask and selection payload. */
+  /** Versioned structural and cryptographic content proof for every expected pixel payload. */
   integrity?: ImageDocumentSnapshotIntegrity;
 }
 
@@ -829,6 +829,8 @@ export interface ImageDocumentSnapshotAssetIntegrity {
   present: boolean;
   width: number;
   height: number;
+  /** SHA-256 over canonical role/layer/dimension metadata plus exact decoded pixel bytes. */
+  contentDigest?: string;
 }
 
 export interface ImageDocumentSnapshotLayerIntegrity {
@@ -838,7 +840,7 @@ export interface ImageDocumentSnapshotLayerIntegrity {
 }
 
 export interface ImageDocumentSnapshotIntegrity {
-  version: 1;
+  version: 2;
   layers: ImageDocumentSnapshotLayerIntegrity[];
   selection: ImageDocumentSnapshotAssetIntegrity & { byteLength: number };
 }

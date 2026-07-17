@@ -1229,8 +1229,10 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
           disposeImageDocumentSnapshotResources(namedSnapshot);
         }
         for (const bitmap of decodedLiveBitmaps) {
-          bitmap.width = 0;
-          bitmap.height = 0;
+          if (bitmap.width !== 0 || bitmap.height !== 0) {
+            bitmap.width = 0;
+            bitmap.height = 0;
+          }
         }
         throw error;
       }

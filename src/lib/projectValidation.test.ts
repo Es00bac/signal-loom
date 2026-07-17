@@ -951,11 +951,11 @@ describe('sanitizeProjectDocument', () => {
             hasSelection: false,
             selectionVersion: 2,
             integrity: {
-              version: 1,
+              version: 2,
               layers: [{
                 layerId: 'vector-layer',
-                bitmap: { present: true, width: 800, height: 600 },
-                mask: { present: true, width: 800, height: 600 },
+                bitmap: { present: true, width: 800, height: 600, contentDigest: `sha256:${'a'.repeat(64)}` },
+                mask: { present: true, width: 800, height: 600, contentDigest: `sha256:${'b'.repeat(64)}` },
               }],
               selection: { present: false, width: 0, height: 0, byteLength: 0 },
             },
@@ -1057,6 +1057,41 @@ describe('sanitizeProjectDocument', () => {
     });
 
     expect(project.imageEditor?.documents[0].snapshots?.[0]?.pixelState).toBe('unavailable');
+  });
+
+  it('rejects malformed or missing current-format Image snapshot content digests', () => {
+    const currentSnapshotProject = (contentDigest?: string) => projectWith({
+      imageEditor: {
+        activeDocId: 'digest-doc',
+        documents: [{
+          id: 'digest-doc', title: 'Digest', width: 1, height: 1,
+          layers: [], activeLayerId: null, hasSelection: false, selectionVersion: 0,
+          viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+          snapshots: [{
+            id: 'digest-snapshot', name: 'Digest', createdAt: 1, width: 1, height: 1,
+            layers: [{
+              id: 'digest-layer', name: 'Digest layer', type: 'image', visible: true, locked: false,
+              opacity: 1, blendMode: 'normal', x: 0, y: 0, bitmap: null, mask: null,
+              bitmapData: 'AAAA', bitmapVersion: 0,
+            }],
+            activeLayerId: 'digest-layer', hasSelection: false, selectionVersion: 0,
+            pixelState: 'complete',
+            integrity: {
+              version: 2,
+              layers: [{
+                layerId: 'digest-layer',
+                bitmap: { present: true, width: 1, height: 1, ...(contentDigest ? { contentDigest } : {}) },
+                mask: { present: false, width: 0, height: 0 },
+              }],
+              selection: { present: false, width: 0, height: 0, byteLength: 0 },
+            },
+          }],
+        }],
+      },
+    });
+
+    expect(() => currentSnapshotProject('not-a-digest')).toThrow(/malformed cryptographic/i);
+    expect(() => currentSnapshotProject()).toThrow(/malformed cryptographic/i);
   });
 
   it('rejects documents without array-shaped flow snapshots', () => {

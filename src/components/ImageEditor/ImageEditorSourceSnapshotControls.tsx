@@ -474,7 +474,7 @@ export function SnapshotsControls({
             <div className="flex items-center gap-1">
               <span className="min-w-0 flex-1 truncate">{snapshot.name}</span>
               {!restorable ? (
-                <span className="text-amber-100/60" title="This snapshot has no structurally proven pixel and selection payload">Pixels unavailable</span>
+                <span className="text-amber-100/60" title="This snapshot has no cryptographically proven pixel and selection payload">Pixels unavailable</span>
               ) : null}
               {onRename ? (
                 <button
@@ -494,7 +494,7 @@ export function SnapshotsControls({
                 className="text-cyan-100/45 hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
                 disabled={!restorable}
                 onClick={() => onRestore(snapshot.id)}
-                title={restorable ? undefined : 'This snapshot lacks structurally proven pixels or selection data and cannot be restored safely.'}
+                title={restorable ? undefined : 'This snapshot lacks cryptographically proven pixels or selection data and cannot be restored safely.'}
                 type="button"
               >
                 Restore

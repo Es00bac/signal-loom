@@ -23,7 +23,14 @@ class ResourceCanvas {
   }
 
   getContext() {
-    return { drawImage: () => undefined };
+    return {
+      drawImage: () => undefined,
+      getImageData: () => ({
+        width: this.width,
+        height: this.height,
+        data: new Uint8ClampedArray(this.width * this.height * 4),
+      }),
+    };
   }
 }
 

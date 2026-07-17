@@ -1,6 +1,7 @@
 import type { ImageDocumentSnapshot, ImageLayer, LayerBitmap, SelectionMaskSnapshot } from '../../types/imageEditor';
 import { bitmapFromUrl, bitmapToPngDataUrl } from './LayerBitmap';
 import {
+  buildImageDocumentSnapshotIntegrity,
   inspectImageDocumentSnapshotIntegrity,
   markImageDocumentSnapshotOwned,
 } from './ImageSnapshots';
@@ -45,13 +46,26 @@ export async function decodeImageLayerProjectPixels(
 ): Promise<ImageLayer> {
   let bitmap = layer.bitmap;
   let mask = layer.mask;
-  if (layer.bitmapData) {
-    bitmap = await codec.decode(layer.bitmapData);
+  const decodedOwned = new Set<LayerBitmap>();
+  try {
+    if (layer.bitmapData) {
+      bitmap = await codec.decode(layer.bitmapData);
+      decodedOwned.add(bitmap);
+    }
+    if (layer.maskData) {
+      mask = await codec.decode(layer.maskData);
+      decodedOwned.add(mask);
+    }
+    return { ...layer, bitmap, mask, bitmapData: undefined, maskData: undefined };
+  } catch (error) {
+    for (const decoded of decodedOwned) {
+      if (decoded.width !== 0 || decoded.height !== 0) {
+        decoded.width = 0;
+        decoded.height = 0;
+      }
+    }
+    throw error;
   }
-  if (layer.maskData) {
-    mask = await codec.decode(layer.maskData);
-  }
-  return { ...layer, bitmap, mask, bitmapData: undefined, maskData: undefined };
 }
 
 function bytesToBase64(bytes: Uint8ClampedArray): string {
@@ -111,14 +125,20 @@ export async function encodeImageDocumentSnapshotProjectPixels(
   if (!inspectImageDocumentSnapshotIntegrity(snapshot).complete) {
     return unavailableSnapshot(snapshot);
   }
+  const layers = await Promise.all(snapshot.layers.map((layer) => encodeImageLayerProjectPixels(layer, codec)));
+  const selectionMaskData = snapshot.selectionMask
+    ? encodeImageSelectionMaskProjectData(snapshot.selectionMask)
+    : undefined;
+  // Recompute after payload production at the persistence boundary. Never copy a caller-supplied
+  // digest into a new file without proving the exact canonical runtime bytes again.
+  const integrity = buildImageDocumentSnapshotIntegrity(snapshot.layers, snapshot.selectionMask);
   return {
     ...snapshot,
-    layers: await Promise.all(snapshot.layers.map((layer) => encodeImageLayerProjectPixels(layer, codec))),
+    layers,
     selectionMask: undefined,
-    selectionMaskData: snapshot.selectionMask
-      ? encodeImageSelectionMaskProjectData(snapshot.selectionMask)
-      : undefined,
+    selectionMaskData,
     pixelState: 'complete',
+    integrity,
   };
 }
 
@@ -127,7 +147,7 @@ export async function decodeImageDocumentSnapshotProjectPixels(
   snapshot: ImageDocumentSnapshot,
   codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
 ): Promise<ImageDocumentSnapshot> {
-  if (snapshot.pixelState !== 'complete' || !snapshot.integrity) {
+  if (snapshot.pixelState !== 'complete' || !snapshot.integrity || snapshot.integrity.version !== 2) {
     return unavailableSnapshot(snapshot);
   }
   const decodedLayers: ImageLayer[] = [];
@@ -175,16 +195,18 @@ export async function decodeImageDocumentSnapshotProjectPixels(
       throw new Error('Decoded snapshot does not match its integrity proof.');
     }
     return markImageDocumentSnapshotOwned(decoded);
-  } catch {
+  } catch (error) {
     const unique = new Set<LayerBitmap>();
     for (const layer of decodedLayers) {
       if (layer.bitmap) unique.add(layer.bitmap);
       if (layer.mask) unique.add(layer.mask);
     }
     for (const bitmap of unique) {
-      bitmap.width = 0;
-      bitmap.height = 0;
+      if (bitmap.width !== 0 || bitmap.height !== 0) {
+        bitmap.width = 0;
+        bitmap.height = 0;
+      }
     }
-    return unavailableSnapshot(snapshot);
+    throw new Error('Snapshot project pixel content integrity verification failed.', { cause: error });
   }
 }

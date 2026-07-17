@@ -7,7 +7,8 @@ import type {
   LayerBitmap,
   SelectionMaskSnapshot,
 } from '../../types/imageEditor';
-import { cloneBitmap } from './LayerBitmap';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { cloneBitmap, getBitmapImageData } from './LayerBitmap';
 import { fromSnapshot, isMaskEmpty, toSnapshot, type SelectionMask } from './SelectionMask';
 import { clearSelection, getSelection, setSelection } from './selectionRegistry';
 
@@ -104,10 +105,52 @@ export interface ImageSnapshotReadinessDescriptor {
 
 const ownedNamedSnapshots = new WeakSet<ImageDocumentSnapshot>();
 
-function snapshotAssetIntegrity(bitmap: LayerBitmap | null): ImageDocumentSnapshotAssetIntegrity {
-  return bitmap
-    ? { present: true, width: bitmap.width, height: bitmap.height }
-    : { present: false, width: 0, height: 0 };
+type SnapshotAssetRole = 'bitmap-rgba8' | 'mask-rgba8' | 'selection-alpha8';
+
+function snapshotContentDigest(input: {
+  role: SnapshotAssetRole;
+  layerId: string;
+  width: number;
+  height: number;
+  bytes: Uint8Array | Uint8ClampedArray;
+}): string {
+  const layerIdBytes = new TextEncoder().encode(input.layerId);
+  const header = new TextEncoder().encode(
+    `signal-loom:image-snapshot-content:v2\0role=${input.role}\0layer-id-bytes=${layerIdBytes.byteLength}\0`,
+  );
+  const dimensions = new TextEncoder().encode(
+    `\0width=${input.width}\0height=${input.height}\0byte-length=${input.bytes.byteLength}\0payload\0`,
+  );
+  const hasher = sha256.create();
+  hasher.update(header);
+  hasher.update(layerIdBytes);
+  hasher.update(dimensions);
+  hasher.update(new Uint8Array(input.bytes.buffer, input.bytes.byteOffset, input.bytes.byteLength));
+  return `sha256:${[...hasher.digest()].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function snapshotAssetIntegrity(
+  bitmap: LayerBitmap | null,
+  layerId: string,
+  role: Exclude<SnapshotAssetRole, 'selection-alpha8'>,
+): ImageDocumentSnapshotAssetIntegrity {
+  if (!bitmap) return { present: false, width: 0, height: 0 };
+  const pixels = getBitmapImageData(bitmap).data;
+  if (pixels.byteLength !== bitmap.width * bitmap.height * 4) {
+    throw new Error(`Snapshot ${role} ${layerId} did not expose exact RGBA bytes.`);
+  }
+  return {
+    present: true,
+    width: bitmap.width,
+    height: bitmap.height,
+    contentDigest: snapshotContentDigest({
+      role,
+      layerId,
+      width: bitmap.width,
+      height: bitmap.height,
+      bytes: pixels,
+    }),
+  };
 }
 
 function selectionAssetIntegrity(selection: SelectionMaskSnapshot | undefined): ImageDocumentSnapshotIntegrity['selection'] {
@@ -117,6 +160,13 @@ function selectionAssetIntegrity(selection: SelectionMaskSnapshot | undefined): 
         width: selection.width,
         height: selection.height,
         byteLength: selection.data.byteLength,
+        contentDigest: snapshotContentDigest({
+          role: 'selection-alpha8',
+          layerId: '',
+          width: selection.width,
+          height: selection.height,
+          bytes: selection.data,
+        }),
       }
     : { present: false, width: 0, height: 0, byteLength: 0 };
 }
@@ -126,11 +176,11 @@ export function buildImageDocumentSnapshotIntegrity(
   selectionMask?: SelectionMaskSnapshot,
 ): ImageDocumentSnapshotIntegrity {
   return {
-    version: 1,
+    version: 2,
     layers: layers.map((layer) => ({
       layerId: layer.id,
-      bitmap: snapshotAssetIntegrity(layer.bitmap),
-      mask: snapshotAssetIntegrity(layer.mask),
+      bitmap: snapshotAssetIntegrity(layer.bitmap, layer.id, 'bitmap-rgba8'),
+      mask: snapshotAssetIntegrity(layer.mask, layer.id, 'mask-rgba8'),
     })),
     selection: selectionAssetIntegrity(selectionMask),
   };
@@ -154,17 +204,31 @@ function validSelectionForDocument(
 function assetMatchesIntegrity(
   bitmap: LayerBitmap | null,
   expected: ImageDocumentSnapshotAssetIntegrity,
+  layerId: string,
+  role: Exclude<SnapshotAssetRole, 'selection-alpha8'>,
 ): boolean {
-  if (!expected.present) return bitmap === null && expected.width === 0 && expected.height === 0;
-  return Boolean(
-    bitmap
-    && Number.isFinite(expected.width)
-    && Number.isFinite(expected.height)
-    && expected.width > 0
-    && expected.height > 0
-    && bitmap.width === expected.width
-    && bitmap.height === expected.height,
-  );
+  if (!expected.present) {
+    return bitmap === null
+      && expected.width === 0
+      && expected.height === 0
+      && expected.contentDigest === undefined;
+  }
+  if (
+    !bitmap
+    || !Number.isFinite(expected.width)
+    || !Number.isFinite(expected.height)
+    || expected.width <= 0
+    || expected.height <= 0
+    || bitmap.width !== expected.width
+    || bitmap.height !== expected.height
+    || typeof expected.contentDigest !== 'string'
+  ) return false;
+  try {
+    const actual = snapshotAssetIntegrity(bitmap, layerId, role);
+    return actual.contentDigest === expected.contentDigest;
+  } catch {
+    return false;
+  }
 }
 
 export interface ImageDocumentSnapshotIntegrityResult {
@@ -180,7 +244,7 @@ export function inspectImageDocumentSnapshotIntegrity(
   const reasons: string[] = [];
   const integrity = snapshot.integrity;
   if (snapshot.pixelState !== 'complete') reasons.push('pixel-state-unavailable');
-  if (!integrity || integrity.version !== 1) {
+  if (!integrity || integrity.version !== 2) {
     reasons.push('missing-integrity-manifest');
     return { complete: false, selectionComplete: !snapshot.hasSelection, reasons };
   }
@@ -193,8 +257,12 @@ export function inspectImageDocumentSnapshotIntegrity(
       reasons.push(`missing-layer-proof:${layer.id}`);
       continue;
     }
-    if (!assetMatchesIntegrity(layer.bitmap, proof.bitmap)) reasons.push(`bitmap-mismatch:${layer.id}`);
-    if (!assetMatchesIntegrity(layer.mask, proof.mask)) reasons.push(`mask-mismatch:${layer.id}`);
+    if (!assetMatchesIntegrity(layer.bitmap, proof.bitmap, layer.id, 'bitmap-rgba8')) {
+      reasons.push(`bitmap-content-digest-mismatch:${layer.id}`);
+    }
+    if (!assetMatchesIntegrity(layer.mask, proof.mask, layer.id, 'mask-rgba8')) {
+      reasons.push(`mask-content-digest-mismatch:${layer.id}`);
+    }
   }
 
   const selectionProof = integrity.selection;
@@ -208,7 +276,15 @@ export function inspectImageDocumentSnapshotIntegrity(
       validSelectionForDocument(selection, snapshot.width, snapshot.height)
       && selectionProof.width === selection.width
       && selectionProof.height === selection.height
-      && selectionProof.byteLength === selection.data.byteLength,
+      && selectionProof.byteLength === selection.data.byteLength
+      && typeof selectionProof.contentDigest === 'string'
+      && selectionProof.contentDigest === snapshotContentDigest({
+        role: 'selection-alpha8',
+        layerId: '',
+        width: selection.width,
+        height: selection.height,
+        bytes: selection.data,
+      }),
     );
     if (!selectionComplete) reasons.push('selection-payload-mismatch');
   } else if (
@@ -216,6 +292,7 @@ export function inspectImageDocumentSnapshotIntegrity(
     || selectionProof.width !== 0
     || selectionProof.height !== 0
     || selectionProof.byteLength !== 0
+    || selectionProof.contentDigest !== undefined
   ) {
     reasons.push('unexpected-selection-payload');
     selectionComplete = false;
@@ -252,8 +329,10 @@ export function disposeImageDocumentSnapshotResources(
   collectSnapshotBitmaps(snapshot, bitmaps);
   for (const bitmap of bitmaps) {
     if (protectedBitmaps.has(bitmap)) continue;
-    bitmap.width = 0;
-    bitmap.height = 0;
+    if (bitmap.width !== 0 || bitmap.height !== 0) {
+      bitmap.width = 0;
+      bitmap.height = 0;
+    }
   }
   ownedNamedSnapshots.delete(snapshot);
 }
@@ -445,14 +524,14 @@ function buildNamedSnapshotReadiness(snapshot: ImageDocumentSnapshot): ImageName
       code: 'snapshot-integrity-unproven',
       severity: 'error',
       snapshotId: snapshot.id,
-      message: `Snapshot ${snapshot.id} has no structural pixel manifest and cannot be restored safely.`,
+      message: `Snapshot ${snapshot.id} has no cryptographic pixel manifest and cannot be restored safely.`,
     });
   } else if (snapshot.pixelState === 'complete' && !integrity.complete) {
     blockers.push({
       code: integrity.selectionComplete ? 'snapshot-integrity-unproven' : 'snapshot-selection-unavailable',
       severity: 'error',
       snapshotId: snapshot.id,
-      message: `Snapshot ${snapshot.id} does not match its stored pixel/selection integrity manifest.`,
+      message: `Snapshot ${snapshot.id} does not match its stored pixel/selection content digest manifest.`,
     });
   }
 

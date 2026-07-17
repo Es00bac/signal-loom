@@ -5,13 +5,28 @@ import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 
 // A fake LayerBitmap: only width/height matter to the serializer. We tag it for round-trip checks.
 function fakeBitmap(width: number, height: number, tag: string): LayerBitmap {
-  return { width, height, __tag: tag } as unknown as LayerBitmap;
+  return {
+    width,
+    height,
+    __tag: tag,
+    getContext: () => ({
+      getImageData: () => {
+        const tagBytes = new TextEncoder().encode(tag);
+        return {
+          width,
+          height,
+          data: new Uint8ClampedArray(
+            Array.from({ length: width * height * 4 }, (_, index) => tagBytes[index % tagBytes.length]),
+          ),
+        };
+      },
+    }),
+  } as unknown as LayerBitmap;
 }
 const codec: SlimgCodec = {
   // encode: store the tag as UTF-8 bytes so we can assert the round-trip carried the right pixels
   encode: async (b) => new TextEncoder().encode((b as unknown as { __tag: string }).__tag),
-  decode: async (bytes, width, height) =>
-    ({ width, height, __tag: new TextDecoder().decode(bytes) } as unknown as LayerBitmap),
+  decode: async (bytes, width, height) => fakeBitmap(width, height, new TextDecoder().decode(bytes)),
 };
 
 function doc(): ImageDocument {
@@ -113,7 +128,7 @@ describe('ImageSlimgFormat', () => {
     expect(out.snapshots?.[0]?.selectionMask?.data).not.toBe(selectionMask.data);
   });
 
-  it('fails claimed-complete native snapshots closed when an expected ref, dimensions, or selection asset is missing', async () => {
+  it('rejects claimed-complete native snapshots when an expected ref, dimensions, or selection asset is missing', async () => {
     const live = doc();
     const selectionMask = { width: 64, height: 48, data: new Uint8ClampedArray(64 * 48) };
     selectionMask.data[44] = 255;
@@ -135,22 +150,144 @@ describe('ImageSlimgFormat', () => {
       return deserializeSlimg(packContainer(cloned, assets), codec);
     };
 
-    const stripped = await mutateAndOpen((snapshot) => {
+    await expect(mutateAndOpen((snapshot) => {
       (snapshot.layers as Array<Record<string, unknown>>)[0].bitmap = null;
-    });
-    expect(stripped.snapshots?.[0]?.pixelState).toBe('unavailable');
-    expect(stripped.snapshots?.[0]?.layers[0].bitmap).toBeNull();
+    })).rejects.toThrow(/integrity/i);
 
-    const wrongDimensions = await mutateAndOpen((snapshot) => {
+    await expect(mutateAndOpen((snapshot) => {
       ((snapshot.layers as Array<Record<string, unknown>>)[0].bitmap as { width: number }).width = 63;
-    });
-    expect(wrongDimensions.snapshots?.[0]?.pixelState).toBe('unavailable');
+    })).rejects.toThrow(/integrity/i);
 
-    const missingSelection = await mutateAndOpen((snapshot) => {
+    await expect(mutateAndOpen((snapshot) => {
       snapshot.selectionMask = null;
-    });
-    expect(missingSelection.snapshots?.[0]?.pixelState).toBe('unavailable');
-    expect(missingSelection.snapshots?.[0]?.hasSelection).toBe(false);
+    })).rejects.toThrow(/integrity/i);
+  });
+
+  it('rejects same-size native bitmap, mask, selection, swap, and manifest-digest corruption', async () => {
+    const live = doc();
+    const selectionMask = { width: 64, height: 48, data: new Uint8ClampedArray(64 * 48) };
+    selectionMask.data[17] = 211;
+    const snapshotLayers = [
+      { ...live.layers[0], id: 'snapshot-a', bitmap: fakeBitmap(64, 48, 'AAAA'), mask: fakeBitmap(64, 48, 'MMMM') },
+      { ...live.layers[0], id: 'snapshot-b', bitmap: fakeBitmap(64, 48, 'BBBB'), mask: fakeBitmap(64, 48, 'NNNN') },
+    ];
+    live.snapshots = [{
+      id: 'snapshot-content', name: 'Content', createdAt: 4, width: 64, height: 48,
+      layers: snapshotLayers, activeLayerId: 'snapshot-a', hasSelection: true, selectionVersion: 1,
+      selectionMask, pixelState: 'complete',
+      integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers, selectionMask),
+    }];
+    const { unpackContainer, packContainer } = await import('../../shared/files/SignalLoomContainer');
+    const { manifest, assets } = unpackContainer(await serializeSlimg(live, codec));
+
+    const corruptAndOpen = async (mutate: (
+      snapshotManifest: Record<string, unknown>,
+      mutableAssets: Map<string, Uint8Array>,
+    ) => void) => {
+      const clonedManifest = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+      const clonedAssets = new Map([...assets].map(([id, bytes]) => [id, bytes.slice()]));
+      const snapshotManifest = (clonedManifest.document as { snapshots: Array<Record<string, unknown>> }).snapshots[0];
+      mutate(snapshotManifest, clonedAssets);
+      return deserializeSlimg(packContainer(clonedManifest, clonedAssets), codec);
+    };
+    const flipAsset = (
+      snapshotManifest: Record<string, unknown>,
+      mutableAssets: Map<string, Uint8Array>,
+      role: 'bitmap' | 'mask' | 'selectionMask',
+    ) => {
+      const ref = role === 'selectionMask'
+        ? snapshotManifest.selectionMask as { asset: string }
+        : (snapshotManifest.layers as Array<Record<string, unknown>>)[0][role] as { asset: string };
+      mutableAssets.get(ref.asset)![0] ^= 1;
+    };
+
+    await expect(corruptAndOpen((snapshotManifest, mutableAssets) => {
+      flipAsset(snapshotManifest, mutableAssets, 'bitmap');
+    })).rejects.toThrow(/integrity/i);
+    await expect(corruptAndOpen((snapshotManifest, mutableAssets) => {
+      flipAsset(snapshotManifest, mutableAssets, 'mask');
+    })).rejects.toThrow(/integrity/i);
+    await expect(corruptAndOpen((snapshotManifest, mutableAssets) => {
+      flipAsset(snapshotManifest, mutableAssets, 'selectionMask');
+    })).rejects.toThrow(/integrity/i);
+    await expect(corruptAndOpen((snapshotManifest) => {
+      const layers = snapshotManifest.layers as Array<Record<string, unknown>>;
+      [layers[0].bitmap, layers[1].bitmap] = [layers[1].bitmap, layers[0].bitmap];
+    })).rejects.toThrow(/integrity/i);
+    await expect(corruptAndOpen((snapshotManifest) => {
+      const integrity = snapshotManifest.integrity as { layers: Array<{ bitmap: { contentDigest?: string } }> };
+      integrity.layers[0].bitmap.contentDigest = `sha256:${'0'.repeat(64)}`;
+    })).rejects.toThrow(/integrity/i);
+    await expect(corruptAndOpen((snapshotManifest) => {
+      const integrity = snapshotManifest.integrity as { layers: Array<{ bitmap: { contentDigest?: string } }> };
+      delete integrity.layers[0].bitmap.contentDigest;
+    })).rejects.toThrow(/integrity/i);
+
+    const legacyManifest = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+    const legacySnapshot = (legacyManifest.document as { snapshots: Array<Record<string, unknown>> }).snapshots[0];
+    (legacySnapshot.integrity as { version: number }).version = 1;
+    const legacy = await deserializeSlimg(packContainer(legacyManifest, assets), codec);
+    expect(legacy.snapshots?.[0].pixelState).toBe('unavailable');
+    expect(legacy.snapshots?.[0].integrity?.version as number).toBe(1);
+  });
+
+  it('disposes every partially decoded native resource exactly once on snapshot digest failure', async () => {
+    const live = doc();
+    const selectionMask = { width: 64, height: 48, data: new Uint8ClampedArray(64 * 48) };
+    selectionMask.data[1] = 255;
+    const snapshotLayers = [{ ...live.layers[0], bitmap: fakeBitmap(64, 48, 'TRACK-B'), mask: fakeBitmap(64, 48, 'TRACK-M') }];
+    live.snapshots = [{
+      id: 'snapshot-disposal', name: 'Disposal', createdAt: 5, width: 64, height: 48,
+      layers: snapshotLayers, activeLayerId: 'a', hasSelection: true, selectionVersion: 1,
+      selectionMask, pixelState: 'complete',
+      integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers, selectionMask),
+    }];
+    const { unpackContainer, packContainer } = await import('../../shared/files/SignalLoomContainer');
+    const { manifest, assets } = unpackContainer(await serializeSlimg(live, codec));
+    const clonedManifest = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+    const snapshotManifest = (clonedManifest.document as { snapshots: Array<Record<string, unknown>> }).snapshots[0];
+    const integrity = snapshotManifest.integrity as { selection: { contentDigest: string } };
+    integrity.selection.contentDigest = `sha256:${'0'.repeat(64)}`;
+
+    const decoded: Array<LayerBitmap & { widthZeroWrites: number; heightZeroWrites: number }> = [];
+    const trackedCodec: SlimgCodec = {
+      encode: codec.encode,
+      decode: async (bytes, width, height) => {
+        const target = fakeBitmap(width, height, new TextDecoder().decode(bytes)) as LayerBitmap & {
+          widthZeroWrites: number;
+          heightZeroWrites: number;
+        };
+        let currentWidth = width;
+        let currentHeight = height;
+        target.widthZeroWrites = 0;
+        target.heightZeroWrites = 0;
+        Object.defineProperty(target, 'width', {
+          get: () => currentWidth,
+          set: (value: number) => {
+            if (value === 0) target.widthZeroWrites += 1;
+            currentWidth = value;
+          },
+          configurable: true,
+        });
+        Object.defineProperty(target, 'height', {
+          get: () => currentHeight,
+          set: (value: number) => {
+            if (value === 0) target.heightZeroWrites += 1;
+            currentHeight = value;
+          },
+          configurable: true,
+        });
+        decoded.push(target);
+        return target;
+      },
+    };
+
+    await expect(deserializeSlimg(packContainer(clonedManifest, assets), trackedCodec)).rejects.toThrow(/integrity/i);
+    expect(decoded.length).toBeGreaterThan(0);
+    for (const resource of decoded) {
+      expect(resource.widthZeroWrites).toBe(1);
+      expect(resource.heightZeroWrites).toBe(1);
+    }
   });
 
   it('deduplicates shared bitmap identities in the native asset table', async () => {

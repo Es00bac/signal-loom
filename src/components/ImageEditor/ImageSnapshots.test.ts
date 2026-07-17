@@ -30,6 +30,11 @@ class PixelOffscreenCanvas {
       drawImage: (source: PixelOffscreenCanvas) => {
         this.pixel = [...source.pixel];
       },
+      getImageData: () => {
+        const data = new Uint8ClampedArray(this.width * this.height * 4);
+        for (let offset = 0; offset < data.length; offset += 4) data.set(this.pixel, offset);
+        return { width: this.width, height: this.height, data };
+      },
     };
   }
 }

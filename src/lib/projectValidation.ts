@@ -710,6 +710,14 @@ function sanitizeImageDocumentSnapshot(
   const height = positiveFiniteNumber(snapshot.height, fallbackSize.height);
   const layers = Array.isArray(snapshot.layers) ? snapshot.layers.filter(isRecord) : [];
   const integrity = sanitizeImageDocumentSnapshotIntegrity(snapshot.integrity);
+  if (
+    snapshot.pixelState === 'complete'
+    && isRecord(snapshot.integrity)
+    && snapshot.integrity.version === 2
+    && !integrity
+  ) {
+    throw new Error('Image snapshot has a malformed cryptographic content integrity manifest.');
+  }
 
   return {
     ...snapshot,
@@ -740,14 +748,24 @@ function sanitizeImageDocumentSnapshotAssetIntegrity(
   const height = finiteNumber(value.height, -1);
   if (value.present) {
     if (width <= 0 || height <= 0) return undefined;
+    if (typeof value.contentDigest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value.contentDigest)) {
+      return undefined;
+    }
   } else if (width !== 0 || height !== 0) {
     return undefined;
+  } else if (value.contentDigest !== undefined) {
+    return undefined;
   }
-  return { present: value.present, width, height };
+  return {
+    present: value.present,
+    width,
+    height,
+    ...(value.present ? { contentDigest: value.contentDigest as string } : {}),
+  };
 }
 
 function sanitizeImageDocumentSnapshotIntegrity(value: unknown): ImageDocumentSnapshotIntegrity | undefined {
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.layers) || !isRecord(value.selection)) {
+  if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.layers) || !isRecord(value.selection)) {
     return undefined;
   }
   const layers = value.layers.flatMap((entry) => {
@@ -766,7 +784,7 @@ function sanitizeImageDocumentSnapshotIntegrity(value: unknown): ImageDocumentSn
     return undefined;
   }
   return {
-    version: 1,
+    version: 2,
     layers,
     selection: { ...selectionAsset, byteLength },
   };
