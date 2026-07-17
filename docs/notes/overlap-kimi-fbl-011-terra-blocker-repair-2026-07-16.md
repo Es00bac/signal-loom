@@ -6,14 +6,21 @@ Base: `fbdad282e5edd107c479fe6babe03175824f07c2`
 Original production/tests: `34ba7f36016c17ece6a97556b817527d1d1afd9f`
 Original evidence: `1dbcb27`
 Production/tests follow-up: `4592393f37b25335da93f64bcccd5edebcabb698`
+Final-blocker production/tests correction: `d42a92e`
 
-## Outcome
+## Subsequent Terra final gate — BLOCK
+
+A later fresh Terra review of clean `e8ff6fc` returned **BLOCK**, so the outcome and verification below are historical evidence for the first follow-up, not approval and not sufficient proof that FBL-011 was ready. Terra found two remaining blockers: native Video frame-export pre-layout still measured a family-only hard-coded 700 face instead of the managed card painter's exact alias/descriptors, and the Video registration hook read and mutated its generation ref during render.
+
+Production/tests correction `d42a92e` repairs both issues. The corrected implementation, deterministic regressions, and fresh 65-file gate are recorded in `docs/notes/overlap-kimi-fbl-011-terra-final-blocker-repair-2026-07-16.md`. Disposition remains **awaiting fresh Terra read-only review**; no approval is declared here.
+
+## Historical outcome after the first follow-up (superseded as a gate disposition)
 
 Terra's fresh gate blocked the original FBL-011 implementation on incomplete serialized identity, bare-family arc measurement, post-paint Video registration, and silent removal of malformed managed references. The follow-up closes all four boundaries without changing FBL-010 or Paper production code.
 
 Managed references now use a complete schema-v2 identity: face ID, family, weight, style, stretch, collection index, full SHA-256, and byte length. Resolution requires one unique complete match and revalidates the selected face against the complete hash, bytes, collection, and descriptors. Legacy or malformed prior managed state remains a serializable blocking issue until it can be honestly byte-verified or explicitly reselected.
 
-Image and Video layout, measurement, painting, export, persistence, and cache keys use the complete-identity runtime alias. Video now gates its first preview and export until registration succeeds, preserves failure visibly, supports retry, and ignores stale registration completion after a reference change.
+After `d42a92e`, Image and Video layout, measurement, painting, export, persistence, and cache keys use the complete-identity runtime alias, including native frame-export pre-layout. Video gates its first preview and export until registration succeeds, preserves failure visibly, supports retry, and ignores stale committed-request completion after a reference change without render-time ref mutation.
 
 ## Structure and tests
 

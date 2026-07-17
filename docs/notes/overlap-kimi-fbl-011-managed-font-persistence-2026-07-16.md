@@ -5,6 +5,7 @@ Branch: `overlap/kimi-managed-font-identity`
 Integration base: `fbdad282e5edd107c479fe6babe03175824f07c2`
 Production/tests commit: `34ba7f36016c17ece6a97556b817527d1d1afd9f`
 Terra-blocker production/tests follow-up: `4592393f37b25335da93f64bcccd5edebcabb698`
+Final-blocker production/tests correction: `d42a92e`
 
 ## Scope
 
@@ -15,6 +16,12 @@ This lane implements only FBL-011. It does not change Paper strict-output face r
 A fresh Terra review of `34ba7f3` plus evidence commit `1dbcb27` returned **BLOCK**. The original evidence overstated four boundaries: the serialized reference did not include collection index or full content identity; Video arc metrics still used the human family; Video registration happened after paint; and malformed managed references could be normalized away into ordinary family fallback.
 
 Those pre-follow-up claims are retracted. They apply only after production/tests follow-up `4592393f37b25335da93f64bcccd5edebcabb698`, whose corrections and fresh results are recorded below. The earlier green test counts remain historical implementation evidence, not proof that the four Terra boundaries were satisfied.
+
+### Later final gate qualification
+
+A subsequent fresh Terra review of clean `e8ff6fc` also returned **BLOCK**. It found that native Video frame-export pre-layout still measured the human family at a hard-coded 700 weight instead of the managed card painter's exact alias/descriptors, and that `useManagedFontRegistrationGate` mutated a generation ref during render. Therefore, the claims and counts below are historical evidence for `4592393`, not approval and not proof of the final two boundaries by themselves.
+
+Production/tests correction `d42a92e` fixes both remaining blockers. Corrected evidence is in `docs/notes/overlap-kimi-fbl-011-terra-final-blocker-repair-2026-07-16.md`. FBL-011 remains **awaiting a fresh Terra read-only gate**.
 
 ## Red evidence
 
