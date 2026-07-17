@@ -694,3 +694,103 @@ git diff --check
 - `e0f9b31` — production fix (compositionTracks.ts, flowStore.ts, CompositionNode.tsx) and its
   tests (CompositionNode.test.tsx, flowStore.test.ts), in one commit.
 - This note update is a separate commit on top of `e0f9b31`.
+
+## Fourth correction (ultimate independent review, routed-media parity closed on top of `5be9009`)
+
+The ultimate read-only review confirmed the direct Function-audio correction from `e0f9b31`, but
+found one remaining Medium UI/execution mismatch on supported routed media:
+
+- `collectResultInputForHandle` resolved a Portal/Fork/Switch source to its effective upstream
+  producer before reading the result, while `CompositionNode.findConnectedMedia` checked the raw
+  edge source type. Function audio routed through a Portal therefore reached Composition execution
+  correctly but the visible lane still showed `Connect media`.
+- Execution's effective-source lookup omitted `edge.sourceHandle`. For a `forkSwitchNode`, that
+  handle is the identity of branch `A` or `B`; omitting it bypassed the inactive-branch check in
+  `resolveEffectiveSourceNode`, so Function audio connected from inactive branch `B` could still be
+  submitted to Composition while branch `A` was selected.
+- The Function family check in `collectResultInputForHandle` inferred audio versus video
+  positionally from `acceptedTypes`. Every current caller happened to be unambiguous, but this left
+  the correctness rule implicit and allowed a future caller to include `functionNode` without a
+  family check.
+
+### Fix
+
+1. `collectResultInputForHandle` now requires an explicit `CompositionMediaFamily | undefined`
+   argument. Both static execution-context construction and the live run path pass `'video'` for
+   `composition-video` and `'audio'` for each `composition-audio-N`; the unrelated video-extension
+   consumer explicitly passes `undefined`. Function admission uses this parameter directly rather
+   than inspecting the accepted-type list.
+2. Both edge discovery and final source resolution in `collectResultInputForHandle` now call
+   `resolveEffectiveSourceNode(..., edge.sourceHandle)`. Portal-routed producers resolve to their
+   actual node, and inactive Fork branches resolve to `undefined` instead of leaking their upstream
+   result into execution.
+3. `CompositionNode.findConnectedMedia` now performs the same effective-source lookup with the same
+   edge source handle before type, family, result, or label checks. It also uses the now-exported
+   `resolveNodeOutputAsset`, the same asset resolver execution uses, so import/source-library
+   fallback behavior cannot diverge between the timeline and the render input.
+
+### Permanent red/green evidence
+
+Eight new regressions cover UI and execution symmetrically:
+
+- correct-family direct Function video is displayed and supplied as `videoInput`;
+- wrong-family Function audio is neither displayed nor supplied on the video lane;
+- Function audio routed through a Portal is displayed and supplied as the ordered audio input; and
+- Function audio connected from inactive Fork branch `B` while branch `A` is selected is neither
+  displayed nor supplied.
+
+Before the production correction, the focused new-test run produced exactly the two independently
+reported failures:
+
+```text
+Test Files  2 failed (2)
+Tests       2 failed | 6 passed | 56 skipped (64)
+```
+
+The Portal UI assertion failed while execution already returned the Function MP3, and the inactive
+Fork execution assertion received one audio input instead of `[]`. The six direct-family and
+already-correct counterpart assertions passed.
+
+After the correction:
+
+```text
+npx vitest run --configLoader runner \
+  src/components/Nodes/CompositionNode.test.tsx src/store/flowStore.test.ts \
+  -t "ultimate review correction|routed through a Portal|inactive Fork|correct-family Function video|wrong-family Function audio"
+# 2 files passed; 8 tests passed, 56 skipped
+
+npx vitest run --configLoader runner \
+  src/components/Nodes/CompositionNode.test.tsx src/store/flowStore.test.ts
+# 2 files passed; 64 tests passed
+
+npx vitest run --configLoader runner \
+  src/components/Nodes/CompositionNode.test.tsx \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/compositionMediaState.test.ts src/lib/flowExecutionComposition.test.ts \
+  src/lib/mediaComposition.test.ts src/lib/flowDiagnostics.test.ts \
+  src/lib/flowNodeContracts.test.ts src/store/flowStore.test.ts \
+  src/store/flowStore.remoteSync.test.ts
+# 10 files passed; 325 tests passed
+
+npm run verify:flow-production
+# 9 files passed; 371 tests passed
+# Flow production audit passed: 63 nodes, 182 model contracts, 178 normal model options.
+
+npx tsc -b tsconfig.app.json --force --pretty false
+# clean
+
+npx eslint src/components/Nodes/CompositionNode.tsx \
+  src/components/Nodes/CompositionNode.test.tsx \
+  src/store/flowStore.ts src/store/flowStore.test.ts
+# clean
+
+git diff --check
+# clean
+```
+
+### Fourth-correction commits and review state
+
+- `bda83af` — production correction plus permanent tests.
+- The evidence-note update is a separate commit on top.
+- This is author evidence only. The corrected clean head still requires a fresh independent
+  read-only review; no approval is claimed here.
