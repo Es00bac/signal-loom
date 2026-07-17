@@ -644,7 +644,10 @@ export interface PaperDiscardedDocumentRecovery {
   originalIndex: number;
   wasActive: boolean;
   snapshot: PaperWorkspaceDocumentSnapshot;
-  /** The tab's own history is retained when available so a recovered tab can continue undoing. */
+  /**
+   * The tab's own history is retained when available so a recovered tab can continue undoing.
+   * Session-scoped: stripped from the persisted projection and ignored on rehydrate.
+   */
   undoStack?: Array<{
     document: PaperDocument;
     selectedPageId: string;

@@ -1185,6 +1185,44 @@ describe('paperStore per-document undo/redo ownership', () => {
     expect(merged.documentHistories).toEqual({});
   });
 
+  it('keeps captured recovery history out of the persisted projection and rehydrate', () => {
+    const aId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });
+    usePaperStore.getState().createNewDocument({ title: 'Document B' });
+    const bId = usePaperStore.getState().activeDocumentId;
+    usePaperStore.getState().addFrame('text', { id: 'b-frame', text: 'B copy' });
+    usePaperStore.getState().setActiveDocument(aId);
+
+    const recoveryIds = paperDirtyActions().captureDocumentRecovery([bId], 'baton-handoff');
+    expect(recoveryIds).toHaveLength(1);
+    const liveRecovery = usePaperStore.getState().discardedDocumentRecoveries
+      .find((candidate) => candidate.id === recoveryIds[0]);
+    expect(liveRecovery?.undoStack).toHaveLength(1);
+
+    const persisted = projectPersistedPaperWorkspace(usePaperStore.getState());
+    const persistedJson = JSON.stringify(persisted);
+    expect(persistedJson).not.toContain('"undoStack"');
+    expect(persistedJson).not.toContain('"redoStack"');
+    expect(persistedJson).not.toContain('"documentHistories"');
+
+    // Rehydrate must ignore history fields even when an older or hostile stored record has them.
+    const merged = mergePersistedPaperWorkspace(
+      { ...persisted, discardedDocumentRecoveries: usePaperStore.getState().discardedDocumentRecoveries },
+      usePaperStore.getState(),
+    );
+    expect(merged.discardedDocumentRecoveries).toHaveLength(1);
+    expect(merged.discardedDocumentRecoveries[0].undoStack).toBeUndefined();
+    expect(merged.discardedDocumentRecoveries[0].redoStack).toBeUndefined();
+    expect(merged.discardedDocumentRecoveries[0].snapshot.document.title).toBe('Document B');
+
+    // Same-session deliberate restore still hands the tab its own history back.
+    const restoredId = paperDirtyActions().restoreDiscardedDocument(recoveryIds[0]);
+    expect(restoredId).toBeDefined();
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+    paperEditActions().undo();
+    expect(frameIdsOnFirstPage()).not.toContain('b-frame');
+  });
+
   it('captures and restores an inactive tab’s own history through deliberate recovery', () => {
     const aId = usePaperStore.getState().activeDocumentId;
     usePaperStore.getState().addFrame('text', { id: 'a-frame', text: 'A copy' });

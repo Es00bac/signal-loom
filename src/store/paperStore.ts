@@ -252,7 +252,11 @@ export function mergePersistedPaperWorkspace(
   };
 }
 
-/** The exact persisted projection: local workspace truth only, never runtime undo/redo history. */
+/**
+ * The exact persisted projection: local workspace truth only, never runtime undo/redo history.
+ * Recovery records persist their document snapshot but shed their stacks — history is
+ * session-scoped everywhere, including inside deliberate-recovery copies.
+ */
 export function projectPersistedPaperWorkspace(state: PaperState) {
   return {
     document: state.document,
@@ -263,7 +267,9 @@ export function projectPersistedPaperWorkspace(state: PaperState) {
     selectedFrameIds: state.selectedFrameIds,
     tool: state.tool,
     zoom: state.zoom,
-    discardedDocumentRecoveries: state.discardedDocumentRecoveries,
+    discardedDocumentRecoveries: state.discardedDocumentRecoveries.map(
+      ({ undoStack: _undoStack, redoStack: _redoStack, ...persistable }) => persistable,
+    ),
   };
 }
 
@@ -1976,28 +1982,6 @@ function appendPaperDocumentRecoveries(
   return next.filter((recovery) => retained.has(recovery.batchId ?? recovery.id));
 }
 
-function sanitizePaperHistory(value: unknown): PaperHistorySnapshot[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const history = value.flatMap((candidate) => {
-    if (!isRecord(candidate)) return [];
-    const document = sanitizePaperDocument(candidate.document);
-    const selectedPageId = typeof candidate.selectedPageId === 'string'
-      ? candidate.selectedPageId
-      : document.pages[0]?.id ?? '';
-    return [{
-      document,
-      selectedPageId,
-      selectedFrameId: typeof candidate.selectedFrameId === 'string' ? candidate.selectedFrameId : null,
-      selectedFrameIds: Array.isArray(candidate.selectedFrameIds)
-        ? candidate.selectedFrameIds.filter((id): id is string => typeof id === 'string')
-        : [],
-      tool: isPaperTool(candidate.tool) ? candidate.tool : 'select' as const,
-      zoom: clampZoom(candidate.zoom),
-    }];
-  });
-  return history.slice(-MAX_PAPER_HISTORY);
-}
-
 function sanitizePaperDiscardRecoveries(value: unknown): PaperDiscardedDocumentRecovery[] {
   if (!Array.isArray(value)) return [];
   const recoveries = value.flatMap((candidate) => {
@@ -2025,13 +2009,9 @@ function sanitizePaperDiscardRecoveries(value: unknown): PaperDiscardedDocumentR
         ? Math.max(0, candidate.originalIndex)
         : 0,
       wasActive: candidate.wasActive === true,
+      // History fields in stored records (older or hostile) are deliberately ignored: recovery
+      // stacks are session-scoped and never round-trip through persistence.
       snapshot,
-      ...(sanitizePaperHistory(candidate.undoStack)?.length
-        ? { undoStack: sanitizePaperHistory(candidate.undoStack) }
-        : {}),
-      ...(sanitizePaperHistory(candidate.redoStack)?.length
-        ? { redoStack: sanitizePaperHistory(candidate.redoStack) }
-        : {}),
     }];
   });
   const retainedBatchIds = [...new Set(recoveries.map((recovery) => recovery.batchId ?? recovery.id))]
