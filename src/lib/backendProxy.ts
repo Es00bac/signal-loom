@@ -6,6 +6,7 @@ import type {
   TextProvider,
   VideoProvider,
 } from '../types/flow';
+import { sanitizeReferenceGroupsForProxy } from './referenceGroups';
 
 export interface BackendProxySettingsLike {
   backendProxyEnabled?: boolean;
@@ -261,6 +262,22 @@ function buildForwardedDefaultModels(source: unknown): BackendProxyDefaultModels
   return models;
 }
 
+/**
+ * AUD-011: numbered reference groups travel to the proxy as an explicitly rebuilt, bounded,
+ * JSON-safe DTO — the sanitizer rebuilds every group from an allowlist (so stray or
+ * credential-shaped keys never travel) and rejects malformed or oversized guidance with a
+ * non-retryable diagnostic BEFORE any network or provider work. Contexts without groups pass
+ * through untouched.
+ */
+function buildForwardedExecutionContext(context: unknown): unknown {
+  if (!isRecord(context) || !('referenceGroups' in context)) {
+    return context;
+  }
+  const sanitizedGroups = sanitizeReferenceGroupsForProxy(context.referenceGroups);
+  const { referenceGroups: _referenceGroups, ...rest } = context;
+  return sanitizedGroups === undefined ? rest : { ...rest, referenceGroups: sanitizedGroups };
+}
+
 export function buildBackendProxyExecuteRequest(
   input: BackendProxyExecuteRequestInput,
 ): BackendProxyExecuteRequest {
@@ -270,7 +287,7 @@ export function buildBackendProxyExecuteRequest(
     url: `${baseUrl}/api/flow/execute-node`,
     body: {
       node: input.node,
-      context: input.context,
+      context: buildForwardedExecutionContext(input.context),
       settings: {
         version: BACKEND_PROXY_EXECUTION_SETTINGS_VERSION,
         defaultModels: buildForwardedDefaultModels(input.settings.defaultModels),

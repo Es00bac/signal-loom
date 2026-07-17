@@ -115,7 +115,7 @@ async function runVertexGeminiInpaint(input: {
         mimeType: 'image/png',
         data: input.compositeBase64,
       },
-      referenceImages: input.referenceParts,
+      references: input.referenceParts.map((image) => ({ image })),
     }),
   }));
 

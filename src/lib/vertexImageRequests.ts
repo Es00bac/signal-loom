@@ -16,13 +16,22 @@ export interface VertexGeneratedImage {
   data: string;
 }
 
+export interface VertexGeminiImageReference {
+  image: VertexInlineImage;
+  /**
+   * AUD-011: optional numbered-slot guidance rendered as a text part immediately BEFORE this
+   * reference image, so the association is explicit and positional in the parts array.
+   */
+  instruction?: string;
+}
+
 export interface VertexGeminiImageRequestInput {
   prompt: string;
   aspectRatio: AspectRatio;
   /** Gemini 3.x image_size tier ('1K' | '2K' | '4K'); omitted = provider default. */
   imageSize?: '1K' | '2K' | '4K';
   sourceImage?: VertexInlineImage;
-  referenceImages?: VertexInlineImage[];
+  references?: VertexGeminiImageReference[];
 }
 
 export interface VertexImagenPredictRequestInput {
@@ -54,8 +63,11 @@ export function buildVertexGeminiImageRequestBody(input: VertexGeminiImageReques
     parts.push({ inlineData: input.sourceImage });
   }
 
-  for (const referenceImage of input.referenceImages ?? []) {
-    parts.push({ inlineData: referenceImage });
+  for (const reference of input.references ?? []) {
+    if (reference.instruction) {
+      parts.push({ text: reference.instruction });
+    }
+    parts.push({ inlineData: reference.image });
   }
 
   return {

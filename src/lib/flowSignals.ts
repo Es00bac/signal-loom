@@ -1,5 +1,10 @@
 import type { Edge } from '@xyflow/react';
-import type { AppNode, EnvelopeItem, ResultType } from '../types/flow';
+import type { AppNode, EnvelopeItem, ResultType, VideoReferenceType } from '../types/flow';
+import {
+  referenceSlotNumberForHandle,
+  stableReferenceGuidanceJson,
+  type FlowReferenceGroup,
+} from './referenceGroups';
 import {
   getOrderedListInputEdges,
   resolveExpandedListItemForNode,
@@ -299,19 +304,57 @@ export function evaluateNodeSignal(
   }
 }
 
-export function collectPromptSignalForNode(nodeId: string, nodes: AppNode[], edges: Edge[]): FlowSignal {
+export interface NodePromptSignals {
+  /**
+   * Every incoming textual signal combined exactly as before AUD-011 — this remains the single
+   * cardinality and diagnostics authority for loop planning, so numbered reference guidance
+   * still participates in iteration counts and list-length validation.
+   */
+  combined: FlowSignal;
+  /** Textual signals from unnumbered handles only — the honest global prompt. */
+  prompt: FlowSignal;
+  /** Ordered textual signals per numbered reference target handle. */
+  referenceTextSignals: Map<string, FlowSignal[]>;
+}
+
+export function collectNodePromptSignals(nodeId: string, nodes: AppNode[], edges: Edge[]): NodePromptSignals {
   const nodesById = new Map(nodes.map((candidate) => [candidate.id, candidate]));
+  const targetNodeType = nodesById.get(nodeId)?.type;
   const incomingEdges = edges.filter((edge) =>
     edge.target === nodeId
     && edge.targetHandle !== LOOP_BREAK_TARGET_HANDLE
     && nodesById.get(edge.source)?.type !== 'settings'
     && nodesById.get(edge.source)?.type !== 'loraSpecNode'
   );
-  const promptSignals = incomingEdges.flatMap((edge) => {
+  const textualEdgeSignals = incomingEdges.flatMap((edge) => {
     const signal = evaluateNodeSignal(edge.source, nodes, edges, new Set<string>(), nodesById, edge.sourceHandle);
-    return isTextualSignal(signal) ? [signal] : [];
+    return isTextualSignal(signal) ? [{ edge, signal }] : [];
   });
 
+  const referenceTextSignals = new Map<string, FlowSignal[]>();
+  const promptSignals: FlowSignal[] = [];
+  for (const { edge, signal } of textualEdgeSignals) {
+    const slot = referenceSlotNumberForHandle(targetNodeType, edge.targetHandle);
+    if (slot === undefined) {
+      promptSignals.push(signal);
+      continue;
+    }
+    const handle = edge.targetHandle as string;
+    referenceTextSignals.set(handle, [...(referenceTextSignals.get(handle) ?? []), signal]);
+  }
+
+  return {
+    combined: combineTextualPromptSignals(nodeId, textualEdgeSignals.map(({ signal }) => signal)),
+    prompt: combineTextualPromptSignals(nodeId, promptSignals),
+    referenceTextSignals,
+  };
+}
+
+export function collectPromptSignalForNode(nodeId: string, nodes: AppNode[], edges: Edge[]): FlowSignal {
+  return collectNodePromptSignals(nodeId, nodes, edges).combined;
+}
+
+function combineTextualPromptSignals(nodeId: string, promptSignals: FlowSignal[]): FlowSignal {
   if (promptSignals.length === 0) {
     return scalarSignal('text', '', nodeId);
   }
@@ -330,6 +373,73 @@ export function collectPromptSignalForNode(nodeId: string, nodes: AppNode[], edg
       nodeId,
     ),
   );
+}
+
+/**
+ * Resolves the signal that applies to one loop iteration: non-lists broadcast, single-item
+ * lists broadcast, longer lists take the iteration's item — the same selection rule
+ * `signalToTextAt` uses for the prompt, so numbered reference guidance and the prompt stay on
+ * the same iteration axis.
+ */
+export function signalAtIterationIndex(signal: FlowSignal, index: number): FlowSignal {
+  if (!isListSignal(signal)) {
+    return signal;
+  }
+
+  if (signal.items.length === 0) {
+    return emptySignal('text', signal.sourceNodeId);
+  }
+
+  return signal.items[signal.items.length === 1 ? 0 : index] ?? signal.items[0];
+}
+
+export interface ReferenceSlotInputs {
+  /** 1-based numbered slot (`Reference N`). */
+  slot: number;
+  /** The slot's statically resolved image, if an image-like connection exists. */
+  imageUrl?: string;
+  /** Video slots carry the authored asset/style type. */
+  referenceType?: VideoReferenceType;
+  /** Ordered textual/JSON signals authored onto this numbered handle. */
+  textSignals: FlowSignal[];
+}
+
+/**
+ * Materializes the canonical AUD-011 reference groups for one iteration. Empty slots are
+ * omitted; slot order is the deterministic Reference 1..N order the inputs were collected in.
+ */
+export function resolveReferenceGroupsAtIndex(
+  slots: readonly ReferenceSlotInputs[],
+  index: number,
+): FlowReferenceGroup[] {
+  return slots.flatMap((slot) => {
+    const descriptions: string[] = [];
+    const jsonGuidance: string[] = [];
+    for (const signal of slot.textSignals) {
+      const item = signalAtIterationIndex(signal, index);
+      if (item.kind === 'json') {
+        jsonGuidance.push(stableReferenceGuidanceJson(item.value));
+        continue;
+      }
+      const text = signalToText(item).trim();
+      // A text-less Package signal falls back to its image URL; that image already IS the
+      // slot's image, so it is not guidance.
+      if (!text || text === slot.imageUrl) continue;
+      descriptions.push(text);
+    }
+
+    if (!slot.imageUrl && descriptions.length === 0 && jsonGuidance.length === 0) {
+      return [];
+    }
+
+    return [{
+      slot: slot.slot,
+      ...(slot.imageUrl ? { imageUrl: slot.imageUrl } : {}),
+      descriptions,
+      jsonGuidance,
+      ...(slot.referenceType ? { referenceType: slot.referenceType } : {}),
+    }];
+  });
 }
 
 export function getSignalIterationCount(signal: FlowSignal): number {

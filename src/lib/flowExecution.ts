@@ -150,6 +150,13 @@ import {
 } from './flowDiagnostics';
 import { deserializeResultValueFromContainer, resultValueAsMediaUrl } from './flowResultValues';
 import type { FlowGraphContractContext } from './flowConnectionContracts';
+import {
+  appendReferenceGuidanceBlockToPrompt,
+  buildReferenceGuidancePromptBlock,
+  formatReferenceGroupInstruction,
+  referenceGroupHasGuidance,
+  type FlowReferenceGroup,
+} from './referenceGroups';
 import { abortableSleep, createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abortSignals';
 
 export interface ExecutionContext {
@@ -161,6 +168,14 @@ export interface ExecutionContext {
   refImageInput?: string;
   editMaskImageInput?: string;
   editReferenceImageInputs?: string[];
+  /**
+   * AUD-011 canonical numbered reference groups: each `Reference N` slot's image together with
+   * the textual/JSON guidance authored onto that same numbered handle. When present this is the
+   * authoritative reference representation — the flat image arrays above/below are derived from
+   * it — and it participates in the execution fingerprint so re-associating guidance invalidates
+   * resume even when every flattened byte is unchanged.
+   */
+  referenceGroups?: FlowReferenceGroup[];
   /** loras JSON from a connected LoRA Spec node (feeds FLUX LoRA models' `loras` field). */
   loraWeightsJson?: string;
   audioSourceInput?: string;
@@ -1291,7 +1306,12 @@ async function executeImageNode(
   const prompt = context.prompt.trim();
   const sourceImageInput = context.editImageInput;
   const maskImageInput = context.editMaskImageInput;
-  const referenceImageInputs = context.editReferenceImageInputs ?? [];
+  // The structured groups are authoritative when present; the flat ordered list only serves
+  // contexts authored before AUD-011 (and providers that need nothing but the image bytes).
+  const referenceGroups = context.referenceGroups;
+  const referenceImageInputs = referenceGroups
+    ? referenceGroups.flatMap((group) => group.imageUrl ? [group.imageUrl] : [])
+    : (context.editReferenceImageInputs ?? []);
   const sourceVideoInput = context.sourceVideoInput;
   const videoFrameSelection = ((node.data.videoFrameSelection as 'first' | 'last' | undefined) ?? 'last');
   const modelDefinition = getImageModelDefinition(provider, modelId);
@@ -1328,6 +1348,21 @@ async function executeImageNode(
     throw new NonRetryableError('The selected image model does not accept reference-image guidance.');
   }
 
+  // Structured-group bounds fail closed BEFORE any provider submission: a guidance-only slot has
+  // no image to describe, an out-of-range slot exceeds what the model can associate, and textual
+  // guidance on a reference-incapable model would otherwise be silently flattened or dropped.
+  for (const group of referenceGroups ?? []) {
+    if (!group.imageUrl && referenceGroupHasGuidance(group)) {
+      throw new NonRetryableError(`Reference ${group.slot} has text/JSON guidance but no image. Connect an image to Reference ${group.slot} or move the guidance to the prompt input.`);
+    }
+    if (group.slot > modelDefinition.capabilities.maxReferenceImages) {
+      throw new NonRetryableError(`Reference ${group.slot} exceeds ${modelDefinition.label}'s limit of ${modelDefinition.capabilities.maxReferenceImages} reference image${modelDefinition.capabilities.maxReferenceImages === 1 ? '' : 's'}. Move its connections to a lower-numbered reference input.`);
+    }
+  }
+  if ((referenceGroups ?? []).some(referenceGroupHasGuidance) && !supportsImageReferenceGuidance(provider, modelId)) {
+    throw new NonRetryableError('The selected image model does not accept reference-image guidance.');
+  }
+
   const operationPrompt = buildImageOperationPrompt(prompt, node.data);
 
   switch (provider) {
@@ -1358,6 +1393,7 @@ async function executeImageNode(
           imageSize: geminiImageSize,
           sourceImageInput,
           referenceImageInputs,
+          referenceGroups,
           settings,
           onStatus,
           abortSignal,
@@ -1383,9 +1419,15 @@ async function executeImageNode(
         });
       }
 
-      for (const referenceInput of referenceImageInputs) {
+      for (const referenceEntry of collectReferencePartEntries(referenceGroups, referenceImageInputs)) {
+        // Guidance rides as its own text part immediately BEFORE the image it describes, so the
+        // numbered association is explicit and positional; image-only slots stay byte-identical
+        // to the legacy flat request.
+        if (referenceEntry.instruction) {
+          geminiParts.push({ text: referenceEntry.instruction });
+        }
         geminiParts.push({
-          inlineData: await dataUrlToInlineImage(referenceInput, abortSignal),
+          inlineData: await dataUrlToInlineImage(referenceEntry.url, abortSignal),
         });
       }
 
@@ -1437,6 +1479,7 @@ async function executeImageNode(
         sourceImageInput,
         maskImageInput,
         referenceImageInputs,
+        referenceGroups,
         context,
         node,
         settings,
@@ -1459,6 +1502,7 @@ async function executeImageNode(
             sourceImageInput,
             maskImageInput,
             referenceImageInputs,
+            referenceGroups,
             onStatus,
             abortSignal,
           }),
@@ -1474,6 +1518,7 @@ async function executeImageNode(
         sourceImageInput,
         maskImageInput,
         referenceImageInputs,
+        referenceGroups,
         context,
         node,
         settings,
@@ -1569,6 +1614,7 @@ async function executeImageNode(
         seed: coerceOptionalNumber(node.data.imageSeed),
         sourceImageInput,
         referenceImageInputs,
+        referenceGroups,
         apiKey: requireApiKey(settings.apiKeys.bfl ?? '', 'Black Forest Labs'),
         settings,
         onStatus,
@@ -1610,6 +1656,7 @@ async function executeImageNode(
         sourceImageInput,
         maskImageInput,
         referenceImageInputs,
+        referenceGroups,
         onStatus,
         abortSignal,
         }),
@@ -1709,6 +1756,7 @@ async function executeAtlasNativeImageNode(input: {
   sourceImageInput?: string;
   maskImageInput?: string;
   referenceImageInputs: string[];
+  referenceGroups?: FlowReferenceGroup[];
   onStatus?: (statusMessage: string) => void;
   abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
@@ -1757,9 +1805,18 @@ async function executeAtlasNativeImageNode(input: {
   // or `aspect_ratio:"16:9"` — NOT the generic width/height the API ignores (which left every size/aspect
   // model defaulting to a square). Aspect-ratio presets and custom W×H both flow through here.
   const dimensionBody = resolveAtlasDimensionBody(input.modelId, { width, height, aspectRatio });
+  // Atlas native models have one prompt string beside their ordered image field, so numbered
+  // guidance is serialized as an explicit Reference N block naming each image list position.
+  const atlasPrompt = imageReferencePromptWithGuidance({
+    prompt: input.prompt,
+    referenceGroups: input.referenceGroups,
+    imageOrdinalOffset: input.sourceImageInput ? 1 : 0,
+    positionNoun: 'input image',
+    totalImages: (input.sourceImageInput ? 1 : 0) + input.referenceImageInputs.length,
+  });
   const body: Record<string, unknown> = {
     model: input.modelId,
-    prompt: input.prompt,
+    prompt: atlasPrompt,
     ...dimensionBody,
     // Atlas image models name the step field `num_inference_steps` (the old `steps` was silently ignored).
     num_inference_steps: input.context.config.steps,
@@ -2196,6 +2253,7 @@ async function executeBflImageNode(input: {
   seed?: number;
   sourceImageInput?: string;
   referenceImageInputs: string[];
+  referenceGroups?: FlowReferenceGroup[];
   apiKey: string;
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
@@ -2210,7 +2268,15 @@ async function executeBflImageNode(input: {
   );
   const built = buildBflFlux2Request({
     modelId: input.modelId,
-    prompt: input.prompt,
+    // FLUX.2 takes one prompt beside its ordered input_image fields; numbered guidance travels
+    // as an explicit Reference N block naming each input image position.
+    prompt: imageReferencePromptWithGuidance({
+      prompt: input.prompt,
+      referenceGroups: input.referenceGroups,
+      imageOrdinalOffset: input.sourceImageInput ? 1 : 0,
+      positionNoun: 'input image',
+      totalImages: (input.sourceImageInput ? 1 : 0) + input.referenceImageInputs.length,
+    }),
     sourceImage,
     referenceImages,
     aspectRatio: input.aspectRatio,
@@ -2712,6 +2778,7 @@ async function executeLocalOpenImageNode(input: {
   sourceImageInput?: string;
   maskImageInput?: string;
   referenceImageInputs: string[];
+  referenceGroups?: FlowReferenceGroup[];
   onStatus?: (statusMessage: string) => void;
   abortSignal?: AbortSignal;
 }): Promise<ExecutionResult> {
@@ -2729,7 +2796,15 @@ async function executeLocalOpenImageNode(input: {
   );
   const body = buildLocalOpenImageEditRequest({
     model: input.modelId || input.settings.providerSettings.localOpenImageDefaultModel || 'Qwen/Qwen-Image-Edit',
-    prompt: input.prompt,
+    // The local endpoint takes references as a separate array, so guidance names positions
+    // within that reference array rather than the combined image sequence.
+    prompt: imageReferencePromptWithGuidance({
+      prompt: input.prompt,
+      referenceGroups: input.referenceGroups,
+      imageOrdinalOffset: 0,
+      positionNoun: 'reference image',
+      totalImages: input.referenceImageInputs.length,
+    }),
     image: await imageInputToBase64(input.sourceImageInput, input.abortSignal),
     mask: input.maskImageInput
       ? await blobToBase64(await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, 'localOpen', input.modelId, input.abortSignal), input.abortSignal)
@@ -2831,6 +2906,45 @@ function buildImageOperationPrompt(prompt: string, data: AppNode['data']): strin
   return additions.length > 0
     ? `${prompt}\n\n${additions.join('\n')}`
     : prompt;
+}
+
+/**
+ * AUD-011: the ordered reference entries a multimodal-parts request sends — one entry per
+ * numbered slot that carries an image, each with the slot's guidance rendered as the adjacent
+ * instruction text. Falls back to the flat URL list for contexts authored before groups existed.
+ */
+function collectReferencePartEntries(
+  referenceGroups: FlowReferenceGroup[] | undefined,
+  referenceImageInputs: string[],
+): Array<{ url: string; instruction?: string }> {
+  if (!referenceGroups) {
+    return referenceImageInputs.map((url) => ({ url }));
+  }
+  return referenceGroups.flatMap((group) => group.imageUrl
+    ? [{
+        url: group.imageUrl,
+        instruction: referenceGroupHasGuidance(group) ? formatReferenceGroupInstruction(group) : undefined,
+      }]
+    : []);
+}
+
+/**
+ * AUD-011: serializes numbered reference guidance into the prompt for providers whose only text
+ * channel is the prompt string. `imageOrdinalOffset` is how many non-reference images (source,
+ * mask excluded — masks are not part of the ordered image sequence) precede the references in
+ * the request, so each line can prove which attached image it describes.
+ */
+function imageReferencePromptWithGuidance(input: {
+  prompt: string;
+  referenceGroups: FlowReferenceGroup[] | undefined;
+  imageOrdinalOffset: number;
+  positionNoun: string;
+  totalImages: number;
+}): string {
+  if (!input.referenceGroups) return input.prompt;
+  const block = buildReferenceGuidancePromptBlock(input.referenceGroups, (_group, imageOrdinal) =>
+    `${input.positionNoun} ${input.imageOrdinalOffset + imageOrdinal} of ${input.totalImages}`);
+  return appendReferenceGuidanceBlockToPrompt(input.prompt, block);
 }
 
 function resolveStabilityOperation(
@@ -2963,6 +3077,7 @@ async function executeVertexImageNode(input: {
   imageSize?: '1K' | '2K' | '4K';
   sourceImageInput?: string;
   referenceImageInputs: string[];
+  referenceGroups?: FlowReferenceGroup[];
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
   abortSignal?: AbortSignal;
@@ -2988,6 +3103,7 @@ async function executeVertexImageNode(input: {
     imageSize: input.imageSize,
     sourceImageInput: input.sourceImageInput,
     referenceImageInputs: input.referenceImageInputs,
+    referenceGroups: input.referenceGroups,
     signal: input.abortSignal,
   });
 
@@ -3029,11 +3145,12 @@ async function buildVertexImageRequestBody(input: {
   imageSize?: '1K' | '2K' | '4K';
   sourceImageInput?: string;
   referenceImageInputs: string[];
+  referenceGroups?: FlowReferenceGroup[];
   signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
   if (input.route === 'imagen-predict') {
     if (input.sourceImageInput || input.referenceImageInputs.length > 0) {
-      throw new Error('Imagen text-to-image models do not support upstream image editing or reference guidance in Flow yet.');
+      throw new NonRetryableError('Imagen text-to-image models do not support upstream image editing or reference guidance in Flow yet.');
     }
 
     return buildVertexImagenPredictRequestBody({
@@ -3042,20 +3159,24 @@ async function buildVertexImageRequestBody(input: {
     });
   }
 
-  const sourceImage = input.sourceImageInput ? await dataUrlToInlineImage(input.sourceImageInput, input.signal) : undefined;
-  const referenceImages = await Promise.all(
-    input.referenceImageInputs.map((referenceImageInput) => dataUrlToInlineImage(referenceImageInput, input.signal)),
+  const referenceEntries = collectReferencePartEntries(input.referenceGroups, input.referenceImageInputs);
+  const references = await Promise.all(
+    referenceEntries.map(async (entry) => ({
+      image: await dataUrlToInlineImage(entry.url, input.signal),
+      ...(entry.instruction ? { instruction: entry.instruction } : {}),
+    })),
   );
+  const sourceImage = input.sourceImageInput ? await dataUrlToInlineImage(input.sourceImageInput, input.signal) : undefined;
 
   return buildVertexGeminiImageRequestBody({
     prompt: buildGeminiImagePrompt(input.prompt, {
       hasSourceImage: Boolean(input.sourceImageInput),
-      referenceImageCount: input.referenceImageInputs.length,
+      referenceImageCount: references.length,
     }),
     aspectRatio: input.aspectRatio,
     imageSize: input.imageSize,
     sourceImage,
-    referenceImages,
+    references,
   });
 }
 
@@ -3228,6 +3349,18 @@ async function executeVideoNode(
     throw new NonRetryableError('Video nodes need an upstream text prompt.');
   }
 
+  // AUD-011 structured-group bounds, before any provider submission: guidance needs its numbered
+  // image, and only the Gemini Veo/Omni routes can express the numbered association at all.
+  const videoReferenceGroups = context.referenceGroups ?? [];
+  for (const group of videoReferenceGroups) {
+    if (!group.imageUrl && referenceGroupHasGuidance(group)) {
+      throw new NonRetryableError(`Reference ${group.slot} has text/JSON guidance but no image. Connect an image to Reference ${group.slot} or move the guidance to the prompt input.`);
+    }
+  }
+  if (videoReferenceGroups.some(referenceGroupHasGuidance) && provider !== 'gemini') {
+    throw new NonRetryableError('This video provider route cannot express numbered reference guidance. Use a Gemini Veo 3.1 or Gemini Omni model for reference-guided video.');
+  }
+
   switch (provider) {
     case 'gemini': {
       if (modelContract.availability === 'unavailable') {
@@ -3273,7 +3406,7 @@ async function executeVideoNode(
       const operation = await startGeminiVideoGeneration(
         apiKey,
         modelId,
-        prompt,
+        videoReferencePromptWithGuidance(prompt, context),
         context,
         coerceOptionalNumber(node.data.videoSeed),
         normalizeOptionalString(node.data.videoNegativePrompt as string | undefined),
@@ -3440,7 +3573,7 @@ async function executeVertexVeoVideoNode(input: {
   const videoInputs = await buildGeminiVideoRequestInputs(input.context, input.abortSignal);
   const body = buildVertexVeoVideoRequestBody(
     {
-      prompt: input.prompt,
+      prompt: videoReferencePromptWithGuidance(input.prompt, input.context),
       ...videoInputs,
     },
     {
@@ -3691,6 +3824,21 @@ function validateGeminiVeoVideoRequest(
   });
 }
 
+/**
+ * AUD-011: Veo's native referenceImages structure associates image↔type but has no per-image
+ * text channel, so numbered guidance is serialized into the prompt with each Reference N's
+ * provable position in the referenceImages array. Empty prompts stay empty — Veo's own
+ * "guidance requires a prompt" validation must keep firing on the authored prompt.
+ */
+function videoReferencePromptWithGuidance(prompt: string, context: ExecutionContext): string {
+  const groups = context.referenceGroups;
+  if (!groups) return prompt;
+  const referenceImageCount = groups.filter((group) => group.imageUrl).length;
+  const block = buildReferenceGuidancePromptBlock(groups, (_group, imageOrdinal) =>
+    `reference image ${imageOrdinal} of ${referenceImageCount}`);
+  return appendReferenceGuidanceBlockToPrompt(prompt, block);
+}
+
 async function buildGeminiVideoRequestInputs(context: ExecutionContext, signal?: AbortSignal): Promise<{
   startImage?: Awaited<ReturnType<typeof dataUrlToGeminiImage>>;
   endImage?: Awaited<ReturnType<typeof dataUrlToGeminiImage>>;
@@ -3744,11 +3892,25 @@ async function buildOmniVideoMediaParts(context: ExecutionContext, signal?: Abor
     });
   }
 
-  for (const reference of context.referenceImageInputs ?? []) {
-    media.push({
-      instruction: `Use this as a ${reference.referenceType} reference.`,
-      inlineData: await dataUrlToInlineImage(reference.url, signal),
-    });
+  if (context.referenceGroups) {
+    for (const group of context.referenceGroups) {
+      if (!group.imageUrl) continue;
+      media.push({
+        // Omni's per-media instruction IS the native per-image guidance channel: guided slots
+        // carry their numbered Reference N text; image-only slots keep the legacy instruction.
+        instruction: referenceGroupHasGuidance(group)
+          ? formatReferenceGroupInstruction(group)
+          : `Use this as a ${group.referenceType ?? 'asset'} reference.`,
+        inlineData: await dataUrlToInlineImage(group.imageUrl, signal),
+      });
+    }
+  } else {
+    for (const reference of context.referenceImageInputs ?? []) {
+      media.push({
+        instruction: `Use this as a ${reference.referenceType} reference.`,
+        inlineData: await dataUrlToInlineImage(reference.url, signal),
+      });
+    }
   }
 
   if (context.extensionVideoInput) {
@@ -4548,6 +4710,7 @@ async function executeOpenAiCompatibleImageNode(input: {
   sourceImageInput?: string;
   maskImageInput?: string;
   referenceImageInputs?: string[];
+  referenceGroups?: FlowReferenceGroup[];
   context: ExecutionContext;
   node: AppNode;
   settings: RuntimeSettingsSnapshot;
@@ -4556,10 +4719,11 @@ async function executeOpenAiCompatibleImageNode(input: {
 }): Promise<ExecutionResult> {
   // GPT image models accept up to 16 images on /images/edit (source + references). Only the
   // first-party OpenAI endpoint is known to take the array shape, so Atlas's OpenAI-compatible
-  // route keeps the single-image contract it was verified against.
+  // route keeps the single-image contract it was verified against — and rejects reference work
+  // non-retryably, because no amount of retrying makes the route able to express it.
   const referenceImageInputs = input.provider === 'openai' ? (input.referenceImageInputs ?? []) : [];
-  if (input.provider === 'atlas' && input.referenceImageInputs?.length) {
-    throw new Error('This Atlas GPT-image route supports source image and mask edits, but not separate reference-image guidance.');
+  if (input.provider === 'atlas' && (input.referenceImageInputs?.length || input.referenceGroups?.some(referenceGroupHasGuidance))) {
+    throw new NonRetryableError('This Atlas GPT-image route supports source image and mask edits, but not separate reference-image guidance.');
   }
 
   const providerLabel = input.provider === 'atlas' ? 'Atlas' : 'OpenAI';
@@ -4612,12 +4776,22 @@ async function executeOpenAiCompatibleImageNode(input: {
     }
   }
 
+  // images.edit has one prompt string for the whole ordered image array, so numbered guidance is
+  // serialized as an explicit block that names each Reference N's provable attachment position.
+  const editPrompt = imageReferencePromptWithGuidance({
+    prompt: input.prompt,
+    referenceGroups: input.referenceGroups,
+    imageOrdinalOffset: input.sourceImageInput ? 1 : 0,
+    positionNoun: 'attached image',
+    totalImages: editImages.length,
+  });
+
   const response = useEditEndpoint
     ? await client.images.edit({
         model: input.modelId,
         image: editImages.length === 1 ? editImages[0] : editImages,
         ...(input.maskImageInput && input.sourceImageInput ? { mask: new File([await normalizeMaskBlob(input.maskImageInput, input.sourceImageInput, input.provider, input.modelId, input.abortSignal)], 'flow-image-mask.png', { type: 'image/png' }) } : {}),
-        prompt: input.prompt,
+        prompt: editPrompt,
         size: mapAspectRatioToImageSize(aspectRatio),
         ...gptImageParams,
       }, { signal: input.abortSignal })

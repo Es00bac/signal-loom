@@ -17,7 +17,7 @@ describe('vertex image request helpers', () => {
         prompt: 'Generate a 16:9 comic panel.',
         aspectRatio: '16:9',
         sourceImage: { mimeType: 'image/png', data: 'SOURCE' },
-        referenceImages: [{ mimeType: 'image/jpeg', data: 'REFERENCE' }],
+        references: [{ image: { mimeType: 'image/jpeg', data: 'REFERENCE' } }],
       }),
     ).toEqual({
       contents: [
@@ -37,6 +37,23 @@ describe('vertex image request helpers', () => {
         },
       },
     });
+  });
+
+  it('places numbered reference guidance immediately before its own image part (AUD-011)', () => {
+    const body = buildVertexGeminiImageRequestBody({
+      prompt: 'Compose the hero shot.',
+      aspectRatio: '1:1',
+      references: [
+        { image: { mimeType: 'image/png', data: 'FIRST' }, instruction: 'Reference 1: preserve logo' },
+        { image: { mimeType: 'image/png', data: 'SECOND' } },
+      ],
+    }) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
+    expect(body.contents[0].parts).toEqual([
+      { text: 'Compose the hero shot.' },
+      { text: 'Reference 1: preserve logo' },
+      { inlineData: { mimeType: 'image/png', data: 'FIRST' } },
+      { inlineData: { mimeType: 'image/png', data: 'SECOND' } },
+    ]);
   });
 
   it('includes the Gemini 3.x image_size tier only when requested', () => {

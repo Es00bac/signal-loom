@@ -102,11 +102,18 @@ import {
   resolveLoopRunCount,
 } from '../lib/listExecution';
 import {
-  collectPromptSignalForNode,
+  collectNodePromptSignals,
   getBlockingSignalDiagnostics,
   getSignalIterationCount,
+  resolveReferenceGroupsAtIndex,
   signalToTextAt,
+  type NodePromptSignals,
+  type ReferenceSlotInputs,
 } from '../lib/flowSignals';
+import {
+  referenceSlotNumberForHandle,
+  VIDEO_REFERENCE_HANDLES,
+} from '../lib/referenceGroups';
 import {
   annotateFlowEdges,
   validateFlowConnection,
@@ -250,7 +257,6 @@ function isAbortError(error: unknown): boolean {
 
 const FLOW_STORAGE_KEY = 'flow-canvas-storage';
 const PERSIST_DEBOUNCE_MS = 400;
-const VIDEO_REFERENCE_HANDLES = ['video-reference-1', 'video-reference-2', 'video-reference-3'] as const;
 
 function makeFlowId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -1315,22 +1321,25 @@ function collectImageInputForHandle(
   return undefined;
 }
 
-function collectReferenceImageInputs(
+/**
+ * AUD-011: per numbered video Reference N handle — the slot's statically resolved image, its
+ * authored asset/style type, and the textual/JSON guidance signals connected to that same
+ * numbered handle. `resolveReferenceGroupsAtIndex` materializes the canonical groups from this.
+ */
+function collectVideoReferenceSlotInputs(
   node: AppNode,
   nodesById: Map<string, AppNode>,
   edges: Edge[],
-): Array<{ url: string; referenceType: VideoReferenceType }> {
-  return VIDEO_REFERENCE_HANDLES.flatMap((handle, index) => {
-    const url = collectImageInputForHandle(node.id, [handle], nodesById, edges);
-
-    if (!url) {
-      return [];
-    }
-
+  promptSignals: NodePromptSignals,
+): ReferenceSlotInputs[] {
+  return VIDEO_REFERENCE_HANDLES.map((handle, index) => {
     const dataKey = `videoReference${index + 1}Type` as const;
-    const referenceType = (node.data[dataKey] as VideoReferenceType | undefined) ?? 'asset';
-
-    return [{ url, referenceType }];
+    return {
+      slot: index + 1,
+      imageUrl: collectImageInputForHandle(node.id, [handle], nodesById, edges),
+      referenceType: (node.data[dataKey] as VideoReferenceType | undefined) ?? 'asset',
+      textSignals: promptSignals.referenceTextSignals.get(handle) ?? [],
+    };
   });
 }
 
@@ -1438,15 +1447,21 @@ export function collectUpstreamImageInputForHandles(
   return undefined;
 }
 
-function collectImageReferenceInputs(
+/**
+ * AUD-011: per numbered image Reference N handle — the slot's single permitted image plus the
+ * textual/JSON guidance signals connected to that same numbered handle, in slot order.
+ */
+function collectImageReferenceSlotInputs(
   nodeId: string,
   nodesById: Map<string, AppNode>,
   edges: Edge[],
-): string[] {
-  return IMAGE_REFERENCE_HANDLES.flatMap((handle) => {
-    const url = collectUpstreamImageInputForHandles(nodeId, [handle], nodesById, edges);
-    return url ? [url] : [];
-  });
+  promptSignals: NodePromptSignals,
+): ReferenceSlotInputs[] {
+  return IMAGE_REFERENCE_HANDLES.map((handle, index) => ({
+    slot: index + 1,
+    imageUrl: collectUpstreamImageInputForHandles(nodeId, [handle], nodesById, edges),
+    textSignals: promptSignals.referenceTextSignals.get(handle) ?? [],
+  }));
 }
 
 export function collectImageMaskInput(
@@ -2110,11 +2125,102 @@ function coerceNumber(value: number | string | undefined, fallback: number): num
   return fallback;
 }
 
+interface NodeExecutionResolution {
+  /** Combined/prompt/reference signal views — one collection pass shared by planning and rendering. */
+  promptSignals: NodePromptSignals;
+  /** Numbered reference slot inputs (empty for node types without reference handles). */
+  referenceSlots: ReferenceSlotInputs[];
+  /** The iteration-0 execution context, reference groups already resolved. */
+  context: ExecutionContext;
+}
+
+function collectReferenceSlotInputsForNode(
+  node: AppNode,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+  promptSignals: NodePromptSignals,
+): ReferenceSlotInputs[] {
+  if (node.type === 'imageGen') {
+    return collectImageReferenceSlotInputs(node.id, nodesById, edges, promptSignals);
+  }
+  if (node.type === 'videoGen') {
+    return collectVideoReferenceSlotInputs(node, nodesById, edges, promptSignals);
+  }
+  return [];
+}
+
+/**
+ * AUD-011: materializes the canonical numbered reference groups for one iteration and derives
+ * the flat provider arrays FROM them, so structured collection and provider projection can
+ * never drift. Direct list/envelope items routed to a numbered handle replace that slot's
+ * image for the iteration; textual guidance resolves on the same iteration axis as the prompt.
+ */
+function applyResolvedReferenceGroups(
+  context: ExecutionContext,
+  node: AppNode,
+  referenceSlots: ReferenceSlotInputs[],
+  promptIndex: number,
+  iterationItems: LoopIterationItem[] = [],
+): ExecutionContext {
+  if (referenceSlots.length === 0) {
+    return context;
+  }
+
+  const iterationImages = new Map<number, string>();
+  for (const { input, item } of iterationItems) {
+    if (item.kind !== 'image') continue;
+    const slot = referenceSlotNumberForHandle(node.type, input.targetHandle);
+    if (slot !== undefined) {
+      iterationImages.set(slot, item.value);
+    }
+  }
+  const effectiveSlots = iterationImages.size === 0
+    ? referenceSlots
+    : referenceSlots.map((slot) => iterationImages.has(slot.slot)
+        ? { ...slot, imageUrl: iterationImages.get(slot.slot) }
+        : slot);
+
+  const referenceGroups = resolveReferenceGroupsAtIndex(effectiveSlots, promptIndex);
+  const next: ExecutionContext = { ...context };
+  // Only reference-bearing contexts carry the field, so envelope ids of existing flows without
+  // numbered references stay byte-identical and their resumes keep matching.
+  if (referenceGroups.length > 0) {
+    next.referenceGroups = referenceGroups;
+  } else {
+    delete next.referenceGroups;
+  }
+  if (node.type === 'imageGen') {
+    next.editReferenceImageInputs = referenceGroups.flatMap((group) => group.imageUrl ? [group.imageUrl] : []);
+  } else if (node.type === 'videoGen') {
+    next.referenceImageInputs = referenceGroups.flatMap((group) => group.imageUrl
+      ? [{ url: group.imageUrl, referenceType: group.referenceType ?? 'asset' }]
+      : []);
+  }
+  return next;
+}
+
+function buildNodeExecutionResolution(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+): NodeExecutionResolution {
+  const promptSignals = collectNodePromptSignals(node.id, nodes, edges);
+  const nodesById = buildNodeMap(nodes);
+  const referenceSlots = collectReferenceSlotInputsForNode(node, nodesById, edges, promptSignals);
+  const context = applyResolvedReferenceGroups(
+    buildExecutionContextForNode(node, nodes, edges, signalToTextAt(promptSignals.prompt, 0)),
+    node,
+    referenceSlots,
+    0,
+  );
+  return { promptSignals, referenceSlots, context };
+}
+
 function buildExecutionContextForNode(
   node: AppNode,
   nodes: AppNode[],
   edges: Edge[],
-  prompt = signalToTextAt(collectPromptSignalForNode(node.id, nodes, edges), 0),
+  prompt: string,
 ): ExecutionContext {
   const nodesById = buildNodeMap(nodes);
   const incoming = buildIncomingMap(edges);
@@ -2128,13 +2234,16 @@ function buildExecutionContextForNode(
     editImageInput: collectUpstreamImageInput(node.id, nodesById, edges),
     refImageInput: collectUpstreamImageInputForHandles(node.id, ['refImage'], nodesById, edges),
     editMaskImageInput: collectImageMaskInput(node.id, nodesById, edges),
-    editReferenceImageInputs: collectImageReferenceInputs(node.id, nodesById, edges),
+    // Both reference arrays are derived from the canonical groups by
+    // applyResolvedReferenceGroups; these placeholders only keep the legacy empty-array shape
+    // for node types without numbered reference handles.
+    editReferenceImageInputs: [],
     loraWeightsJson: collectUpstreamLoraJson(node.id, nodesById, edges),
     audioSourceInput: collectUpstreamAudioInput(node.id, nodesById, edges),
     sourceVideoInput: collectUpstreamVideoInput(node.id, nodesById, edges),
     startImageInput: collectImageInputForHandle(node.id, ['video-start-frame'], nodesById, edges),
     endImageInput: collectImageInputForHandle(node.id, ['video-end-frame'], nodesById, edges),
-    referenceImageInputs: collectReferenceImageInputs(node, nodesById, edges),
+    referenceImageInputs: [],
     extensionVideoInput: collectVideoExtensionInput(node.id, nodesById, edges),
     videoInput: collectResultInputForHandle(
       node.id,
@@ -2413,13 +2522,17 @@ async function buildNodeExecutionPlan(
   signal?: AbortSignal,
   materializeResumes = true,
 ): Promise<NodeExecutionPlan> {
-  const promptSignal = collectPromptSignalForNode(node.id, nodes, edges);
+  const resolution = buildNodeExecutionResolution(node, nodes, edges);
+  // The combined signal (unnumbered prompt + numbered reference guidance) remains the single
+  // cardinality and diagnostics authority, so loop iteration counts are exactly what they were
+  // before AUD-011 structured the reference groups.
+  const promptSignal = resolution.promptSignals.combined;
   const blockingPromptDiagnostics = getBlockingSignalDiagnostics(promptSignal);
   if (blockingPromptDiagnostics.length > 0) {
     throw new Error(formatBlockingDiagnosticsMessage(blockingPromptDiagnostics));
   }
 
-  const context = buildExecutionContextForNode(node, nodes, edges, signalToTextAt(promptSignal, 0));
+  const context = resolution.context;
   const loopInputs = collectListLoopInputs(node.id, nodes, edges);
   const promptIsEmptyContainer = (
     (promptSignal.kind === 'list' || promptSignal.kind === 'envelope')
@@ -2482,12 +2595,18 @@ async function buildNodeExecutionPlan(
     const iterationItems = loopIterationCount > 0
       ? buildLoopIterationItems(routedLoopInputs, directIndex, loopMode)
       : [];
-    const iterationContext = applyListItemsToExecutionContext(
-      {
-        ...context,
-        prompt: promptSignalIterationCount > 0 ? signalToTextAt(promptSignal, promptIndex) : context.prompt,
-      },
+    const iterationContext = applyResolvedReferenceGroups(
+      applyListItemsToExecutionContext(
+        {
+          ...context,
+          prompt: promptSignalIterationCount > 0 ? signalToTextAt(resolution.promptSignals.prompt, promptIndex) : context.prompt,
+        },
+        node,
+        iterationItems,
+      ),
       node,
+      resolution.referenceSlots,
+      promptIndex,
       iterationItems,
     );
     const envelopeId = await hashExecutionParameters(stableNodeData, iterationContext);
@@ -4188,98 +4307,15 @@ export const useFlowStore = create<FlowState>()(
               return;
             }
 
-            const nodesById = buildNodeMap(latestState.nodes);
-            const incoming = buildIncomingMap(latestState.edges);
-            const promptSignal = collectPromptSignalForNode(currentId, latestState.nodes, latestState.edges);
+            // One shared resolution keeps this execution path, the planner, and direct Run on
+            // the same canonical prompt/reference-group representation (AUD-011).
+            const resolution = buildNodeExecutionResolution(latestNode, latestState.nodes, latestState.edges);
+            const promptSignal = resolution.promptSignals.combined;
             const blockingPromptDiagnostics = getBlockingSignalDiagnostics(promptSignal);
             if (blockingPromptDiagnostics.length > 0) {
               throw new Error(formatBlockingDiagnosticsMessage(blockingPromptDiagnostics));
             }
-            const context = {
-              prompt: signalToTextAt(promptSignal, 0),
-              textMediaInputs: collectTextMediaInputs(latestNode, nodesById, latestState.edges),
-              functionInputs: latestNode.type === 'functionNode'
-                ? collectFunctionNodeInputs(latestNode, nodesById, latestState.edges)
-                : undefined,
-              editImageInput: collectUpstreamImageInput(currentId, nodesById, latestState.edges),
-              refImageInput: collectUpstreamImageInputForHandles(
-                currentId,
-                ['refImage'],
-                nodesById,
-                latestState.edges,
-              ),
-              editMaskImageInput: collectImageMaskInput(currentId, nodesById, latestState.edges),
-              editReferenceImageInputs: collectImageReferenceInputs(
-                currentId,
-                nodesById,
-                latestState.edges,
-              ),
-              loraWeightsJson: collectUpstreamLoraJson(currentId, nodesById, latestState.edges),
-              audioSourceInput: collectUpstreamAudioInput(currentId, nodesById, latestState.edges),
-              sourceVideoInput: collectUpstreamVideoInput(currentId, nodesById, latestState.edges),
-              startImageInput: collectImageInputForHandle(
-                currentId,
-                ['video-start-frame'],
-                nodesById,
-                latestState.edges,
-              ),
-              endImageInput: collectImageInputForHandle(
-                currentId,
-                ['video-end-frame'],
-                nodesById,
-                latestState.edges,
-              ),
-              referenceImageInputs: collectReferenceImageInputs(latestNode, nodesById, latestState.edges),
-              extensionVideoInput: collectVideoExtensionInput(currentId, nodesById, latestState.edges),
-              videoInput: collectResultInputForHandle(
-                currentId,
-                COMPOSITION_VIDEO_HANDLE,
-                nodesById,
-                latestState.edges,
-                ['videoGen', 'composition', 'functionNode'],
-              )?.result,
-              audioInputs: COMPOSITION_AUDIO_HANDLES.map((handle) => {
-                const track = collectResultInputForHandle(
-                  currentId,
-                  handle,
-                  nodesById,
-                  latestState.edges,
-                  ['audioGen', 'functionNode'],
-                );
-
-                if (!track) {
-                  return undefined;
-                }
-
-                const settingsForTrack = getCompositionTrackSettings(latestNode.data, handle);
-
-                return {
-                  url: track.result,
-                  sourceNodeId: track.node.id,
-                  delayMs: settingsForTrack.offsetMs,
-                  volumePercent: settingsForTrack.volumePercent,
-                  enabled: settingsForTrack.enabled,
-                };
-              }).filter(
-                (
-                  value,
-                ): value is {
-                  url: string;
-                  sourceNodeId: string;
-                  delayMs: number;
-                  volumePercent: number;
-                  enabled: boolean;
-                } => Boolean(value),
-              ),
-              useVideoAudio: Boolean(latestNode.data.compositionUseVideoAudio),
-              videoAudioVolumePercent: coerceNumber(latestNode.data.compositionVideoAudioVolume, 100),
-              visualSequenceClips: collectEditorVisualSequence(latestNode, nodesById),
-              stageObjects: collectEditorStageObjects(latestNode),
-              sequenceAudioInputs: collectEditorAudioSequence(latestNode, nodesById),
-              nativeAssemblyManifest: latestNode.data.editorRenderCacheAssemblyManifest,
-              exportPresetId: latestNode.data.editorExportPresetPlan?.presetId,
-              config: collectExecutionConfig(currentId, latestNode, nodesById, incoming),
-            };
+            const context = resolution.context;
             const settings = executionSettings;
             const loopInputs = collectListLoopInputs(currentId, latestState.nodes, latestState.edges);
             const loopMode = normalizeListLoopMode(latestNode.data.listLoopMode);
@@ -4334,12 +4370,18 @@ export const useFlowStore = create<FlowState>()(
                 const iterationItems = loopIterationCount > 0
                   ? buildLoopIterationItems(routedLoopInputs, directIndex, loopMode)
                   : [];
-                const loopContext = applyListItemsToExecutionContext(
-                  {
-                    ...context,
-                    prompt: promptSignalIterationCount > 0 ? signalToTextAt(promptSignal, promptIndex) : context.prompt,
-                  },
+                const loopContext = applyResolvedReferenceGroups(
+                  applyListItemsToExecutionContext(
+                    {
+                      ...context,
+                      prompt: promptSignalIterationCount > 0 ? signalToTextAt(resolution.promptSignals.prompt, promptIndex) : context.prompt,
+                    },
+                    latestNode,
+                    iterationItems,
+                  ),
                   latestNode,
+                  resolution.referenceSlots,
+                  promptIndex,
                   iterationItems,
                 );
                 
