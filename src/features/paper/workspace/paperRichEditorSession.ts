@@ -1,10 +1,18 @@
 import {
+  collectEffectiveRichEditorSelectionTypographies,
+  createRichEditorBase,
+  effectiveRichEditorTextNodeTypography,
   managedEditorPaintForTypography,
   paperFontVariationSettingsToCss,
   type RichEditorManagedPaintContext,
 } from '../../../lib/paperRichTextDom';
-import { paperFontObliqueAngleFromCss, paperFontStyleDescriptor, paperFontStyleFromCss } from '../../../lib/paperExactManagedFonts';
-import type { PaperRichParagraph, PaperTypography } from '../../../types/paper';
+import {
+  paperFontObliqueAngleFromCss,
+  paperFontStyleDescriptor,
+  paperFontStyleFromCss,
+  requestedExactPaperManagedFacesForTypographyPatch,
+} from '../../../lib/paperExactManagedFonts';
+import type { PaperManagedFontFace, PaperRichParagraph, PaperTypography } from '../../../types/paper';
 import {
   changedRichTypographyPatch,
   synchronizeRichTextWithTypographyChange,
@@ -124,7 +132,7 @@ function boundaryOffset(root: HTMLElement, container: Node, offset: number): num
 /** Wrap each selected text-node slice independently. Unlike Range.surroundContents this remains valid when a
  * selection crosses paragraphs, links, or existing style spans. The returned range covers exactly the same
  * visible text after the DOM is split. */
-function wrapSelectedText(root: HTMLElement, range: Range, styleSpan: (span: HTMLSpanElement) => void): Range | null {
+function wrapSelectedText(root: HTMLElement, range: Range, styleSpan: (span: HTMLSpanElement, selected: Text) => void): Range | null {
   const start = boundaryOffset(root, range.startContainer, range.startOffset);
   const end = boundaryOffset(root, range.endContainer, range.endOffset);
   if (end <= start) return null;
@@ -155,7 +163,7 @@ function wrapSelectedText(root: HTMLElement, range: Range, styleSpan: (span: HTM
     const selectedLength = target.end - target.start;
     if (selectedLength < selected.data.length) selected.splitText(selectedLength);
     const span = document.createElement('span');
-    styleSpan(span);
+    styleSpan(span, selected);
     selected.parentNode?.insertBefore(span, selected);
     span.appendChild(selected);
     first ??= span;
@@ -177,12 +185,18 @@ function applyCharacterPatch(
   managedPaint?: RichEditorManagedPaintContext,
 ): Range | null {
   const touchesFace = FACE_SELECTING_TYPOGRAPHY_KEYS.some((key) => key in patch);
-  // The DOM paints the VERIFIED exact alias for a managed family (never the human name); the span keeps
-  // the durable human family in data-paper-font-family so serialization restores the document identity.
-  const managed = managedPaint && touchesFace
-    ? managedEditorPaintForTypography({ ...managedPaint.typography, ...patch }, managedPaint.managedFonts)
+  const base = managedPaint
+    ? createRichEditorBase(managedPaint.typography, zoom, managedPaint.managedFonts)
     : undefined;
-  return wrapSelectedText(editor, range, (span) => {
+  return wrapSelectedText(editor, range, (span, selected) => {
+    // Resolve from this selected run before wrapping it. A selection may span multiple managed families;
+    // each slice must retain its own family while changing only the requested face descriptor.
+    const effective = managedPaint && base
+      ? effectiveRichEditorTextNodeTypography(editor, selected, managedPaint.typography, base)
+      : undefined;
+    const managed = managedPaint && touchesFace && effective
+      ? managedEditorPaintForTypography({ ...effective, ...patch }, managedPaint.managedFonts)
+      : undefined;
     if (managed) {
       span.style.fontFamily = managed.paintFamily;
       span.dataset.paperFontFamily = managed.sourceFamily;
@@ -211,6 +225,55 @@ function applyCharacterPatch(
     if ('textOrientation' in patch) span.style.textOrientation = patch.textOrientation ?? 'mixed';
     if ('emphasis' in patch) span.style.setProperty('text-emphasis', emphasisCss(patch.emphasis));
   });
+}
+
+export interface RunPaperRichEditorCommandOptions {
+  editor: HTMLElement;
+  range: Range | null;
+  typography: PaperTypography;
+  zoom: number;
+  managedFonts: readonly PaperManagedFontFace[];
+  command: string;
+  value?: string;
+  isCommandActive: (command: string) => boolean;
+  authenticateFace: (face: PaperManagedFontFace) => Promise<unknown>;
+  executeFacePatch?: (patch: Partial<PaperTypography>) => void;
+  executeCollapsedManagedCommand?: (face: PaperManagedFontFace, patch: Partial<PaperTypography>) => void;
+  executeCommand: (command: string, value?: string) => void;
+}
+
+/**
+ * Authenticate every exact face selected by Bold/Italic before execCommand may touch the DOM. Rejection or
+ * face-resolution failure exits before executeCommand, so both toolbar and keyboard callers are atomic.
+ */
+export async function runPaperRichEditorCommand(options: RunPaperRichEditorCommandOptions): Promise<void> {
+  const { command } = options;
+  const patch: Partial<PaperTypography> | undefined = command === 'bold'
+    ? { fontWeight: options.isCommandActive(command) ? '400' : '700' }
+    : command === 'italic'
+      ? { fontStyle: options.isCommandActive(command) ? 'normal' : 'italic' }
+      : undefined;
+  if (patch) {
+    const base = createRichEditorBase(options.typography, options.zoom, options.managedFonts);
+    const selected = collectEffectiveRichEditorSelectionTypographies(
+      options.editor,
+      options.range,
+      options.typography,
+      base,
+    );
+    const typographies = selected.length ? selected : [options.typography];
+    const faces = requestedExactPaperManagedFacesForTypographyPatch(typographies, patch, options.managedFonts);
+    await Promise.all(faces.map((face) => options.authenticateFace(face)));
+    if (faces.length > 0 && options.executeFacePatch && !options.range?.collapsed) {
+      options.executeFacePatch(patch);
+      return;
+    }
+    if (faces.length === 1 && options.executeCollapsedManagedCommand && options.range?.collapsed) {
+      options.executeCollapsedManagedCommand(faces[0], patch);
+      return;
+    }
+  }
+  options.executeCommand(command, options.value);
 }
 
 function blocksTouchedByRange(editor: HTMLElement, range: Range): HTMLElement[] {

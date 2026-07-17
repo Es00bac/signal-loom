@@ -14,4 +14,15 @@ describe('Paper Source Library shipping caller', () => {
     expect(caller).not.toContain('svgExport.dataUrl');
     expect(caller).not.toMatch(/catch\s*\{/);
   });
+
+  it('routes all-pages envelopes through the prepare-all transaction before Source Library publication', () => {
+    const source = readFileSync(new URL('./PaperWorkspace.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('const exportAllPagesToSourceEnvelope = useCallback');
+    const end = source.indexOf('const runWebcomicImageExport', start);
+    const caller = source.slice(start, end);
+
+    expect(caller).toContain('buildPaperDocumentExactManagedFontOutput');
+    expect(caller).toContain('publishRasterizedPaperPagesSourcePayloads');
+    expect(caller).not.toContain('await exportPaperPageToSourceLibrary(');
+  });
 });

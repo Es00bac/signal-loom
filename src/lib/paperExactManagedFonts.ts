@@ -93,6 +93,24 @@ export function requestedExactPaperManagedFace(typography: PaperTypography, font
   return selection.face;
 }
 
+/**
+ * Resolve every exact face a selection will request after a face-changing edit. Each input typography is
+ * already the effective typography of one selected run, so a weight/style/stretch edit preserves mixed
+ * managed families instead of accidentally resolving every run against the frame default.
+ */
+export function requestedExactPaperManagedFacesForTypographyPatch(
+  typographies: readonly PaperTypography[],
+  patch: Partial<PaperTypography>,
+  fonts: readonly PaperManagedFontFace[],
+): PaperManagedFontFace[] {
+  const requested = new Map<string, PaperManagedFontFace>();
+  for (const typography of typographies) {
+    const face = requestedExactPaperManagedFace({ ...typography, ...patch }, fonts);
+    if (face) requested.set(face.id, face);
+  }
+  return [...requested.values()].sort((left, right) => left.id.localeCompare(right.id));
+}
+
 /** Browser paint/raster/export cannot verify a collection member; fail before any CSS source is emitted. */
 export function assertBrowserPaintablePaperManagedFace(face: PaperManagedFontFace): void {
   if (face.format === 'collection') {

@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
-import { createRichEditorBase, richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
-import { paperManagedFontFamilyAlias, verifyExactPaperManagedFaceRegistration } from '../../../lib/paperExactManagedFonts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { collectEffectiveRichEditorSelectionTypographies, createRichEditorBase, richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
+import { paperManagedFontFamilyAlias, requestedExactPaperManagedFacesForTypographyPatch, verifyExactPaperManagedFaceRegistration } from '../../../lib/paperExactManagedFonts';
 import type { PaperManagedFontFace, PaperTypography } from '../../../types/paper';
 import {
   applyTypographyToActiveRichEditor,
+  applyTypographyPatchToDomSelection,
   applyTypographyToDomSelection,
   registerPaperRichEditorSession,
   resolvePaperRichEditorTypographyUpdate,
+  runPaperRichEditorCommand,
 } from './paperRichEditorSession';
 
 const TYPOGRAPHY: PaperTypography = {
@@ -66,7 +68,177 @@ function managedVariableFace(): PaperManagedFontFace {
   };
 }
 
+function managedFamilyFace(
+  family: 'Atlas Serif' | 'Beacon Sans',
+  variant: 'regular' | 'bold' | 'italic',
+): PaperManagedFontFace {
+  const familyKey = family === 'Atlas Serif' ? 'atlas' : 'beacon';
+  const sha256 = (familyKey === 'atlas' ? (variant === 'regular' ? '1' : variant === 'bold' ? '2' : '3') : (variant === 'regular' ? '4' : variant === 'bold' ? '5' : '6')).repeat(64);
+  return {
+    id: `${familyKey}-${variant}`,
+    familyId: familyKey,
+    familyName: family,
+    postscriptName: `${family.replace(' ', '')}-${variant}`,
+    weight: variant === 'bold' ? 700 : 400,
+    style: variant === 'italic' ? 'italic' : 'normal',
+    stretchPercent: 100,
+    collectionIndex: 0,
+    variableAxes: {},
+    unicodeRanges: [],
+    format: 'truetype',
+    fontAsset: { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength: 3 },
+    embeddability: 'installable',
+    canSubset: true,
+    source: { kind: 'user-import' },
+    license: {},
+  };
+}
+
 describe('active rich editor Inspector formatting', () => {
+  it('resolves face-changing selection edits from each effective run and preserves mixed managed families', () => {
+    const faces = (['Atlas Serif', 'Beacon Sans'] as const).flatMap((family) => [
+      managedFamilyFace(family, 'regular'),
+      managedFamilyFace(family, 'bold'),
+    ]);
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml([{ runs: [
+      { text: 'Atlas', fontFamily: 'Atlas Serif' },
+      { text: ' Beacon', fontFamily: 'Beacon Sans' },
+    ] }], 1, { typography: TYPOGRAPHY, managedFonts: faces });
+    document.body.append(editor);
+    const atlasText = textNodeContaining(editor, 'Atlas');
+    const beaconText = textNodeContaining(editor, ' Beacon');
+    const range = document.createRange();
+    range.setStart(atlasText, 0);
+    range.setEnd(beaconText, beaconText.length);
+    const base = createRichEditorBase(TYPOGRAPHY, 1, faces);
+
+    const effective = collectEffectiveRichEditorSelectionTypographies(editor, range, TYPOGRAPHY, base);
+    expect(effective.map((item) => item.fontFamily)).toEqual(['Atlas Serif', 'Beacon Sans']);
+    expect(requestedExactPaperManagedFacesForTypographyPatch(effective, { fontWeight: '700' }, faces).map((face) => face.id))
+      .toEqual(['atlas-bold', 'beacon-bold']);
+
+    const applied = applyTypographyPatchToDomSelection(
+      editor,
+      range,
+      { fontWeight: '700' },
+      1,
+      { typography: TYPOGRAPHY, managedFonts: faces },
+    );
+    expect(applied?.applied).toBe(true);
+    const painted = Array.from(editor.querySelectorAll<HTMLSpanElement>('span[data-paper-font-family]'))
+      .filter((span) => span.style.fontWeight === '700');
+    expect(painted.map((span) => [span.dataset.paperFontFamily, span.style.fontFamily])).toEqual([
+      ['Atlas Serif', `"${paperManagedFontFamilyAlias(faces[1])}"`],
+      ['Beacon Sans', `"${paperManagedFontFamilyAlias(faces[3])}"`],
+    ]);
+    const serialized = serializeRichEditor(editor, base);
+    expect(serialized[0].runs.map((run) => [run.text, run.fontFamily, run.fontWeight])).toEqual([
+      ['Atlas', 'Atlas Serif', '700'],
+      [' Beacon', 'Beacon Sans', '700'],
+    ]);
+  });
+
+  it.each(['bold', 'italic'] as const)('authenticates every managed %s target before executing and leaves the DOM unchanged on rejection', async (command) => {
+    const faces = (['Atlas Serif', 'Beacon Sans'] as const).flatMap((family) => [
+      managedFamilyFace(family, 'regular'),
+      managedFamilyFace(family, command === 'bold' ? 'bold' : 'italic'),
+    ]);
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml([{ runs: [
+      { text: 'Atlas', fontFamily: 'Atlas Serif' },
+      { text: ' Beacon', fontFamily: 'Beacon Sans' },
+    ] }], 1, { typography: TYPOGRAPHY, managedFonts: faces });
+    document.body.append(editor);
+    const atlasText = textNodeContaining(editor, 'Atlas');
+    const beaconText = textNodeContaining(editor, ' Beacon');
+    const range = document.createRange();
+    range.setStart(atlasText, 0);
+    range.setEnd(beaconText, beaconText.length);
+    const before = editor.innerHTML;
+    const executeCommand = vi.fn();
+
+    await expect(runPaperRichEditorCommand({
+      editor,
+      range,
+      typography: TYPOGRAPHY,
+      zoom: 1,
+      managedFonts: faces,
+      command,
+      isCommandActive: () => false,
+      authenticateFace: async (face) => {
+        if (face.familyName === 'Beacon Sans') throw new Error('Beacon target unavailable');
+      },
+      executeCommand,
+    })).rejects.toThrow('Beacon target unavailable');
+
+    expect(executeCommand).not.toHaveBeenCalled();
+    expect(editor.innerHTML).toBe(before);
+  });
+
+  it('uses the authenticated managed Bold face patch instead of letting execCommand synthesize a face', async () => {
+    const faces = [managedFamilyFace('Atlas Serif', 'regular'), managedFamilyFace('Atlas Serif', 'bold')];
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml([{ runs: [{ text: 'Atlas', fontFamily: 'Atlas Serif' }] }], 1, {
+      typography: TYPOGRAPHY,
+      managedFonts: faces,
+    });
+    document.body.append(editor);
+    const text = textNodeContaining(editor, 'Atlas');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const executeFacePatch = vi.fn();
+    const executeCommand = vi.fn();
+
+    await runPaperRichEditorCommand({
+      editor,
+      range,
+      typography: TYPOGRAPHY,
+      zoom: 1,
+      managedFonts: faces,
+      command: 'bold',
+      isCommandActive: () => false,
+      authenticateFace: async () => undefined,
+      executeFacePatch,
+      executeCommand,
+    });
+
+    expect(executeFacePatch).toHaveBeenCalledWith({ fontWeight: '700' });
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it('authenticates and selects the exact target alias for a managed Bold command at a caret', async () => {
+    const faces = [managedFamilyFace('Atlas Serif', 'regular'), managedFamilyFace('Atlas Serif', 'bold')];
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml([{ runs: [{ text: 'Atlas', fontFamily: 'Atlas Serif' }] }], 1, {
+      typography: TYPOGRAPHY,
+      managedFonts: faces,
+    });
+    document.body.append(editor);
+    const text = textNodeContaining(editor, 'Atlas');
+    const caret = document.createRange();
+    caret.setStart(text, 2);
+    caret.collapse(true);
+    const executeCollapsedManagedCommand = vi.fn();
+    const executeCommand = vi.fn();
+
+    await runPaperRichEditorCommand({
+      editor,
+      range: caret,
+      typography: TYPOGRAPHY,
+      zoom: 1,
+      managedFonts: faces,
+      command: 'bold',
+      isCommandActive: () => false,
+      authenticateFace: async () => undefined,
+      executeCollapsedManagedCommand,
+      executeCommand,
+    });
+
+    expect(executeCollapsedManagedCommand).toHaveBeenCalledWith(faces[1], { fontWeight: '700' });
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
   it('awaits exact alias authentication and preserves Managed Variable 640/75 wdth/wght oblique 12deg through DOM, serialization, and reopen', async () => {
     const face = managedVariableFace();
     const alias = paperManagedFontFamilyAlias(face);

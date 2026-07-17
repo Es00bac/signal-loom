@@ -308,6 +308,11 @@ export function createRichEditorBase(typography: PaperTypography, openingZoom: n
   };
 }
 
+function richEditorSpanData(root: HTMLElement, parent: HTMLElement | null, attribute: string): string | undefined {
+  const owner = parent?.closest(`[${attribute}]`);
+  return owner && root.contains(owner) ? owner.getAttribute(attribute) ?? undefined : undefined;
+}
+
 function normalizedFontFamily(value: string): string {
   return value.split(',').map((part) => part.trim().replace(/^['"]|['"]$/g, '')).join(', ');
 }
@@ -412,6 +417,54 @@ function runFromComputedStyle(
   return run;
 }
 
+/** Resolve one live editor text node back to its durable effective typography, including managed aliases. */
+export function effectiveRichEditorTextNodeTypography(
+  root: HTMLElement,
+  node: Text,
+  typography: PaperTypography,
+  base: RichEditorBase,
+): PaperTypography {
+  const parent = node.parentElement;
+  if (!parent) return typography;
+  const run = runFromComputedStyle(
+    node.data,
+    getComputedStyle(parent),
+    base,
+    (attribute) => richEditorSpanData(root, parent, attribute),
+  );
+  return effectivePaperRunTypography(typography, run);
+}
+
+/**
+ * Read the effective typography of every text run touched by a retained DOM range. This is deliberately
+ * read-only: callers can authenticate all requested managed faces before applying any live DOM mutation.
+ */
+export function collectEffectiveRichEditorSelectionTypographies(
+  root: HTMLElement,
+  range: Range | null,
+  typography: PaperTypography,
+  base: RichEditorBase,
+): PaperTypography[] {
+  if (!range || !root.contains(range.commonAncestorContainer)) return [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const selected: PaperTypography[] = [];
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const marker = node.parentElement?.closest('[data-paper-marker]');
+    let touched = false;
+    if (!marker) {
+      if (range.collapsed) {
+        touched = node === range.startContainer || node.parentElement?.contains(range.startContainer) === true;
+      } else {
+        try { touched = range.intersectsNode(node); } catch { touched = false; }
+      }
+    }
+    if (touched) selected.push(effectiveRichEditorTextNodeTypography(root, node, typography, base));
+    node = walker.nextNode() as Text | null;
+  }
+  return selected;
+}
+
 /**
  * Read an edited contentEditable back into rich paragraphs. Block children (DIV/P/LI) are paragraphs, `<br>`
  * splits a paragraph, list items carry a marker, and every text node's run style comes from its computed
@@ -430,10 +483,7 @@ export function serializeRichEditor(root: HTMLElement, base: RichEditorBase): Pa
     if (!current) startParagraph();
     const parent = node.parentElement;
     const style = parent ? getComputedStyle(parent) : null;
-    const readSpanData = (attribute: string): string | undefined => {
-      const owner = parent?.closest(`[${attribute}]`);
-      return owner && root.contains(owner) ? owner.getAttribute(attribute) ?? undefined : undefined;
-    };
+    const readSpanData = (attribute: string): string | undefined => richEditorSpanData(root, parent, attribute);
     const run: PaperTextRun = style ? runFromComputedStyle(text, style, base, readSpanData) : { text };
     const link = parent?.closest('a[href]')?.getAttribute('href');
     if (link) run.link = link;

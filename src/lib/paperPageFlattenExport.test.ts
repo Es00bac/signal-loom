@@ -10,6 +10,7 @@ import {
   buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
   getPaperPageExportDimensions,
   publishRasterizedPaperPageSourcePayload,
+  publishRasterizedPaperPagesSourcePayloads,
   rasterizeFlattenedPaperPageToPng,
 } from './paperPageFlattenExport';
 import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
@@ -151,6 +152,44 @@ describe('paperPageFlattenExport', () => {
       code: 'PAPER_PAGE_OUTPUT_FAILED',
       message: expect.stringMatching(/no Source Library or Video asset was published.*hostile SVG decode/i),
     });
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('prepares every page before publishing a multi-page Source Library envelope', async () => {
+    let decodeCount = 0;
+    vi.stubGlobal('Image', class {
+      decoding = '';
+      src = '';
+      decode() {
+        decodeCount += 1;
+        return decodeCount === 2 ? Promise.reject(new Error('page two decode failed')) : Promise.resolve();
+      }
+    });
+    const first = createDefaultPaperDocument({ title: 'Atomic Pages' });
+    const outputDocument = {
+      ...first,
+      pages: [first.pages[0], { ...first.pages[0], id: 'page-2', pageNumber: 2 }],
+    };
+    const context = { drawImage: vi.fn() };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => context),
+      toDataURL: vi.fn(() => 'data:image/png;base64,page'),
+    };
+    const browserDocument = { createElement: vi.fn(() => canvas) } as unknown as Document;
+    const publish = vi.fn(async () => ({ id: 'must-not-exist' }));
+
+    await expect(publishRasterizedPaperPagesSourcePayloads(
+      outputDocument,
+      outputDocument.pages.map((page, envelopeIndex) => ({
+        pageId: page.id,
+        options: { browserDocument, envelopeId: 'atomic-envelope', envelopeIndex },
+      })),
+      publish,
+    )).rejects.toMatchObject({ code: 'PAPER_PAGE_OUTPUT_FAILED' });
+
+    expect(decodeCount).toBe(2);
     expect(publish).not.toHaveBeenCalled();
   });
 

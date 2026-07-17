@@ -9,6 +9,10 @@ describe('PaperRichEditableText Ctrl/Cmd+B/I/U keyboard shortcuts', () => {
     // asserts the keydown handler actually implements it now, not just the tooltip claiming it does.
     expect(source).toContain("event.metaKey || event.ctrlKey");
     expect(source).toContain("runCommand(key === 'b' ? 'bold' : key === 'i' ? 'italic' : 'underline')");
+    expect(source).toContain("<PaperContextualToolbarButton onApply={() => runCommand('bold')}");
+    expect(source).toContain("<PaperContextualToolbarButton onApply={() => runCommand('italic')}");
+    expect(source).toContain('runPaperRichEditorCommand({');
+    expect(source).toContain('authenticateFace: ensurePaperImportedFontRegistered');
   });
 });
 

@@ -2,9 +2,11 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { createPortal } from 'react-dom';
 import {
   collectExactPaperManagedFaces,
+  paperManagedFontFamilyAlias,
   paperFontStyleFromCss,
   paperManagedFontFamilyForLivePaint,
   requestedExactPaperManagedFace,
+  requestedExactPaperManagedFacesForTypographyPatch,
 } from '../../../lib/paperExactManagedFonts';
 import {
   AlertTriangle,
@@ -96,6 +98,7 @@ import {
 import {
   imageSourceToDataUrl,
   publishRasterizedPaperPageSourcePayload,
+  publishRasterizedPaperPagesSourcePayloads,
 } from '../../../lib/paperPageFlattenExport';
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
@@ -188,7 +191,7 @@ import { DEFAULT_PAPER_COLUMN_GUTTER_MM, resolvePaperColumnGutterMm } from '../.
 import { computePaperThreadSlices } from '../../../lib/paperThreadFlow';
 import { createPaperCanvasMeasurer } from '../../../lib/paperCanvasMeasurer';
 import { resolveFrameWrapSpacers, type PaperWrapSpacer } from '../../../lib/paperTextWrap';
-import { createRichEditorBase, richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
+import { collectEffectiveRichEditorSelectionTypographies, createRichEditorBase, richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
 import {
   ensureRichTextForTransform,
   flattenPaperRichText,
@@ -203,6 +206,7 @@ import {
   FACE_SELECTING_TYPOGRAPHY_KEYS,
   registerPaperRichEditorSession,
   resolvePaperRichEditorTypographyUpdate,
+  runPaperRichEditorCommand,
   type PaperRichEditorSession,
 } from './paperRichEditorSession';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
@@ -3542,19 +3546,28 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       const envelopeLabel = label.trim() || `${document.title} flattened pages`;
       const envelopeId = `paper-envelope-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
       setStatus(`Flattening ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} into "${envelopeLabel}"...`);
-      for (let index = 0; index < document.pages.length; index += 1) {
-        const page = document.pages[index];
-        await exportPaperPageToSourceLibrary(page.id, {
-          envelopeId,
-          envelopeLabel,
-          envelopeIndex: index,
-        });
-      }
+      const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
+      const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+      await publishRasterizedPaperPagesSourcePayloads(
+        exact.document,
+        document.pages.map((page, envelopeIndex) => ({
+          pageId: page.id,
+          options: {
+            envelopeId,
+            envelopeLabel,
+            envelopeIndex,
+            resolveImageSrc: (src: string) => imageSourceToDataUrl(src),
+            fontFaceCss: exact.fontFaceCss,
+          },
+        })),
+        addSourceAssetItem,
+      );
+      setSourceSidebarOpen(true);
       setStatus(`Exported ${document.pages.length} flattened page${document.pages.length === 1 ? '' : 's'} into "${envelopeLabel}".`);
     })().catch((error) => {
       setStatus(error instanceof Error ? error.message : 'Could not export flattened pages into the envelope.');
     });
-  }, [document.pages, document.title, exportPaperPageToSourceLibrary]);
+  }, [addSourceAssetItem, document, setSourceSidebarOpen, sourceItems]);
 
   const runWebcomicImageExport = useCallback(async (settings: PaperWebcomicExportSettings) => {
     if (!await confirmPreflightBeforeExport('webcomic page image export')) return;
@@ -9947,10 +9960,42 @@ function PaperRichEditableText({
     }
   };
 
-  const runCommand = (command: string, value?: string) => {
+  const executeCommand = (command: string, value?: string) => {
     restoreSelection();
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
     document.execCommand(command, false, value);
+  };
+  const runCommand = (command: string, value?: string) => {
+    restoreSelection();
+    const editor = editorRef.current;
+    if (!editor) return;
+    void runPaperRichEditorCommand({
+      editor,
+      range: savedRangeRef.current,
+      typography: frame.typography,
+      zoom: openingZoom,
+      managedFonts: managedFonts ?? [],
+      command,
+      value,
+      isCommandActive: (candidate) => {
+        try { return document.queryCommandState(candidate); } catch { return false; }
+      },
+      authenticateFace: ensurePaperImportedFontRegistered,
+      executeFacePatch: (patch) => { applySelectionTypographyPatchNow(patch, managedFonts); },
+      executeCollapsedManagedCommand: (face) => {
+        restoreSelection();
+        try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
+        document.execCommand('fontName', false, paperManagedFontFamilyAlias(face));
+        document.execCommand(command, false, value);
+      },
+      executeCommand,
+    }).catch(async (error) => {
+      await showAlertDialog({
+        title: 'Exact Font Edit Blocked',
+        message: error instanceof Error ? error.message : 'The requested exact face could not be authenticated, so the text was not changed.',
+        tone: 'danger',
+      });
+    });
   };
   const createSelectionLink = () => {
     void (async () => {
@@ -9994,9 +10039,14 @@ function PaperRichEditableText({
       return applySelectionTypographyPatchNow(patch, paintFonts);
     }
     try {
-      const exactFace = requestedExactPaperManagedFace({ ...frame.typography, ...patch }, paintFonts ?? []);
-      if (!exactFace) return applySelectionTypographyPatchNow(patch, paintFonts);
-      return ensurePaperImportedFontRegistered(exactFace)
+      const editor = editorRef.current;
+      const selected = editor
+        ? collectEffectiveRichEditorSelectionTypographies(editor, savedRangeRef.current, frame.typography, base)
+        : [];
+      const effective = selected.length ? selected : [frame.typography];
+      const exactFaces = requestedExactPaperManagedFacesForTypographyPatch(effective, patch, paintFonts ?? []);
+      if (!exactFaces.length) return applySelectionTypographyPatchNow(patch, paintFonts);
+      return Promise.all(exactFaces.map((face) => ensurePaperImportedFontRegistered(face)))
         .then(() => applySelectionTypographyPatchNow(patch, paintFonts))
         .catch(async (error) => {
           await showAlertDialog({

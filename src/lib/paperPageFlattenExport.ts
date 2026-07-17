@@ -312,6 +312,30 @@ export async function publishRasterizedPaperPageSourcePayload<T>(
   return publish(payload);
 }
 
+export interface RasterizedPaperPageSourcePayloadRequest {
+  pageId: string;
+  options: RasterizedPaperPageSourcePayloadOptions;
+}
+
+/**
+ * Prepare and validate a complete multi-page batch before publishing its first item. A failure in any page's
+ * asset embedding, exact-font readiness, SVG decode, or PNG rasterization therefore leaves the Source Library
+ * unchanged instead of publishing a truncated envelope.
+ */
+export async function publishRasterizedPaperPagesSourcePayloads<T>(
+  document: PaperDocument,
+  requests: readonly RasterizedPaperPageSourcePayloadRequest[],
+  publish: (payload: FlattenedPaperPageSourcePayload) => Promise<T>,
+): Promise<T[]> {
+  const payloads: FlattenedPaperPageSourcePayload[] = [];
+  for (const { pageId, options } of requests) {
+    payloads.push(await buildRasterizedPaperPageSourcePayload(document, pageId, options));
+  }
+  const published: T[] = [];
+  for (const payload of payloads) published.push(await publish(payload));
+  return published;
+}
+
 export async function rasterizeFlattenedPaperPageToPng(
   exported: FlattenedPaperPageSvgExport,
   browserDocument: Document = globalThis.document,
