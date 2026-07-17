@@ -30,8 +30,9 @@ import {
 } from '../../lib/compositionTracks';
 import type { CompositionMediaFamily } from '../../lib/compositionTracks';
 import { isCompositionVideoConnection } from '../../lib/compositionEdgeMigration';
+import { resolveEffectiveSourceNode } from '../../lib/virtualNodes';
 import { useEditorStore } from '../../store/editorStore';
-import { useFlowStore } from '../../store/flowStore';
+import { resolveNodeOutputAsset, useFlowStore } from '../../store/flowStore';
 import type {
   AppNode,
   AppNodeProps,
@@ -561,6 +562,7 @@ function findConnectedMedia(
   acceptedTypes: Array<AppNode['type']>,
   mediaFamily: CompositionMediaFamily,
 ): ConnectedMedia | undefined {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const edge = edges.find((candidate) => {
     if (candidate.target !== targetNodeId) {
       return false;
@@ -574,7 +576,10 @@ function findConnectedMedia(
       return false;
     }
 
-    const sourceNode = nodes.find((node) => node.id === candidate.source);
+    const rawSourceNode = nodesById.get(candidate.source);
+    const sourceNode = rawSourceNode
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, candidate.sourceHandle)
+      : undefined;
     return isCompositionVideoConnection(candidate) && (
       sourceNode?.type === 'videoGen' || sourceNode?.type === 'composition'
     );
@@ -584,7 +589,10 @@ function findConnectedMedia(
     return undefined;
   }
 
-  const sourceNode = nodes.find((node) => node.id === edge.source);
+  const rawSourceNode = nodesById.get(edge.source);
+  const sourceNode = rawSourceNode
+    ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
+    : undefined;
 
   if (!sourceNode || !acceptedTypes.includes(sourceNode.type)) {
     return undefined;
@@ -598,12 +606,7 @@ function findConnectedMedia(
     return undefined;
   }
 
-  const result = resultValueAsMediaUrl(
-    (sourceNode.type === 'audioGen' || sourceNode.type === 'videoGen') &&
-    (sourceNode.data.mediaMode ?? 'generate') === 'import'
-      ? sourceNode.data.sourceAssetUrl
-      : sourceNode.data.result,
-  );
+  const result = resolveNodeOutputAsset(sourceNode);
 
   if (!result) {
     return undefined;

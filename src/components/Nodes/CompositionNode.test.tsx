@@ -186,4 +186,145 @@ describe('CompositionNode Function-produced audio parity (independent review cor
     // placeholder each contain the substring, hence 4 occurrences across the 2 lanes).
     expect(html.match(/Connect media/g)).toHaveLength(4);
   });
+
+  it('shows a correct-family Function video on the video lane', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'fn-video-1',
+          type: 'functionNode',
+          position: { x: 0, y: 0 },
+          data: {
+            resultType: 'video',
+            result: 'https://example.test/fn-video.mp4',
+            functionNode: createDefaultFunctionNodeConfig('Rendered Function Video'),
+          },
+        },
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        },
+      ] as AppNode[],
+      edges: [
+        { id: 'e1', source: 'fn-video-1', target: 'composition-1', targetHandle: 'composition-video' },
+      ],
+    });
+
+    const html = renderCompositionNode(1);
+
+    expect(html).toContain('Rendered Function Video');
+  });
+
+  it('does not display a wrong-family Function audio result on the video lane', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'fn-audio-1',
+          type: 'functionNode',
+          position: { x: 0, y: 0 },
+          data: {
+            resultType: 'audio',
+            result: 'https://example.test/fn-audio.mp3',
+            functionNode: createDefaultFunctionNodeConfig('Wrong-family Audio Function'),
+          },
+        },
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        },
+      ] as AppNode[],
+      edges: [
+        { id: 'e1', source: 'fn-audio-1', target: 'composition-1', targetHandle: 'composition-video' },
+      ],
+    });
+
+    const html = renderCompositionNode(1);
+
+    expect(html).not.toContain('Wrong-family Audio Function');
+  });
+
+  it('shows Function audio routed through a Portal when execution can consume it', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'fn-audio-1',
+          type: 'functionNode',
+          position: { x: 0, y: 0 },
+          data: {
+            resultType: 'audio',
+            result: 'https://example.test/portal-function.mp3',
+            functionNode: createDefaultFunctionNodeConfig('Portal Narration'),
+          },
+        },
+        {
+          id: 'portal-entry',
+          type: 'portal',
+          position: { x: 0, y: 0 },
+          data: { portalRole: 'entry', portalPairId: 'pair-1' },
+        },
+        {
+          id: 'portal-exit',
+          type: 'portal',
+          position: { x: 0, y: 0 },
+          data: { portalRole: 'exit', portalPairId: 'pair-1' },
+        },
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        },
+      ] as AppNode[],
+      edges: [
+        { id: 'into-portal', source: 'fn-audio-1', target: 'portal-entry' },
+        { id: 'out-of-portal', source: 'portal-exit', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    const html = renderCompositionNode(1);
+
+    expect(html).toContain('Portal Narration');
+  });
+
+  it('does not display Function audio routed from an inactive Fork output', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'fn-audio-1',
+          type: 'functionNode',
+          position: { x: 0, y: 0 },
+          data: {
+            resultType: 'audio',
+            result: 'https://example.test/inactive-function.mp3',
+            functionNode: createDefaultFunctionNodeConfig('Inactive Fork Narration'),
+          },
+        },
+        {
+          id: 'fork-1',
+          type: 'forkSwitchNode',
+          position: { x: 0, y: 0 },
+          data: { selectedOutput: 'A' },
+        },
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        },
+      ] as AppNode[],
+      edges: [
+        { id: 'into-fork', source: 'fn-audio-1', target: 'fork-1', targetHandle: 'input' },
+        { id: 'inactive-output', source: 'fork-1', sourceHandle: 'B', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+
+    const html = renderCompositionNode(1);
+
+    expect(html).not.toContain('Inactive Fork Narration');
+  });
 });

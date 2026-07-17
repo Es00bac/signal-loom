@@ -25,6 +25,7 @@ import {
   getCompositionTrackSettings,
   normalizeCompositionAudioTrackCounts,
   sanitizeCompositionAudioMigrationWarnings,
+  type CompositionMediaFamily,
 } from '../lib/compositionTracks';
 import {
   isCompositionVideoConnection,
@@ -380,7 +381,7 @@ function createDebouncedLocalStorage(delayMs: number): StateStorage {
   };
 }
 
-function resolveNodeOutputAsset(node: AppNode): string | undefined {
+export function resolveNodeOutputAsset(node: AppNode): string | undefined {
   if (
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&
     (node.data.mediaMode ?? 'generate') === 'import'
@@ -1398,6 +1399,7 @@ function collectVideoExtensionInput(
     nodesById,
     edges,
     ['videoGen', 'composition'],
+    undefined,
   )?.result;
 }
 
@@ -1715,6 +1717,7 @@ function collectResultInputForHandle(
   nodesById: Map<string, AppNode>,
   edges: Edge[],
   acceptedTypes: FlowNodeType[],
+  expectedMediaFamily: CompositionMediaFamily | undefined,
 ): { node: AppNode; result: string } | undefined {
   const edge = edges.find((candidate) => {
     if (candidate.target !== nodeId) {
@@ -1727,7 +1730,7 @@ function collectResultInputForHandle(
 
     const rawSourceNode = nodesById.get(candidate.source);
     const sourceNode = rawSourceNode
-      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+      ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, candidate.sourceHandle)
       : undefined;
     return targetHandle === COMPOSITION_VIDEO_HANDLE && isCompositionVideoConnection(candidate) && (
       sourceNode?.type === 'videoGen' || sourceNode?.type === 'composition'
@@ -1740,7 +1743,7 @@ function collectResultInputForHandle(
 
   const rawSourceNode = nodesById.get(edge.source);
   const sourceNode = rawSourceNode
-    ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges)
+    ? resolveEffectiveSourceNode(rawSourceNode, nodesById, edges, edge.sourceHandle)
     : undefined;
 
   if (!sourceNode || !acceptedTypes.includes(sourceNode.type)) {
@@ -1756,16 +1759,12 @@ function collectResultInputForHandle(
     return undefined;
   }
 
-  if (sourceNode.type === 'functionNode') {
-    const targetMediaFamily = acceptedTypes.includes('audioGen')
-      ? 'audio'
-      : acceptedTypes.includes('videoGen')
-        ? 'video'
-        : undefined;
-
-    if (targetMediaFamily && !functionNodeMatchesCompositionMediaFamily(sourceNode, targetMediaFamily)) {
-      return undefined;
-    }
+  if (
+    sourceNode.type === 'functionNode'
+    && expectedMediaFamily
+    && !functionNodeMatchesCompositionMediaFamily(sourceNode, expectedMediaFamily)
+  ) {
+    return undefined;
   }
 
   const result = resolveNodeOutputAsset(sourceNode);
@@ -2307,6 +2306,7 @@ export function buildExecutionContextForNode(
       nodesById,
       edges,
       ['videoGen', 'composition', 'functionNode'],
+      'video',
     )?.result,
     audioInputs: COMPOSITION_AUDIO_HANDLES.map((handle) => {
       const track = collectResultInputForHandle(
@@ -2315,6 +2315,7 @@ export function buildExecutionContextForNode(
         nodesById,
         edges,
         ['audioGen', 'functionNode'],
+        'audio',
       );
 
       if (!track) {

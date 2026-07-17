@@ -1204,6 +1204,99 @@ describe('flow store Composition audio track normalization (FBL-019)', () => {
 
     expect(context.audioInputs).toEqual([]);
   });
+
+  it('supplies a correct-family Function result to the Composition video input (ultimate review correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-video-1', 'functionNode', {
+          resultType: 'video',
+          result: 'https://example.test/fn-video.mp4',
+          functionNode: createDefaultFunctionNodeConfig('Rendered Function Video'),
+        }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'e1', source: 'fn-video-1', target: 'composition-1', targetHandle: 'composition-video' },
+      ],
+    });
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.videoInput).toBe('https://example.test/fn-video.mp4');
+  });
+
+  it('does not feed a wrong-family Function audio result into the Composition video input (ultimate review correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-audio-1', 'functionNode', {
+          resultType: 'audio',
+          result: 'https://example.test/fn-audio.mp3',
+          functionNode: createDefaultFunctionNodeConfig('Wrong-family Audio Function'),
+        }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'e1', source: 'fn-audio-1', target: 'composition-1', targetHandle: 'composition-video' },
+      ],
+    });
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.videoInput).toBeUndefined();
+  });
+
+  it('supplies Function audio routed through a Portal to the Composition audio input (ultimate review correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-audio-1', 'functionNode', {
+          resultType: 'audio',
+          result: 'https://example.test/portal-function.mp3',
+          functionNode: createDefaultFunctionNodeConfig('Portal Narration'),
+        }),
+        createNode('portal-entry', 'portal', { portalRole: 'entry', portalPairId: 'pair-1' }),
+        createNode('portal-exit', 'portal', { portalRole: 'exit', portalPairId: 'pair-1' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'into-portal', source: 'fn-audio-1', target: 'portal-entry' },
+        { id: 'out-of-portal', source: 'portal-exit', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.audioInputs?.[0]).toMatchObject({
+      url: 'https://example.test/portal-function.mp3',
+      sourceNodeId: 'fn-audio-1',
+    });
+  });
+
+  it('does not feed Function audio from an inactive Fork output into Composition (ultimate review correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-audio-1', 'functionNode', {
+          resultType: 'audio',
+          result: 'https://example.test/inactive-function.mp3',
+          functionNode: createDefaultFunctionNodeConfig('Inactive Fork Narration'),
+        }),
+        createNode('fork-1', 'forkSwitchNode', { selectedOutput: 'A' }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'into-fork', source: 'fn-audio-1', target: 'fork-1', targetHandle: 'input' },
+        { id: 'inactive-output', source: 'fork-1', sourceHandle: 'B', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.audioInputs).toEqual([]);
+  });
 });
 
 describe('flow store Boolean loop persistence', () => {
