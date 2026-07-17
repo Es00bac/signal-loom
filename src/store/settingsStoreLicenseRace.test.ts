@@ -1,5 +1,5 @@
 import './test-setup-window';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * AUD-015 follow-up: license verification is asynchronous, so every mutation of the license
@@ -109,11 +109,13 @@ async function takeVerification(key: string): Promise<DeferredVerification> {
   return taken;
 }
 
-/** Drain queued microtask chains so settled verifications finish applying. */
+/**
+ * Cross one event-loop turn so recursively queued persistence microtasks finish as well as the
+ * verifier continuation. Per-key durable writes intentionally await each encrypted record; a
+ * fixed number of Promise turns only observes an implementation-dependent prefix of that chain.
+ */
 async function settle(): Promise<void> {
-  for (let round = 0; round < 10; round += 1) {
-    await Promise.resolve();
-  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 type SettingsStoreModule = typeof import('./settingsStore');
@@ -134,6 +136,14 @@ beforeEach(() => {
   cipherControl.pending.length = 0;
   verifierControl.pending.length = 0;
   verifierControl.calls.length = 0;
+});
+
+afterEach(async () => {
+  // Do not let an old module registry's asynchronous persistence chain consume the next test's
+  // shared cipher/verifier controls after vi.resetModules().
+  await settle();
+  expect(cipherControl.pending).toHaveLength(0);
+  expect(verifierControl.pending).toHaveLength(0);
 });
 
 describe('license verification race hardening (AUD-015)', () => {

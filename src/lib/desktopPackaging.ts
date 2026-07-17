@@ -340,7 +340,7 @@ export function verifyStagedFontLibrary(root: string): StagedFontLibraryReadines
 
     const checksums = new Map<string, string>();
     for (const line of readFileSync(sumsPath, 'utf8').trim().split(/\r?\n/).filter(Boolean)) {
-      const match = /^([0-9a-f]{64})  (.+)$/i.exec(line);
+      const match = /^([0-9a-f]{64}) {2}(.+)$/i.exec(line);
       if (!match || !isSafeRelativePath(match[2])) {
         blockers.push('Staged font checksum manifest contains an invalid entry.');
         continue;

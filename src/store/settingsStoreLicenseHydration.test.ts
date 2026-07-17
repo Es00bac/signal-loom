@@ -1,5 +1,5 @@
 import './test-setup-window';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * AUD-015: commercial-license validation must not race the asynchronous encrypted-settings
@@ -18,10 +18,14 @@ const cipherControl = vi.hoisted(() => ({
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
-  decryptSecret: (envelope: string) =>
-    new Promise<string | null>((resolve) => {
+  decryptSecret: (envelope: string) => {
+    // This suite controls profile-cache hydration. Immutable operation records are separate
+    // durable facts and must not become extra, unowned scheduling gates in the cache fixture.
+    if (envelope.startsWith('enc:{"clock"')) return Promise.resolve(envelope.slice('enc:'.length));
+    return new Promise<string | null>((resolve) => {
       cipherControl.pending.push({ envelope, resolve });
-    }),
+    });
+  },
   encryptSecret: async (plain: string) => `enc:${plain}`,
   isSecretEncryptionActive: () => true,
 }));
@@ -52,6 +56,10 @@ async function flushPendingDecrypts(map: (envelope: string) => string | null): P
 
 const decryptEnvelope = (envelope: string): string => envelope.slice('enc:'.length);
 
+async function settlePersistence(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 type SettingsStoreModule = typeof import('./settingsStore');
 
 async function importFreshSettingsStore(): Promise<SettingsStoreModule> {
@@ -62,6 +70,13 @@ beforeEach(() => {
   vi.resetModules();
   window.localStorage.clear();
   cipherControl.pending.length = 0;
+});
+
+afterEach(async () => {
+  // Let the fresh module's recursively queued per-record persistence finish before the shared
+  // deferred-cipher fixture is reset for the next module registry.
+  await settlePersistence();
+  expect(cipherControl.pending).toHaveLength(0);
 });
 
 describe('settings license hydration (AUD-015)', () => {
@@ -125,6 +140,9 @@ describe('settings license hydration (AUD-015)', () => {
       expect(useSettingsStore.getState().licenseKey).toBe(INVALID_KEY);
     });
     expect(useSettingsStore.getState().license.licensed).toBe(false);
+    // The simulated remote replacement starts after this renderer's boot write has completed.
+    // Otherwise that older cache write can physically overwrite the fixture's direct seed.
+    await settlePersistence();
 
     // Another writer persisted a valid key; this session rehydrates it.
     seedPersistedSettings({ licenseKey: VALID_KEY });
@@ -136,6 +154,7 @@ describe('settings license hydration (AUD-015)', () => {
       expect(useSettingsStore.getState().licenseKey).toBe(VALID_KEY);
       expect(useSettingsStore.getState().license.licensed).toBe(true);
     });
+    await settlePersistence();
 
     // Downgrade direction stays fail-closed: an unverifiable key never keeps the old grant.
     seedPersistedSettings({ licenseKey: INVALID_KEY });
