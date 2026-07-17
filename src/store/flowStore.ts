@@ -41,8 +41,10 @@ import {
 } from '../lib/imageEdgeMigration';
 import { resolveImageNodeMaskInput } from '../lib/imageNodeMask';
 import {
-  estimateExecutionPlan,
+  aggregateUsageTelemetries,
+  estimateNodeExecutionTelemetry,
   formatRollupSummary,
+  type UsageRollup,
 } from '../lib/costEstimation';
 import { IMAGE_MASK_HANDLE, IMAGE_REFERENCE_HANDLES } from '../lib/imageModelSupport';
 import {
@@ -62,7 +64,7 @@ import {
   resultValueAsMediaUrl,
   serializeResultValueForContainer,
 } from '../lib/flowResultValues';
-import { executeNodeRequest, hashExecutionParameters } from '../lib/flowExecution';
+import { executeNodeRequest, hashExecutionParameters, type ExecutionContext } from '../lib/flowExecution';
 import {
   buildCollapsedFunctionNode,
   createDefaultFunctionNodeConfig,
@@ -167,7 +169,11 @@ import { useSettingsStore } from './settingsStore';
 import { useSourceBinStore } from './sourceBinStore';
 import { useProjectUsageStore } from './projectUsageStore';
 import { useConfirmationStore } from './confirmationStore';
-import { useFlowWorkspaceStore, type FlowRunOwner } from './flowWorkspaceStore';
+import {
+  getFlowWorkspaceSnapshotGeneration,
+  useFlowWorkspaceStore,
+  type FlowRunOwner,
+} from './flowWorkspaceStore';
 import {
   validateSourceBinResumeItem,
   type ValidatedSourceBinResume,
@@ -220,6 +226,7 @@ export interface FlowState {
 
 const activeRunControllers = new Map<string, AbortController>();
 const activeGraphRuns = new Map<string, Promise<void>>();
+const activePlanningControllers = new Map<string, AbortController>();
 let hydratedFlowGraphGeneration = 0;
 let hydratedCanvasWorkspaceId = useFlowWorkspaceStore.getState().hydratedWorkspaceId;
 let flowClipboard: FlowClipboardPayload | null = null;
@@ -382,6 +389,13 @@ function resolveNodeOutputAsset(node: AppNode): string | undefined {
   }
 
   return resultValueAsMediaUrl(node.data.result);
+}
+
+// A provider run owns a complete dependency traversal.  Existing node results
+// are display state, not permission to skip work in a new root run; Source Bin
+// candidates are represented explicitly in the immutable plan instead.
+function shouldReuseExistingNodeOutput(_node: AppNode): boolean {
+  return false;
 }
 
 export function canRunNode(node: AppNode): boolean {
@@ -2093,38 +2107,596 @@ function coerceNumber(value: number | string | undefined, fallback: number): num
   return fallback;
 }
 
-function providerRunFingerprint(rootNodeId: string): string {
-  const normalize = (value: unknown): unknown => {
-    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
-    if (value === null || typeof value !== 'object') return value;
-    if (value instanceof Blob) return { type: value.type, size: value.size };
-    if (Array.isArray(value)) return value.map(normalize);
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .flatMap(([key, nested]) => {
-        const normalized = normalize(nested);
-        return normalized === undefined ? [] : [[key, normalized]];
-      }));
+function buildExecutionContextForNode(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  prompt = signalToTextAt(collectPromptSignalForNode(node.id, nodes, edges), 0),
+): ExecutionContext {
+  const nodesById = buildNodeMap(nodes);
+  const incoming = buildIncomingMap(edges);
+
+  return {
+    prompt,
+    textMediaInputs: collectTextMediaInputs(node, nodesById, edges),
+    functionInputs: node.type === 'functionNode'
+      ? collectFunctionNodeInputs(node, nodesById, edges)
+      : undefined,
+    editImageInput: collectUpstreamImageInput(node.id, nodesById, edges),
+    refImageInput: collectUpstreamImageInputForHandles(node.id, ['refImage'], nodesById, edges),
+    editMaskImageInput: collectImageMaskInput(node.id, nodesById, edges),
+    editReferenceImageInputs: collectImageReferenceInputs(node.id, nodesById, edges),
+    loraWeightsJson: collectUpstreamLoraJson(node.id, nodesById, edges),
+    audioSourceInput: collectUpstreamAudioInput(node.id, nodesById, edges),
+    sourceVideoInput: collectUpstreamVideoInput(node.id, nodesById, edges),
+    startImageInput: collectImageInputForHandle(node.id, ['video-start-frame'], nodesById, edges),
+    endImageInput: collectImageInputForHandle(node.id, ['video-end-frame'], nodesById, edges),
+    referenceImageInputs: collectReferenceImageInputs(node, nodesById, edges),
+    extensionVideoInput: collectVideoExtensionInput(node.id, nodesById, edges),
+    videoInput: collectResultInputForHandle(
+      node.id,
+      COMPOSITION_VIDEO_HANDLE,
+      nodesById,
+      edges,
+      ['videoGen', 'composition', 'functionNode'],
+    )?.result,
+    audioInputs: COMPOSITION_AUDIO_HANDLES.map((handle) => {
+      const track = collectResultInputForHandle(
+        node.id,
+        handle,
+        nodesById,
+        edges,
+        ['audioGen', 'functionNode'],
+      );
+
+      if (!track) {
+        return undefined;
+      }
+
+      const settingsForTrack = getCompositionTrackSettings(node.data, handle);
+      return {
+        url: track.result,
+        sourceNodeId: track.node.id,
+        delayMs: settingsForTrack.offsetMs,
+        volumePercent: settingsForTrack.volumePercent,
+        enabled: settingsForTrack.enabled,
+      };
+    }).filter(
+      (
+        value,
+      ): value is {
+        url: string;
+        sourceNodeId: string;
+        delayMs: number;
+        volumePercent: number;
+        enabled: boolean;
+      } => Boolean(value),
+    ),
+    useVideoAudio: Boolean(node.data.compositionUseVideoAudio),
+    videoAudioVolumePercent: coerceNumber(node.data.compositionVideoAudioVolume, 100),
+    visualSequenceClips: collectEditorVisualSequence(node, nodesById),
+    stageObjects: collectEditorStageObjects(node),
+    sequenceAudioInputs: collectEditorAudioSequence(node, nodesById),
+    nativeAssemblyManifest: node.data.editorRenderCacheAssemblyManifest,
+    exportPresetId: node.data.editorExportPresetPlan?.presetId,
+    config: collectExecutionConfig(node.id, node, nodesById, incoming),
   };
-  const state = useFlowStore.getState();
-  const settings = useSettingsStore.getState();
-  const sourceItems = useSourceBinStore.getState().getAllItems().map((item) => ({
-    id: item.id, kind: item.kind, assetId: item.assetId, assetUrl: item.assetUrl,
-    text: item.text, mimeType: item.mimeType, originNodeId: item.originNodeId,
-    envelopeId: item.envelopeId, envelopeIndex: item.envelopeIndex,
-  }));
-  return JSON.stringify(normalize({
+}
+
+function stableNodeDataForExecution(node: AppNode): NodeData {
+  const { nodeInstanceId: _nodeInstanceId, inputRevision: _inputRevision, envelopeItems: _envelopeItems, ...data } = stripRuntimeData(node).data;
+  return data;
+}
+
+interface NodeExecutionIterationPlan {
+  index: number;
+  context: ExecutionContext;
+  iterationItems: LoopIterationItem[];
+  envelopeId: string;
+  existingResume: ValidatedSourceBinResume | undefined;
+}
+
+interface NodeExecutionPlan {
+  iterations: NodeExecutionIterationPlan[];
+  isLoopRun: boolean;
+  loopIterationCount: number;
+  combinedIterationCount: number;
+  noRunnableItems: boolean;
+  stoppedLoopMessage?: string;
+}
+
+function releaseExecutionPlanResumes(plan: NodeExecutionPlan): void {
+  for (const iteration of plan.iterations) iteration.existingResume?.release?.();
+}
+
+interface PlannedNodeSpend {
+  nodeId: string;
+  nodeType: FlowNodeType;
+  label: string;
+  role: 'Dependency' | 'Target';
+  telemetries: UsageTelemetry[];
+}
+
+interface ProviderSpendPlan {
+  nodes: PlannedNodeSpend[];
+  rollup: UsageRollup;
+}
+
+type SourceBinItemSnapshot = ReturnType<ReturnType<typeof useSourceBinStore.getState>['getAllItems']>[number];
+
+interface ProviderRunSnapshot {
+  nodes: AppNode[];
+  edges: Edge[];
+  settings: RuntimeSettingsSnapshot;
+  sourceBinItems: SourceBinItemSnapshot[];
+  fingerprint: string;
+}
+
+function cloneRuntimeSettings(settings: RuntimeSettingsSnapshot): RuntimeSettingsSnapshot {
+  return {
+    apiKeys: { ...settings.apiKeys },
+    defaultModels: {
+      text: { ...settings.defaultModels.text },
+      image: { ...settings.defaultModels.image },
+      video: { ...settings.defaultModels.video },
+      audio: { ...settings.defaultModels.audio },
+    },
+    providerSettings: { ...settings.providerSettings },
+  };
+}
+
+function stableRunPlanStringify(value: unknown): string {
+  const normalize = (entry: unknown): unknown => {
+    if (entry === undefined || typeof entry === 'function' || typeof entry === 'symbol') {
+      return undefined;
+    }
+    if (entry === null || typeof entry !== 'object') {
+      return entry;
+    }
+    if (entry instanceof Blob) {
+      return { blobType: entry.type, blobSize: entry.size };
+    }
+    if (Array.isArray(entry)) {
+      return entry.map(normalize);
+    }
+
+    return Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .flatMap(([key, nested]) => {
+          const normalized = normalize(nested);
+          return normalized === undefined ? [] : [[key, normalized]];
+        }),
+    );
+  };
+
+  return JSON.stringify(normalize(value));
+}
+
+function nodeDataForRunFingerprint(data: NodeData, isRootNode: boolean): Record<string, unknown> {
+  const spendAffectingData = { ...data } as Record<string, unknown>;
+  for (const key of [
+    'onChange', 'onRun', 'onSelectAttempt', 'isRunning', 'error', 'statusMessage',
+    // Runtime identity protects publication; it does not affect provider work.
+    'nodeInstanceId', 'inputRevision',
+  ]) {
+    delete spendAffectingData[key];
+  }
+  if (isRootNode) {
+    for (const key of [
+      'result',
+      'resultType',
+      'resultMimeType',
+      'resultExtension',
+      'resultFileName',
+      'resultOutputMetadata',
+      'resultHistory',
+      'selectedResultId',
+      'usage',
+      'envelopeItems',
+    ]) {
+      delete spendAffectingData[key];
+    }
+  }
+  return spendAffectingData;
+}
+
+function createProviderRunFingerprint(
+  rootNodeId: string,
+  nodes: AppNode[],
+  edges: Edge[],
+  settings: RuntimeSettingsSnapshot,
+  sourceBinItems: SourceBinItemSnapshot[],
+): string {
+  return stableRunPlanStringify({
     rootNodeId,
-    nodes: state.nodes.map((node) => ({
-      id: node.id, type: node.type, parentId: node.parentId,
-      data: Object.fromEntries(Object.entries(node.data).filter(([key]) => ![
-        'onChange', 'onRun', 'onSelectAttempt', 'isRunning', 'error', 'statusMessage',
-      ].includes(key))),
+    nodes: nodes.map((node) => ({
+      id: node.id,
+      type: node.type,
+      parentId: node.parentId,
+      data: nodeDataForRunFingerprint(node.data, node.id === rootNodeId),
     })),
-    edges: state.edges,
+    edges: edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      sourceHandle: edge.sourceHandle,
+      target: edge.target,
+      targetHandle: edge.targetHandle,
+      data: edge.data,
+    })),
     settings,
-    sourceItems,
-  }));
+    sourceBinItems: sourceBinItems.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      label: item.label,
+      assetId: item.assetId,
+      assetUrl: item.assetUrl,
+      scratchFileName: item.scratchFileName,
+      nativeFilePath: item.nativeFilePath,
+      text: item.text,
+      mimeType: item.mimeType,
+      sourceKey: item.sourceKey,
+      originNodeId: item.originNodeId,
+      envelopeId: item.envelopeId,
+      envelopeIndex: item.envelopeIndex,
+      envelopeLabel: item.envelopeLabel,
+    })),
+  });
+}
+
+function captureProviderRunSnapshot(rootNodeId: string): ProviderRunSnapshot {
+  const flowState = useFlowStore.getState();
+  const nodes = flowState.nodes.map((node) => ({ ...node, data: { ...node.data } }));
+  const edges = flowState.edges.map((edge) => ({ ...edge }));
+  const settings = cloneRuntimeSettings(useSettingsStore.getState());
+  const sourceBinItems = useSourceBinStore.getState().getAllItems().map((item) => ({ ...item }));
+
+  return {
+    nodes,
+    edges,
+    settings,
+    sourceBinItems,
+    fingerprint: createProviderRunFingerprint(rootNodeId, nodes, edges, settings, sourceBinItems),
+  };
+}
+
+function isProviderRunSnapshotCurrent(snapshot: ProviderRunSnapshot, rootNodeId: string): boolean {
+  const current = captureProviderRunSnapshot(rootNodeId);
+  return current.fingerprint === snapshot.fingerprint;
+}
+
+async function requestRunConfirmation(
+  message: string,
+  title: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (signal.aborted) {
+    return false;
+  }
+
+  const confirmationStore = useConfirmationStore.getState();
+  const confirmationPromise = confirmationStore.requestConfirmation(message, title);
+
+  let abortHandler: (() => void) | undefined;
+  const abortPromise = new Promise<boolean>((resolve) => {
+    abortHandler = () => {
+      const activeRequest = useConfirmationStore.getState().activeRequest;
+      if (activeRequest?.message === message && activeRequest.title === title) {
+        useConfirmationStore.getState().respond(false);
+      }
+      resolve(false);
+    };
+    signal.addEventListener('abort', abortHandler, { once: true });
+  });
+
+  try {
+    return await Promise.race([confirmationPromise, abortPromise]);
+  } finally {
+    if (abortHandler) {
+      signal.removeEventListener('abort', abortHandler);
+    }
+  }
+}
+
+async function buildNodeExecutionPlan(
+  node: AppNode,
+  nodes: AppNode[],
+  edges: Edge[],
+  sourceBinItems: ReturnType<ReturnType<typeof useSourceBinStore.getState>['getAllItems']>,
+  signal?: AbortSignal,
+  materializeResumes = true,
+): Promise<NodeExecutionPlan> {
+  const promptSignal = collectPromptSignalForNode(node.id, nodes, edges);
+  const blockingPromptDiagnostics = getBlockingSignalDiagnostics(promptSignal);
+  if (blockingPromptDiagnostics.length > 0) {
+    throw new Error(formatBlockingDiagnosticsMessage(blockingPromptDiagnostics));
+  }
+
+  const context = buildExecutionContextForNode(node, nodes, edges, signalToTextAt(promptSignal, 0));
+  const loopInputs = collectListLoopInputs(node.id, nodes, edges);
+  const promptIsEmptyContainer = (
+    (promptSignal.kind === 'list' || promptSignal.kind === 'envelope')
+    && Array.isArray(promptSignal.items)
+    && promptSignal.items.length === 0
+  );
+  const noRunnableItems = promptIsEmptyContainer || loopInputs.some((input) => input.items.length === 0);
+
+  if (noRunnableItems) {
+    return {
+      iterations: [],
+      isLoopRun: true,
+      loopIterationCount: 0,
+      combinedIterationCount: 0,
+      noRunnableItems: true,
+    };
+  }
+
+  const loopMode = normalizeListLoopMode(node.data.listLoopMode);
+  const promptSignalIterationCount = getSignalIterationCount(promptSignal);
+  const routedLoopInputs = buildRoutedLoopInputs(loopInputs, promptSignal);
+  const loopIterationCount = getLoopIterationCount(routedLoopInputs, loopMode);
+  const combinedIterationCount = resolveLoopRunCount(routedLoopInputs, loopMode, promptSignal);
+  const stableNodeData = stableNodeDataForExecution(node);
+
+  if (combinedIterationCount === 0) {
+    const envelopeId = await hashExecutionParameters(stableNodeData, context);
+    const existingResume = await findExistingIterationAsset(
+      sourceBinItems,
+      node,
+      envelopeId,
+      0,
+      signal,
+      materializeResumes,
+    );
+    return {
+      iterations: [{ index: 0, context, iterationItems: [], envelopeId, existingResume }],
+      isLoopRun: false,
+      loopIterationCount,
+      combinedIterationCount,
+      noRunnableItems: false,
+    };
+  }
+
+  const iterations: NodeExecutionIterationPlan[] = [];
+  let stoppedLoopMessage: string | undefined;
+  for (let index = 0; index < combinedIterationCount; index += 1) {
+    const breakDecision = shouldBreakLoopAtIteration(node.id, nodes, edges, index);
+    if (breakDecision.shouldBreak) {
+      stoppedLoopMessage = `Stopped before iteration ${index + 1}/${combinedIterationCount}${breakDecision.reason ? `: ${breakDecision.reason}` : ''}`;
+      break;
+    }
+
+    const { directIndex, promptIndex } = resolveAllCombinationSubIndices(
+      index,
+      loopIterationCount,
+      promptSignalIterationCount,
+      loopMode,
+    );
+    const iterationItems = loopIterationCount > 0
+      ? buildLoopIterationItems(routedLoopInputs, directIndex, loopMode)
+      : [];
+    const iterationContext = applyListItemsToExecutionContext(
+      {
+        ...context,
+        prompt: promptSignalIterationCount > 0 ? signalToTextAt(promptSignal, promptIndex) : context.prompt,
+      },
+      node,
+      iterationItems,
+    );
+    const envelopeId = await hashExecutionParameters(stableNodeData, iterationContext);
+    const existingResume = await findExistingIterationAsset(
+      sourceBinItems,
+      node,
+      envelopeId,
+      index,
+      signal,
+      materializeResumes,
+    );
+    iterations.push({ index, context: iterationContext, iterationItems, envelopeId, existingResume });
+  }
+
+  return {
+    iterations,
+    isLoopRun: true,
+    loopIterationCount,
+    combinedIterationCount,
+    noRunnableItems: false,
+    stoppedLoopMessage,
+  };
+}
+
+async function findExistingIterationAsset(
+  sourceBinItems: ReturnType<ReturnType<typeof useSourceBinStore.getState>['getAllItems']>,
+  node: AppNode,
+  envelopeId: string,
+  envelopeIndex: number,
+  signal?: AbortSignal,
+  materialize = true,
+): Promise<ValidatedSourceBinResume | undefined> {
+  const candidates = sourceBinItems.filter((item) => (
+    item.originNodeId === node.id
+    && item.envelopeId === envelopeId
+    && item.envelopeIndex === envelopeIndex
+  ));
+
+  for (const candidate of candidates) {
+    const resume = await validateSourceBinResumeItem(candidate, projectedResultType(node), signal, {
+      materializeStoredAsset: materialize,
+    });
+    if (resume) {
+      return resume;
+    }
+  }
+
+  return undefined;
+}
+
+function collectExecutionOrder(rootNodeId: string, nodes: AppNode[], edges: Edge[]): string[] {
+  const nodesById = buildNodeMap(nodes);
+  const visited = new Set<string>();
+  const order: string[] = [];
+
+  const visit = (nodeId: string) => {
+    if (visited.has(nodeId)) return;
+    visited.add(nodeId);
+    const node = nodesById.get(nodeId);
+    if (!node) return;
+    if (nodeId !== rootNodeId && shouldReuseExistingNodeOutput(node)) return;
+    for (const dependencyId of getExecutionDependencies(node, edges, nodesById)) {
+      visit(dependencyId);
+    }
+    order.push(nodeId);
+  };
+
+  visit(rootNodeId);
+  return order;
+}
+
+function projectedResultValue(
+  node: AppNode,
+  iteration: NodeExecutionIterationPlan,
+  telemetry: UsageTelemetry | undefined,
+): string {
+  const kind = projectedResultType(node);
+  if (kind === 'text') {
+    const projectedTokens = Math.max(1, Math.min(512, telemetry?.outputTokens ?? 32));
+    return Array.from({ length: projectedTokens }, () => 'projected').join(' ');
+  }
+  if (kind === 'boolean') return 'true';
+  if (kind === 'number') return '0';
+  if (kind === 'json' || kind === 'list' || kind === 'envelope') return '{}';
+  if (kind === 'package') return `projected-package:${node.id}:${iteration.index}`;
+  return `data:${getResultMimeType(kind)};base64,planning-${node.id}-${iteration.index}`;
+}
+
+function applyProjectedNodeOutput(
+  node: AppNode,
+  plan: NodeExecutionPlan,
+  telemetryByIndex: Map<number, UsageTelemetry>,
+): AppNode {
+  if (plan.noRunnableItems || plan.iterations.length === 0) {
+    return {
+      ...node,
+      data: { ...node.data, result: undefined, envelopeItems: [] },
+    };
+  }
+
+  const kind = projectedResultType(node);
+  const items = plan.iterations.map((iteration) => ({
+    id: `planning-${node.id}-${iteration.index}`,
+    index: iteration.index,
+    kind,
+    label: `Planned ${kind} ${iteration.index + 1}`,
+    value: iteration.existingResume?.value
+      ?? projectedResultValue(node, iteration, telemetryByIndex.get(iteration.index)),
+    mimeType: iteration.existingResume?.mimeType ?? getResultMimeType(kind),
+    sourceBinItemId: iteration.existingResume?.item.id,
+    sourceNodeId: node.id,
+  } satisfies EnvelopeItem));
+  const firstItem = items[0];
+
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      result: firstItem.value,
+      resultType: firstItem.kind,
+      resultMimeType: firstItem.mimeType,
+      envelopeItems: plan.isLoopRun ? items : undefined,
+    },
+  };
+}
+
+function isPaidProviderTelemetry(telemetry: UsageTelemetry): boolean {
+  return telemetry.provider !== 'local' && telemetry.costUsd !== 0;
+}
+
+async function buildProviderSpendPlan(
+  rootNodeId: string,
+  nodes: AppNode[],
+  edges: Edge[],
+  settings: RuntimeSettingsSnapshot,
+  sourceBinItems: SourceBinItemSnapshot[],
+  signal?: AbortSignal,
+): Promise<ProviderSpendPlan> {
+  let planningNodes = nodes.map((node) => ({ ...node, data: { ...node.data } }));
+  const order = collectExecutionOrder(rootNodeId, planningNodes, edges);
+  const plannedNodes: PlannedNodeSpend[] = [];
+
+  for (const currentId of order) {
+    if (signal?.aborted) {
+      throw new DOMException('The run was cancelled.', 'AbortError');
+    }
+    const node = planningNodes.find((candidate) => candidate.id === currentId);
+    if (!node || !canRunNode(node)) continue;
+    const plan = await buildNodeExecutionPlan(node, planningNodes, edges, sourceBinItems, signal, false);
+    try {
+      if (signal?.aborted) {
+        throw new DOMException('The run was cancelled.', 'AbortError');
+      }
+      const telemetryByIndex = new Map<number, UsageTelemetry>();
+      const paidTelemetries: UsageTelemetry[] = [];
+
+      for (const iteration of plan.iterations) {
+        if (iteration.existingResume) continue;
+        const estimatedTelemetry = estimateNodeExecutionTelemetry(node, iteration.context, settings);
+        const provider = typeof node.data.provider === 'string' ? node.data.provider : undefined;
+        // Lack of a catalog price is an unknown spend, not permission to bypass
+        // final consent. Local/function work has no provider identity and remains free.
+        const telemetry = estimatedTelemetry ?? (provider
+          ? {
+              source: 'estimate' as const,
+              confidence: 'unknown' as const,
+              provider,
+              modelId: typeof node.data.modelId === 'string' ? node.data.modelId : undefined,
+              notes: ['No catalog rate is available; provider cost is unknown.'],
+            }
+          : undefined);
+        if (!telemetry) continue;
+        telemetryByIndex.set(iteration.index, telemetry);
+        if (isPaidProviderTelemetry(telemetry)) {
+          paidTelemetries.push(telemetry);
+        }
+      }
+
+      if (paidTelemetries.length > 0) {
+        plannedNodes.push({
+          nodeId: node.id,
+          nodeType: node.type,
+          label: String(node.data.customTitle ?? node.data.title ?? node.id),
+          role: node.id === rootNodeId ? 'Target' : 'Dependency',
+          telemetries: paidTelemetries,
+        });
+      }
+
+      const projected = applyProjectedNodeOutput(node, plan, telemetryByIndex);
+      planningNodes = planningNodes.map((candidate) => candidate.id === currentId ? projected : candidate);
+    } finally {
+      releaseExecutionPlanResumes(plan);
+    }
+  }
+
+  const telemetries = plannedNodes.flatMap((entry) => entry.telemetries);
+  return {
+    nodes: plannedNodes,
+    rollup: aggregateUsageTelemetries(telemetries),
+  };
+}
+
+function formatProviderSpendPlan(plan: ProviderSpendPlan): string {
+  const lines = plan.nodes.map((entry) => {
+    const rollup = aggregateUsageTelemetries(entry.telemetries);
+    const summary = formatRollupSummary(rollup, `${entry.telemetries.length} provider call${entry.telemetries.length === 1 ? '' : 's'}`);
+    return `${entry.role} ${entry.nodeType} “${entry.label}”: ${summary}`;
+  });
+  return [
+    'Planned paid provider work:',
+    ...lines,
+    '',
+    formatRollupSummary(plan.rollup, 'Total estimated provider spend'),
+    '',
+    'Only continue if you want to spend against the configured providers now.',
+  ].join('\n');
 }
 
 function formatBlockingDiagnosticsMessage(diagnostics: Array<{ message: string; nodeId?: string; edgeId?: string }>): string {
@@ -2958,14 +3530,21 @@ export const useFlowStore = create<FlowState>()(
         const workspaceState = useFlowWorkspaceStore.getState();
         const workspaceId = workspaceState.hydratedWorkspaceId;
         const runId = workspaceState.getActiveFlowRunId(workspaceId, id);
-        const controller = runId ? activeRunControllers.get(runId) : undefined;
+        const planningKey = activeGraphRunKey(
+          workspaceId,
+          id,
+          get().nodes.find((node) => node.id === id),
+        );
+        const controller = runId
+          ? activeRunControllers.get(runId)
+          : activePlanningControllers.get(planningKey);
 
         if (!controller) {
           return;
         }
 
         controller.abort();
-        const runNodeIds = workspaceState.invalidateFlowRunForNode(workspaceId, id);
+        const runNodeIds = runId ? workspaceState.invalidateFlowRunForNode(workspaceId, id) : [id];
         const cancelledNodeOwners = runNodeIds.map((runNodeId) => {
           const data = get().nodes.find((node) => node.id === runNodeId)?.data;
           return {
@@ -3172,15 +3751,8 @@ export const useFlowStore = create<FlowState>()(
 
         const run = (async () => {
         const preflightState = get();
-        const preflightSettings = useSettingsStore.getState();
-        const preflightFingerprint = providerRunFingerprint(nodeId);
-        const preflightEstimate = estimateExecutionPlan(
-          nodeId,
-          preflightState.nodes,
-          preflightState.edges,
-          preflightSettings,
-        );
-        const runningNode = preflightEstimate.nodeIds
+        const executionNodeIds = collectExecutionOrder(nodeId, preflightState.nodes, preflightState.edges);
+        const runningNode = executionNodeIds
           .map((id) => preflightState.nodes.find((node) => node.id === id))
           .find((node) => node?.data.isRunning);
 
@@ -3201,89 +3773,6 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
-        let preflightLoopCount = 0;
-        let preflightRunCount = 0;
-        try {
-          const preflightNode = preflightState.nodes.find((node) => node.id === nodeId);
-          const preflightLoopMode = normalizeListLoopMode(preflightNode?.data.listLoopMode);
-          const preflightPromptSignal = collectPromptSignalForNode(
-            nodeId,
-            preflightState.nodes,
-            preflightState.edges,
-          );
-          const promptDiagnostics = getBlockingSignalDiagnostics(preflightPromptSignal);
-          if (promptDiagnostics.length > 0) {
-            throw new Error(formatBlockingDiagnosticsMessage(promptDiagnostics));
-          }
-          const preflightLoopInputs = buildRoutedLoopInputs(
-            collectListLoopInputs(nodeId, preflightState.nodes, preflightState.edges),
-            preflightPromptSignal,
-          );
-          preflightLoopCount = getLoopIterationCount(preflightLoopInputs, preflightLoopMode);
-          preflightRunCount = resolveLoopRunCount(
-            preflightLoopInputs,
-            preflightLoopMode,
-            preflightPromptSignal,
-          );
-        } catch (error) {
-          get().patchNodeData(nodeId, {
-            error: error instanceof Error ? error.message : 'Connected lists could not be expanded.',
-            statusMessage: undefined,
-          });
-          return;
-        }
-
-        if (
-          preflightRunCount > 1
-          && !(preflightEstimate.rollup.totalKnownCostUsd >= 0.01 || preflightEstimate.rollup.unknownCostCount > 0)
-        ) {
-          const preflightNode = preflightState.nodes.find((node) => node.id === nodeId);
-          const preflightLoopMode = normalizeListLoopMode(preflightNode?.data.listLoopMode);
-          const loopLabel = preflightLoopCount > 0
-            ? preflightLoopMode === 'allCombinations' ? 'all-combinations' : 'paired'
-            : 'auto-batched prompt';
-          const proceed = await useConfirmationStore.getState().requestConfirmation(
-            `This ${loopLabel} run will execute ${preflightRunCount} envelope iterations against the configured node. Continue only if you want to run every item now.`,
-            'Envelope Run Confirmation',
-          );
-
-          if (!proceed) {
-            get().patchNodeData(nodeId, {
-              statusMessage: 'Envelope run cancelled before sending any provider requests.',
-              error: undefined,
-            });
-            return;
-          }
-        }
-
-        if (preflightEstimate.rollup.totalKnownCostUsd >= 0.01 || preflightEstimate.rollup.unknownCostCount > 0) {
-          const summary = formatRollupSummary(preflightEstimate.rollup, 'Estimated run cost');
-          const proceed = await useConfirmationStore.getState().requestConfirmation(
-            `${summary}${preflightRunCount > 1 ? `\n\nThis plan contains ${preflightRunCount} exact batch iteration${preflightRunCount === 1 ? '' : 's'}.` : ''}\n\nOnly continue if you want to spend against the configured providers now.`,
-            'Run Cost Confirmation',
-          );
-
-          if (!proceed) {
-            get().patchNodeData(nodeId, {
-              statusMessage: 'Run cancelled before sending any provider requests.',
-              error: undefined,
-            });
-            return;
-          }
-        }
-
-        // Confirmation authorizes exactly the graph, inputs, Source identities, and
-        // requester settings the user saw. Re-enter planning if any of those changed
-        // while a dialog was pending; do not allow the stale estimate to spend.
-        if (providerRunFingerprint(nodeId) !== preflightFingerprint) {
-          get().patchNodeData(nodeId, {
-            statusMessage: 'The run plan changed while awaiting confirmation. Re-planning before any provider request…',
-            error: undefined,
-          });
-          activeGraphRuns.delete(runKey);
-          return get().runNode(nodeId);
-        }
-
         const workspaceState = useFlowWorkspaceStore.getState();
         const ownerWorkspaceId = workspaceState.hydratedWorkspaceId;
         const ownerWorkspace = workspaceState.getWorkspace(ownerWorkspaceId);
@@ -3296,10 +3785,10 @@ export const useFlowStore = create<FlowState>()(
           inputRevision: ownerNode?.data.inputRevision,
           runId: makeFlowId(),
         };
+        const ownerWorkspaceSnapshotGeneration = getFlowWorkspaceSnapshotGeneration();
 
         const runController = new AbortController();
-        workspaceState.registerFlowRun(owner, { abort: () => runController.abort() });
-        activeRunControllers.set(owner.runId, runController);
+        activePlanningControllers.set(runKey, runController);
         const abortSignal = runController.signal;
         const requestedRootNode = get().nodes.find((node) => node.id === nodeId);
         const throwIfRunAborted = () => {
@@ -3307,16 +3796,109 @@ export const useFlowStore = create<FlowState>()(
             throw new DOMException('The run was cancelled.', 'AbortError');
           }
         };
+        const releasePlanningOwner = () => {
+          activePlanningControllers.delete(runKey);
+        };
+
+        get().patchNodeData(nodeId, {
+          isRunning: true,
+          error: undefined,
+          statusMessage: 'Planning provider spend…',
+        });
+
+        let approvedSnapshot: ProviderRunSnapshot | undefined;
+        while (!approvedSnapshot) {
+          const candidateSnapshot = captureProviderRunSnapshot(nodeId);
+          try {
+            throwIfRunAborted();
+            const currentBlockingDiagnostics = getBlockingFlowDiagnostics(
+              candidateSnapshot.nodes,
+              candidateSnapshot.edges,
+              nodeId,
+            );
+            if (currentBlockingDiagnostics.length > 0) {
+              throw new Error(formatBlockingDiagnosticsMessage(currentBlockingDiagnostics));
+            }
+            const spendPlan = await buildProviderSpendPlan(
+              nodeId,
+              candidateSnapshot.nodes,
+              candidateSnapshot.edges,
+              candidateSnapshot.settings,
+              candidateSnapshot.sourceBinItems,
+              abortSignal,
+            );
+            throwIfRunAborted();
+
+            if (spendPlan.nodes.length > 0) {
+              const proceed = await requestRunConfirmation(
+                formatProviderSpendPlan(spendPlan),
+                'Final Run Cost Confirmation',
+                abortSignal,
+              );
+              if (!proceed) {
+                get().patchNodeData(nodeId, {
+                  isRunning: false,
+                  statusMessage: 'Run cancelled before sending any provider requests.',
+                  error: undefined,
+                });
+                releasePlanningOwner();
+                return;
+              }
+            }
+
+            throwIfRunAborted();
+            const switchedWorkspace = useFlowWorkspaceStore.getState().hydratedWorkspaceId !== owner.workspaceId;
+            if (!switchedWorkspace && !isProviderRunSnapshotCurrent(candidateSnapshot, nodeId)) {
+              get().patchNodeData(nodeId, {
+                statusMessage: 'The run plan changed while awaiting confirmation. Re-planning before any provider request…',
+                error: undefined,
+              });
+              continue;
+            }
+            approvedSnapshot = candidateSnapshot;
+          } catch (error) {
+            if (isAbortError(error)) {
+              get().patchNodeData(nodeId, {
+                isRunning: false,
+                statusMessage: 'Run cancelled before sending any provider requests.',
+                error: undefined,
+              });
+              releasePlanningOwner();
+              return;
+            }
+            get().patchNodeData(nodeId, {
+              isRunning: false,
+              error: error instanceof Error ? error.message : 'The provider spend plan could not be built.',
+              statusMessage: undefined,
+            });
+            releasePlanningOwner();
+            return;
+          }
+        }
+
+        activePlanningControllers.delete(runKey);
+        workspaceState.registerFlowRun(owner, { abort: () => runController.abort() });
+        activeRunControllers.set(owner.runId, runController);
 
         const workspaceStore = useFlowWorkspaceStore.getState();
+        let executionNodes = approvedSnapshot.nodes.map((node) => ({ ...node, data: { ...node.data } }));
+        const executionEdges = approvedSnapshot.edges.map((edge) => ({ ...edge }));
+        const executionSettings = approvedSnapshot.settings;
         const commitRunPatch = (currentId: string, patch: Partial<NodeData>) => {
-          return workspaceStore.commitFlowRunPatch(owner, currentId, patch, {
+          const committed = workspaceStore.commitFlowRunPatch(owner, currentId, patch, {
             getHydratedNodeData: (currentNodeId) => get().nodes.find((node) => node.id === currentNodeId)?.data,
             applyToHydratedCanvas: (currentNodeId, nodePatch) => get().patchNodeData(currentNodeId, nodePatch),
           });
+          if (committed) {
+            executionNodes = executionNodes.map((node) => node.id === currentId
+              ? { ...node, data: { ...node.data, ...patch } }
+              : node);
+          }
+          return committed;
         };
         const isRunOwnerValid = (currentId: string) => {
-          return workspaceStore.isFlowRunOwnerValid(owner, currentId, {
+          return ownerWorkspaceSnapshotGeneration === getFlowWorkspaceSnapshotGeneration()
+            && workspaceStore.isFlowRunOwnerValid(owner, currentId, {
             getHydratedNodeData: (currentNodeId) => get().nodes.find((node) => node.id === currentNodeId)?.data,
           });
         };
@@ -3372,8 +3954,7 @@ export const useFlowStore = create<FlowState>()(
           const execution = (async (): Promise<void> => {
             throwIfRunAborted();
 
-          const state = get();
-          const currentNode = state.nodes.find((node) => node.id === currentId);
+          const currentNode = executionNodes.find((node) => node.id === currentId);
           if (!currentNode) {
             return;
           }
@@ -3383,10 +3964,6 @@ export const useFlowStore = create<FlowState>()(
             nodeInstanceId: currentNode.data.nodeInstanceId,
             inputRevision: currentNode.data.inputRevision,
           });
-
-          if (!isRunOwnerValid(currentId)) {
-            return;
-          }
 
           const nextStack = new Set(stack);
           nextStack.add(currentId);
@@ -3400,8 +3977,8 @@ export const useFlowStore = create<FlowState>()(
           }
 
           try {
-            const currentEdges = get().edges;
-            const currentNodesById = buildNodeMap(get().nodes);
+            const currentEdges = executionEdges;
+            const currentNodesById = buildNodeMap(executionNodes);
             const sourceIds = getExecutionDependencies(currentNode, currentEdges, currentNodesById);
 
             for (const sourceId of sourceIds) {
@@ -3410,14 +3987,10 @@ export const useFlowStore = create<FlowState>()(
 
             throwIfRunAborted();
 
-            const latestState = get();
-            const latestNode = latestState.nodes.find((node) => node.id === currentId);
+            const latestState = { nodes: executionNodes, edges: executionEdges };
+            const latestNode = executionNodes.find((node) => node.id === currentId);
 
             if (!latestNode || !canRunNode(latestNode)) {
-              return;
-            }
-
-            if (!isRunOwnerValid(currentId)) {
               return;
             }
 
@@ -3513,7 +4086,7 @@ export const useFlowStore = create<FlowState>()(
               exportPresetId: latestNode.data.editorExportPresetPlan?.presetId,
               config: collectExecutionConfig(currentId, latestNode, nodesById, incoming),
             };
-            const settings = useSettingsStore.getState();
+            const settings = executionSettings;
             const loopInputs = collectListLoopInputs(currentId, latestState.nodes, latestState.edges);
             const loopMode = normalizeListLoopMode(latestNode.data.listLoopMode);
             const promptSignalIterationCount = getSignalIterationCount(promptSignal);
@@ -3521,7 +4094,23 @@ export const useFlowStore = create<FlowState>()(
             const loopIterationCount = getLoopIterationCount(routedLoopInputs, loopMode);
             const combinedIterationCount = resolveLoopRunCount(routedLoopInputs, loopMode, promptSignal);
 
-            if (combinedIterationCount > 0) {
+            const promptIsEmptyContainer = (
+              (promptSignal.kind === 'list' || promptSignal.kind === 'envelope')
+              && Array.isArray(promptSignal.items)
+              && promptSignal.items.length === 0
+            );
+            if (promptIsEmptyContainer || loopInputs.some((input) => input.items.length === 0)) {
+              commitRunPatch(currentId, {
+                envelopeItems: undefined,
+                statusMessage: 'The connected list did not contain any runnable items.',
+                error: undefined,
+              });
+              return;
+            }
+
+            const hasMultiItemListAxis = loopInputs.some((input) => input.items.length > 1);
+            const preservesSingleFunctionLoop = latestNode.type === 'functionNode' && loopInputs.length > 0;
+            if (combinedIterationCount > 0 && (hasMultiItemListAxis || promptSignalIterationCount > 1 || preservesSingleFunctionLoop)) {
               const envelopeItems: EnvelopeItem[] = [];
               let stoppedLoopMessage: string | undefined;
               const loopStatusLabel = loopIterationCount > 0
@@ -3560,12 +4149,18 @@ export const useFlowStore = create<FlowState>()(
                   iterationItems,
                 );
                 
-                const envelopeId = await hashExecutionParameters(latestNode.data, loopContext);
-                const allSourceBinItems = useSourceBinStore.getState().getAllItems();
+                const envelopeId = await hashExecutionParameters(
+                  stableNodeDataForExecution(latestNode),
+                  loopContext,
+                );
+                // The confirmed plan owns this exact Source Bin view. A later
+                // library mutation must trigger a new plan, never change which
+                // iterations this already-confirmed root resumes.
+                const allSourceBinItems = approvedSnapshot.sourceBinItems;
                 const existingAsset = allSourceBinItems.find(
                   (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === index
                 );
-                const existingResume = currentId === nodeId && existingAsset
+                const existingResume = existingAsset
                   ? await validateSourceBinResumeItem(existingAsset, projectedResultType(latestNode), abortSignal)
                   : undefined;
 
@@ -3679,12 +4274,17 @@ export const useFlowStore = create<FlowState>()(
               return;
             }
 
-            const envelopeId = await hashExecutionParameters(latestNode.data, context);
-            const allSourceBinItems = useSourceBinStore.getState().getAllItems();
+            const envelopeId = await hashExecutionParameters(
+              stableNodeDataForExecution(latestNode),
+              context,
+            );
+            // Keep one-item resumes on the same immutable Source Bin view as
+            // the cost plan above.
+            const allSourceBinItems = approvedSnapshot.sourceBinItems;
             const existingAsset = allSourceBinItems.find(
               (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === 0
             );
-            const existingResume = currentId === nodeId && existingAsset
+            const existingResume = existingAsset
               ? await validateSourceBinResumeItem(existingAsset, projectedResultType(latestNode), abortSignal)
               : undefined;
 
@@ -3903,11 +4503,13 @@ export const useFlowStore = create<FlowState>()(
           }
           activeRunControllers.delete(owner.runId);
           workspaceStore.unregisterFlowRun(owner);
+          activeGraphRuns.delete(runKey);
         }
         })();
 
         activeGraphRuns.set(runKey, run);
         void run.finally(() => {
+          activePlanningControllers.delete(runKey);
           if (activeGraphRuns.get(runKey) === run) {
             activeGraphRuns.delete(runKey);
           }

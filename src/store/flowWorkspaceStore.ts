@@ -87,6 +87,17 @@ function makeWorkspaceId(): string {
 }
 
 const activeFlowRuns = new Map<string, ActiveFlowRun>();
+let workspaceSnapshotGeneration = 0;
+
+/**
+ * A project-level replacement can recycle the default workspace id while a
+ * provider request is in flight. Flow's hydrated canvas is deliberately kept
+ * alive until its replacement arrives, so owner checks also need this epoch to
+ * distinguish the old canvas from the newly-created workspace.
+ */
+export function getFlowWorkspaceSnapshotGeneration(): number {
+  return workspaceSnapshotGeneration;
+}
 
 function flowRunKey(workspaceId: string, nodeId: string): string {
   return `${workspaceId}:${nodeId}`;
@@ -289,6 +300,7 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
     return cloneFlowSnapshot(nextWorkspace.flow);
   },
   hydrateProjectSnapshot: ({ workspaces, activeWorkspaceId }) => {
+    workspaceSnapshotGeneration += 1;
     for (const run of new Set(activeFlowRuns.values())) {
       invalidateActiveFlowRun(run);
     }
@@ -319,6 +331,7 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
     return get().workspaces.find((workspace) => workspace.id === id);
   },
   reset: () => {
+    workspaceSnapshotGeneration += 1;
     for (const run of new Set(activeFlowRuns.values())) {
       invalidateActiveFlowRun(run);
     }
