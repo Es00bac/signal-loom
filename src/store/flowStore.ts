@@ -550,7 +550,7 @@ export async function prepareFlowSnapshotImportedAssets(
 ): Promise<FlowProjectFlowSnapshot> {
   const nodes = await Promise.all(snapshot.nodes.map(async (node) => {
     const sourceBinPatch = buildFlowNodePatchForRestoredSourceBinItem(node.data, sourceBinItems);
-    const generatedResultPatch = buildFlowNodeGeneratedResultPatch(node.id, node.data, sourceBinItems, {
+    const generatedResultPatch = buildFlowNodeGeneratedResultPatch(node.id, node.type, node.data, sourceBinItems, {
       replaceExistingHistory: true,
     });
     const sourceBinAssetUrl = typeof sourceBinPatch?.sourceAssetUrl === 'string' && sourceBinPatch.sourceAssetUrl.trim()

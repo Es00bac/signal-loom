@@ -669,6 +669,8 @@ describe('restoreProjectDocument', () => {
     } finally {
       defaultImageLayerPixelCodec.decode = originalDecode;
     }
+  });
+
   it('disposes prepared B URLs when a later preparation fails without touching live A URLs', async () => {
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     installLiveSource([{ id: 'prepare-a', assetUrl: 'blob:prepare-a' }]);
