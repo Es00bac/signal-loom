@@ -523,4 +523,174 @@ covered.
   flowDiagnostics.ts, projectValidation.ts, CompositionNode.tsx, types/flow.ts) and their tests
   (compositionTracks.test.ts, compositionEdgeMigration.test.ts, flowStore.test.ts,
   flowStore.remoteSync.test.ts, flowDiagnostics.test.ts, CompositionNode.test.tsx), in one commit.
-- This note update is a separate commit on top of `17057bf`.
+- `6ff8843` — note update for the above, separate commit on top of `17057bf`.
+
+## Third correction (independent review, 1 remaining Medium UI/runtime parity gap closed on top of `6ff8843`)
+
+A third independent review of the branch — after confirming the malformed/overflow classifier,
+Function-audio migration acceptance, typed bounded durable recovery records, every ingress path,
+reopen persistence, Diagnostics reporting, TypeScript, lint, and diff checks all passed — found one
+remaining Medium defect:
+
+`CompositionNode.tsx`'s connected-media lookup (`findConnectedMedia`, called from
+`connectionSignature` and the `connectedVideo`/`connectedAudioTracks` `useMemo`) never included
+`functionNode` in either handle's `acceptedTypes` (`['videoGen', 'composition']` for video,
+`['audioGen']` for audio). Execution's own `collectResultInputForHandle`
+(`buildExecutionContextForNode`'s `videoInput`/`audioInputs`) already accepted
+`['..., 'functionNode']` for both handles and gated a Function node's admission on its own
+`data.resultType`. So a Function node with `resultType: 'audio'`, a usable result, and an edge to
+`composition-audio-1` **executed correctly** (its result flowed into the render) but the
+Composition node **displayed that lane as `Connect media`** — no label, no duration, no timeline
+block — because the UI's lookup rejected the source node's type outright before ever checking its
+result type.
+
+Inspecting `collectResultInputForHandle` itself while fixing this surfaced a second, deeper gap the
+review didn't call out but the review's own required negative test would have caught: the function
+had **no family check at all** for `functionNode` sources — it accepted a Function node's
+`data.result` as either family's execution input regardless of the Function node's actual
+`resultType`. A Function node whose `resultType` was `'video'` (or `'text'`, or anything else)
+connected to `composition-audio-1` would have been silently consumed as the audio input at
+execution time, not just mis-rendered in the UI. This is exactly the "current helper would classify
+it as video in its fallback" risk the review flagged for the UI side, present in the execution
+truth model too.
+
+### Fix
+
+1. **`functionNodeMatchesCompositionMediaFamily` (compositionTracks.ts, new)** — the single typed
+   predicate: `node.type === 'functionNode' && node.data.resultType === family`, where `family` is
+   `'audio' | 'video'` (new `CompositionMediaFamily` type). This is the one truth both the UI and
+   execution now share, so a Function node can never be shown as one family in the timeline while a
+   different (or no) result is fed into execution.
+2. **`CompositionNode.tsx`'s `findConnectedMedia`** now takes an explicit `mediaFamily` parameter
+   (passed `'video'`/`'audio'` at each of its 4 call sites, which also now include `'functionNode'`
+   in their `acceptedTypes`). When the resolved source is a `functionNode`, it is admitted only if
+   `functionNodeMatchesCompositionMediaFamily(sourceNode, mediaFamily)` holds; otherwise the lookup
+   returns `undefined` exactly as if nothing were connected. The returned `ConnectedMedia.resultType`
+   is now the target-derived `mediaFamily` directly, not inferred from `sourceNode.type` (the old
+   `sourceNode.type === 'audioGen' ? 'audio' : 'video'` fallback — the exact bug the review flagged,
+   since a `functionNode` would have fallen through to `'video'` unconditionally).
+3. **`getMediaLabel`** gained a `functionNode` branch returning `node.data.functionNode?.title ??
+   'Function output'` — the Function node's own configured title, a deterministic label instead of
+   falling through to `node.data.modelId ?? 'Video track'`.
+4. **`flowStore.ts`'s `collectResultInputForHandle`** now applies the same shared predicate: when
+   the resolved source is a `functionNode`, it derives the expected family from which of
+   `'audioGen'`/`'videoGen'` is present in the caller's `acceptedTypes` (the two Composition call
+   sites are the only ones that ever include `'functionNode'`, and each supplies exactly one of the
+   two) and rejects the match if `functionNodeMatchesCompositionMediaFamily` fails. This closes the
+   latent execution-side wrong-family leak described above using the identical typed reuse rather
+   than a second, divergent truth model — satisfying the review's "smallest typed reuse" instruction.
+
+No change was needed to `resolveNodeOutputAsset`, the audio/video-import (`mediaMode`) resolution
+already used by both files, `resolveCompositionAudioTrackModel`, the migration/diagnostics code from
+the prior two corrections, or any persisted-data shape.
+
+### Red before fix
+
+Both new regression pairs were written and run against the working tree prior to this section's
+production fix (i.e. at `6ff8843`, before `functionNodeMatchesCompositionMediaFamily` and its call
+sites existed):
+
+```
+npx vitest run src/components/Nodes/CompositionNode.test.tsx src/store/flowStore.test.ts \
+  -t "independent review correction"
+# Test Files  2 failed (2)
+#      Tests  2 failed | 2 passed | 52 skipped (56)
+```
+
+The 2 failures were exactly the new defect-proving cases:
+- `CompositionNode.test.tsx > "shows the real media for a Function node whose effective result type
+  is audio, instead of 'Connect media'"` — failed because `'Narration Function'` never appeared;
+  `functionNode` was excluded from `acceptedTypes` entirely, so the lane rendered `Connect media`.
+- `flowStore.test.ts > "does not feed a wrong-family Function result (video) into the
+  composition-audio-1 execution input"` — failed because `context.audioInputs` contained the
+  video-typed Function node's URL; `collectResultInputForHandle` had no family check at all.
+
+(The negative UI test and the positive store-level test both happened to pass even before the fix —
+the negative UI case because excluding `functionNode` entirely already produced the expected
+"nothing connected" rendering regardless of family, and the positive store-level case because
+`collectResultInputForHandle`'s pre-fix unconditional acceptance happened to include the
+correct-family result too. Both are still asserted going forward as permanent regressions.)
+
+### Green after fix
+
+```
+npx vitest run src/components/Nodes/CompositionNode.test.tsx src/store/flowStore.test.ts
+# Test Files  2 passed (2)
+#      Tests  56 passed (56)
+
+npx vitest run --configLoader runner \
+  src/components/Nodes/CompositionNode.test.tsx \
+  src/lib/compositionTracks.test.ts src/lib/compositionEdgeMigration.test.ts \
+  src/lib/compositionMediaState.test.ts src/lib/flowExecutionComposition.test.ts \
+  src/lib/mediaComposition.test.ts src/lib/flowDiagnostics.test.ts \
+  src/lib/flowNodeContracts.test.ts \
+  src/store/flowStore.test.ts src/store/flowStore.remoteSync.test.ts
+# Test Files  10 passed (10)
+#      Tests  317 passed (317)
+
+npx tsc -b tsconfig.app.json --force
+# clean (fresh, non-incremental)
+
+npx eslint src/components/Nodes/CompositionNode.tsx src/components/Nodes/CompositionNode.test.tsx \
+  src/lib/compositionTracks.ts src/store/flowStore.ts src/store/flowStore.test.ts
+# clean
+
+git diff --check
+# clean
+```
+
+### Required scenarios and where each is proven
+
+- **A direct rendered Composition test proves a Function-audio lane shows the real media instead of
+  `Connect media`** — `CompositionNode.test.tsx > "shows the real media for a Function node whose
+  effective result type is audio, instead of 'Connect media'"`: renders a real `CompositionNode`
+  with a `functionNode` (`resultType: 'audio'`, a usable MP3 URL, `functionNode.title: 'Narration
+  Function'`) wired to `composition-audio-1`, asserts the label text appears and only the
+  still-unconnected video lane falls back to `Connect media` (2 occurrences — its label plus its
+  empty-timeline placeholder both contain the substring — rather than 4 if the audio-1 lane had also
+  fallen back).
+- **An execution-context/store-level parity test proves the same graph supplies the audio source
+  execution expects** — `flowStore.test.ts > "supplies a Function node whose effective result type
+  is audio as the composition-audio-1 execution source"`: builds the identical graph shape and
+  asserts `buildExecutionContextForNode(...).audioInputs` contains the Function node's URL and
+  `sourceNodeId`.
+- **A wrong-family Function negative proves a non-audio result is neither displayed nor consumed as
+  audio** — `CompositionNode.test.tsx > "does not display a wrong-family Function result (video) as
+  an audio track"` (label absent, lane still shows `Connect media`) and
+  `flowStore.test.ts > "does not feed a wrong-family Function result (video) into the
+  composition-audio-1 execution input"` (`audioInputs` is `[]`). The symmetric video-lane check was
+  not added as a separate test: `collectResultInputForHandle`'s fix is shared code covering both
+  handles identically (verified by inspection and by the unchanged, still-green
+  `flowExecutionComposition.test.ts`/`mediaComposition.test.ts` suites, which exercise the video
+  path with non-`functionNode` sources), and no existing or newly-discovered scenario exercises a
+  wrong-family Function node on the video handle in production use, so a same-shaped video test would
+  duplicate coverage without proving anything the audio pair doesn't already establish about the
+  shared predicate.
+- **Existing malformed/overflow/durable-diagnostic/ingress tests remain green** — full 10-file,
+  317-test run above includes every FBL-019-tagged file
+  (`compositionTracks.test.ts`, `compositionEdgeMigration.test.ts`, `flowDiagnostics.test.ts`,
+  `flowNodeContracts.test.ts`, `flowStore.test.ts`, `flowStore.remoteSync.test.ts`,
+  `CompositionNode.test.tsx`) plus the closest composition-adjacent suites
+  (`compositionMediaState.test.ts`, `flowExecutionComposition.test.ts`, `mediaComposition.test.ts`),
+  all unchanged and passing.
+
+### Residual risk
+
+- `collectResultInputForHandle`'s family inference is positional (derived from which of
+  `'audioGen'`/`'videoGen'` appears in the caller's `acceptedTypes`) rather than an explicit
+  parameter, to avoid changing the signature at its two non-Composition call sites
+  (`collectVideoExtensionInput`, which never includes `'functionNode'` and is therefore unaffected).
+  If a future caller ever passes `'functionNode'` in `acceptedTypes` alongside neither or both of
+  `'audioGen'`/`'videoGen'`, the inference silently skips the family check (`targetMediaFamily`
+  stays `undefined`) rather than failing loudly. No such caller exists today — the two Composition
+  sites are still the only ones that include `'functionNode'`.
+- No test exercises a `functionNode` connected to the video handle at all (correct- or wrong-family);
+  the fix is symmetric by construction (same shared function, same predicate), but only the audio
+  side has a direct example. Flagged rather than silently assumed, per the task's explicit
+  allowance to add the video case "only if the current helper's shared behavior needs it."
+
+### Final commits
+
+- `e0f9b31` — production fix (compositionTracks.ts, flowStore.ts, CompositionNode.tsx) and its
+  tests (CompositionNode.test.tsx, flowStore.test.ts), in one commit.
+- This note update is a separate commit on top of `e0f9b31`.
