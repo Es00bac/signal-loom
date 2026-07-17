@@ -14,6 +14,7 @@ import {
   isBitmapImmutable,
   makeBitmapImmutable,
   releaseImmutableBitmap,
+  UnsupportedLayerBitmapPlatformError,
 } from './LayerBitmap';
 import { fromSnapshot, toSnapshot, type SelectionMask } from './SelectionMask';
 import { clearSelection, getSelection, setSelection } from './selectionRegistry';
@@ -138,10 +139,12 @@ interface VerifiedSnapshotLayerBinding {
   bitmapWidth: number;
   bitmapHeight: number;
   bitmapMetadataSignature: string;
+  bitmapMetadataSymbols: readonly symbol[];
   mask: LayerBitmap | null;
   maskWidth: number;
   maskHeight: number;
   maskMetadataSignature: string;
+  maskMetadataSymbols: readonly symbol[];
   proof: ImageDocumentSnapshotIntegrity['layers'][number];
   proofLayerId: string;
   bitmapProof: ImageDocumentSnapshotAssetIntegrity;
@@ -173,11 +176,6 @@ interface EnumerableOwnEntry {
   descriptor: PropertyDescriptor & { enumerable: true };
 }
 
-const metadataSymbolIds = new Map<symbol, number>();
-let nextMetadataSymbolId = 1;
-const metadataFunctionIds = new WeakMap<object, number>();
-let nextMetadataFunctionId = 1;
-
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null;
 }
@@ -201,15 +199,9 @@ function enumerableOwnEntries(value: object): EnumerableOwnEntry[] {
 function metadataKeyToken(key: PropertyKey): string {
   if (typeof key === 'string') return `string-key:${key.length}:${key}`;
   if (typeof key === 'number') return `number-key:${String(key)}`;
-  let id = metadataSymbolIds.get(key);
-  if (id === undefined) {
-    id = nextMetadataSymbolId;
-    nextMetadataSymbolId += 1;
-    metadataSymbolIds.set(key, id);
-  }
   const globalKey = Symbol.keyFor(key);
   const description = key.description ?? '';
-  return `symbol-key:${id}:global:${globalKey === undefined ? -1 : globalKey.length}:${globalKey ?? ''}:description:${description.length}:${description}`;
+  return `symbol-key:global:${globalKey === undefined ? -1 : globalKey.length}:${globalKey ?? ''}:description:${description.length}:${description}`;
 }
 
 function metadataKeyByteLengthAtMost(key: PropertyKey, maximum: number): number {
@@ -217,16 +209,6 @@ function metadataKeyByteLengthAtMost(key: PropertyKey, maximum: number): number 
     typeof key === 'string' ? key : metadataKeyToken(key),
     maximum,
   );
-}
-
-function metadataFunctionToken(value: object): string {
-  let id = metadataFunctionIds.get(value);
-  if (id === undefined) {
-    id = nextMetadataFunctionId;
-    nextMetadataFunctionId += 1;
-    metadataFunctionIds.set(value, id);
-  }
-  return `function:${id};`;
 }
 
 /**
@@ -483,7 +465,13 @@ function measureRawSnapshotMetadataBytes(
       add(String(value).length);
       continue;
     }
-    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') continue;
+    if (typeof value === 'function') {
+      if (kind === 'bitmap-resource' || kind === 'bitmap-metadata') {
+        throw new Error('Image snapshot callable metadata is unsupported and cannot enter snapshot ownership.');
+      }
+      continue;
+    }
+    if (value === undefined || typeof value === 'symbol') continue;
     if (typeof ImageData !== 'undefined' && value instanceof ImageData) {
       const pixelBytes = exactBinaryBytes(value.data);
       add(Math.min(maximum + 1, pixelBytes.byteLength + 24));
@@ -587,6 +575,9 @@ function controlBitmapMetadataOwnFields(bitmap: LayerBitmap): void {
     if (depth > IMAGE_SNAPSHOT_MAX_METADATA_DEPTH) {
       throw new Error(`Image snapshot bitmap metadata depth exceeds ${IMAGE_SNAPSHOT_MAX_METADATA_DEPTH}.`);
     }
+    if (typeof value === 'function') {
+      throw new Error('Image snapshot callable metadata is unsupported and cannot enter snapshot ownership.');
+    }
     if (value === null || typeof value !== 'object' || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
       continue;
     }
@@ -632,7 +623,10 @@ function cloneMetadataValue(
   if (depth > IMAGE_SNAPSHOT_MAX_METADATA_DEPTH) {
     throw new Error(`Image snapshot bitmap metadata depth exceeds ${IMAGE_SNAPSHOT_MAX_METADATA_DEPTH}.`);
   }
-  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
+  if (typeof value === 'function') {
+    throw new Error('Image snapshot callable metadata is unsupported and cannot enter snapshot ownership.');
+  }
+  if (value === null || typeof value !== 'object') return value;
   const existing = clones.get(value as object);
   if (existing !== undefined) return existing;
   if (ArrayBuffer.isView(value)) {
@@ -654,8 +648,6 @@ function cloneMetadataValue(
     clones.set(value, cloned);
     return cloned;
   }
-  if (typeof value === 'function') return value;
-
   const entries = enumerableOwnEntries(value);
   const clone: UnknownPropertyRecord | unknown[] = Array.isArray(value)
     ? new Array(value.length)
@@ -754,6 +746,7 @@ function prepareSnapshotResourceCoverage(
     }
   } catch (error) {
     for (const bitmap of freshClones.reverse()) disposePreparedBitmap(bitmap);
+    if (error instanceof UnsupportedLayerBitmapPlatformError) throw error;
     throw new Error('Image snapshot resource own-field coverage could not be controlled.', { cause: error });
   }
 
@@ -1346,6 +1339,7 @@ export function markImageDocumentSnapshotVerifiedOwned(snapshot: ImageDocumentSn
     prepared?.rollback();
     if (!wasOwned) ownedNamedSnapshots.delete(snapshot);
     verifiedNamedSnapshots.delete(snapshot);
+    if (error instanceof UnsupportedLayerBitmapPlatformError) throw error;
     throw new Error('Image snapshot resources could not enter immutable verified state.', { cause: error });
   }
   return snapshot;
@@ -1401,12 +1395,45 @@ function selectionProofSignature(proof: ImageDocumentSnapshotIntegrity['selectio
   return `${assetProofSignature(proof)}:${proof.byteLength}`;
 }
 
+interface BitmapMetadataBinding {
+  signature: string;
+  symbols: readonly symbol[];
+}
+
+interface MetadataSymbolIdentity {
+  ids: Map<symbol, number>;
+  symbols: symbol[];
+}
+
+function metadataSymbolIdentityToken(
+  value: symbol,
+  identity: MetadataSymbolIdentity,
+  kind: 'key' | 'value',
+): string {
+  let id = identity.ids.get(value);
+  if (id === undefined) {
+    id = identity.symbols.length;
+    identity.ids.set(value, id);
+    identity.symbols.push(value);
+  }
+  const globalKey = Symbol.keyFor(value);
+  const description = value.description ?? '';
+  return `symbol-${kind}:${id}:global:${globalKey === undefined ? -1 : globalKey.length}:${globalKey ?? ''}:description:${description.length}:${description}`;
+}
+
+function metadataBindingKeyToken(key: PropertyKey, identity: MetadataSymbolIdentity): string {
+  return typeof key === 'symbol'
+    ? metadataSymbolIdentityToken(key, identity, 'key')
+    : metadataKeyToken(key);
+}
+
 /** Bind every own enumerable string/symbol resource field without pixel readback. */
-function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
-  if (!bitmap) return 'absent';
+function captureBitmapMetadataBinding(bitmap: LayerBitmap | null): BitmapMetadataBinding {
+  if (!bitmap) return { signature: 'absent', symbols: [] };
   const hasher = sha256.create();
   const encoder = new TextEncoder();
   const seen = new WeakMap<object, number>();
+  const symbolIdentity: MetadataSymbolIdentity = { ids: new Map(), symbols: [] };
   const stack: Array<
     | { kind: 'token'; value: string }
     | { kind: 'value'; value: unknown; resourceRoot: boolean; depth: number }
@@ -1457,9 +1484,9 @@ function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
     } else if (value === undefined) {
       update('undefined;');
     } else if (typeof value === 'function') {
-      update(metadataFunctionToken(value));
+      throw new Error('Image snapshot callable metadata is unsupported and cannot enter snapshot ownership.');
     } else if (typeof value === 'symbol') {
-      update(`symbol-value:${metadataKeyToken(value)};`);
+      update(`${metadataSymbolIdentityToken(value, symbolIdentity, 'value')};`);
     } else {
       const priorId = seen.get(value);
       if (priorId !== undefined) {
@@ -1497,7 +1524,10 @@ function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
         const { key, descriptor } = entries[index];
         if (!('value' in descriptor)) {
           if (entry.resourceRoot && isImmutableBitmapDimensionDescriptor(record, key)) {
-            stack.push({ kind: 'token', value: `${metadataKeyToken(key)}:immutable-dimension;` });
+            stack.push({
+              kind: 'token',
+              value: `${metadataBindingKeyToken(key, symbolIdentity)}:immutable-dimension;`,
+            });
             continue;
           }
           throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
@@ -1511,12 +1541,19 @@ function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
         });
         stack.push({
           kind: 'token',
-          value: `${metadataKeyToken(key)}:w${descriptor.writable === true ? 1 : 0}:c${descriptor.configurable === true ? 1 : 0}:`,
+          value: `${metadataBindingKeyToken(key, symbolIdentity)}:w${descriptor.writable === true ? 1 : 0}:c${descriptor.configurable === true ? 1 : 0}:`,
         });
       }
     }
   }
-  return `sha256:${[...hasher.digest()].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+  return {
+    signature: `sha256:${[...hasher.digest()].map((value) => value.toString(16).padStart(2, '0')).join('')}`,
+    symbols: symbolIdentity.symbols,
+  };
+}
+
+function metadataSymbolsMatch(left: readonly symbol[], right: readonly symbol[]): boolean {
+  return left.length === right.length && left.every((symbol, index) => symbol === right[index]);
 }
 
 function captureVerifiedBinding(
@@ -1536,17 +1573,21 @@ function captureVerifiedBinding(
     snapshotSignature: snapshotBindingSignature(snapshot),
     layerBindings: snapshot.layers.map((layer) => {
       const proof = proofById.get(layer.id)!;
+      const bitmapMetadata = captureBitmapMetadataBinding(layer.bitmap);
+      const maskMetadata = captureBitmapMetadataBinding(layer.mask);
       return {
         layer,
         id: layer.id,
         bitmap: layer.bitmap,
         bitmapWidth: layer.bitmap?.width ?? 0,
         bitmapHeight: layer.bitmap?.height ?? 0,
-        bitmapMetadataSignature: bitmapMetadataSignature(layer.bitmap),
+        bitmapMetadataSignature: bitmapMetadata.signature,
+        bitmapMetadataSymbols: bitmapMetadata.symbols,
         mask: layer.mask,
         maskWidth: layer.mask?.width ?? 0,
         maskHeight: layer.mask?.height ?? 0,
-        maskMetadataSignature: bitmapMetadataSignature(layer.mask),
+        maskMetadataSignature: maskMetadata.signature,
+        maskMetadataSymbols: maskMetadata.symbols,
         proof,
         proofLayerId: proof.layerId,
         bitmapProof: proof.bitmap,
@@ -1604,16 +1645,20 @@ function verifiedBindingMatchesUnchecked(
   return binding.layerBindings.every((expected, index) => {
     const layer = snapshot.layers[index];
     const proof = proofById.get(layer.id);
+    const bitmapMetadata = captureBitmapMetadataBinding(layer.bitmap);
+    const maskMetadata = captureBitmapMetadataBinding(layer.mask);
     return layer === expected.layer
       && layer.id === expected.id
       && layer.bitmap === expected.bitmap
       && (layer.bitmap?.width ?? 0) === expected.bitmapWidth
       && (layer.bitmap?.height ?? 0) === expected.bitmapHeight
-      && bitmapMetadataSignature(layer.bitmap) === expected.bitmapMetadataSignature
+      && bitmapMetadata.signature === expected.bitmapMetadataSignature
+      && metadataSymbolsMatch(bitmapMetadata.symbols, expected.bitmapMetadataSymbols)
       && layer.mask === expected.mask
       && (layer.mask?.width ?? 0) === expected.maskWidth
       && (layer.mask?.height ?? 0) === expected.maskHeight
-      && bitmapMetadataSignature(layer.mask) === expected.maskMetadataSignature
+      && maskMetadata.signature === expected.maskMetadataSignature
+      && metadataSymbolsMatch(maskMetadata.symbols, expected.maskMetadataSymbols)
       && proof === expected.proof
       && proof.layerId === expected.proofLayerId
       && proof.bitmap === expected.bitmapProof

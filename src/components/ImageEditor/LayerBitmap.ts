@@ -12,6 +12,18 @@ interface ImmutableBitmapRecord {
 
 const immutableBitmaps = new WeakMap<LayerBitmap, ImmutableBitmapRecord>();
 
+export class UnsupportedLayerBitmapPlatformError extends Error {
+  readonly code = 'LAYER_BITMAP_UNSUPPORTED_PLATFORM' as const;
+
+  constructor(operation: string) {
+    super(
+      `OffscreenCanvas is required to ${operation}. `
+      + 'Run Sloom Studio in a supported browser or desktop runtime with OffscreenCanvas enabled.',
+    );
+    this.name = 'UnsupportedLayerBitmapPlatformError';
+  }
+}
+
 /**
  * Thin wrappers over OffscreenCanvas for use as raster layer buffers.
  * These delegate directly to the native API; they exist to give the rest of
@@ -24,33 +36,13 @@ export function createBitmap(width: number, height: number): LayerBitmap {
 }
 
 export function cloneBitmap(src: LayerBitmap): LayerBitmap {
-  if (typeof OffscreenCanvas === 'undefined') return cloneCanvasLikeBitmap(src);
+  if (typeof OffscreenCanvas === 'undefined') {
+    throw new UnsupportedLayerBitmapPlatformError('clone an Image layer bitmap');
+  }
   const dest = createBitmap(src.width, src.height);
   const ctx = getCtx(dest);
   ctx.drawImage(src, 0, 0);
   return dest;
-}
-
-function cloneCanvasLikeBitmap(src: LayerBitmap): LayerBitmap {
-  const width = src.width;
-  const height = src.height;
-  let pixels = new Uint8ClampedArray(getBitmapImageData(src).data);
-  const context = {
-    drawImage: (source: LayerBitmap) => {
-      pixels = new Uint8ClampedArray(getBitmapImageData(source).data);
-    },
-    getImageData: () => ({
-      width,
-      height,
-      data: new Uint8ClampedArray(pixels),
-    }),
-  } as unknown as OffscreenCanvasRenderingContext2D;
-  const clone = { width, height } as unknown as LayerBitmap;
-  Object.defineProperty(clone, 'getContext', {
-    configurable: true,
-    value: () => context,
-  });
-  return clone;
 }
 
 export function clearBitmap(bitmap: LayerBitmap): void {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   decodeImageDocumentSnapshotProjectPixels,
   decodeImageLayerProjectPixels,
@@ -9,22 +9,56 @@ import {
 import type { ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
 
-// Fake bitmaps + a codec that maps bitmap<->string, so the round-trip wiring is tested without a
-// real OffscreenCanvas backend (unavailable in the node test environment).
-const fakeBitmap = (id: string): LayerBitmap => ({
-  __id: id,
-  width: 1,
-  height: 1,
-  getContext: () => ({
-    getImageData: () => ({
-      width: 1,
-      height: 1,
-      data: new Uint8ClampedArray(
-        Array.from({ length: 4 }, (_, index) => id.charCodeAt(index % id.length)),
+class ProjectPixelTestCanvas {
+  width: number;
+  height: number;
+  __id: string;
+  #bytes: Uint8ClampedArray;
+
+  constructor(width: number, height: number, id = '') {
+    this.width = width;
+    this.height = height;
+    this.__id = id;
+    this.#bytes = new Uint8ClampedArray(
+      Array.from(
+        { length: width * height * 4 },
+        (_, index) => id.length > 0 ? id.charCodeAt(index % id.length) : 0,
       ),
-    }),
-  }),
-} as unknown as LayerBitmap);
+    );
+  }
+
+  getContext() {
+    return {
+      drawImage: (source: LayerBitmap) => {
+        const context = source.getContext('2d');
+        if (!context) throw new Error('test bitmap source has no readable context');
+        this.#bytes = new Uint8ClampedArray(
+          context.getImageData(0, 0, source.width, source.height).data,
+        );
+      },
+      getImageData: () => ({
+        width: this.width,
+        height: this.height,
+        data: new Uint8ClampedArray(this.#bytes),
+      }),
+      putImageData: (imageData: ImageData) => {
+        this.#bytes = new Uint8ClampedArray(imageData.data);
+      },
+      clearRect: () => {
+        this.#bytes.fill(0);
+      },
+    };
+  }
+
+  async convertToBlob(): Promise<Blob> {
+    return new Blob([this.#bytes.buffer as ArrayBuffer]);
+  }
+}
+
+// Fake bitmaps + a codec that maps bitmap<->string through an explicit CPU test platform.
+const fakeBitmap = (id: string): LayerBitmap => (
+  new ProjectPixelTestCanvas(1, 1, id) as unknown as LayerBitmap
+);
 const bitmapId = (bitmap: LayerBitmap | null): string | null =>
   bitmap ? (bitmap as unknown as { __id: string }).__id : null;
 
@@ -42,6 +76,10 @@ function baseLayer(overrides: Partial<ImageLayer> = {}): ImageLayer {
 }
 
 describe('image layer project pixels', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = ProjectPixelTestCanvas as unknown as typeof OffscreenCanvas;
+  });
+
   it('encodes live bitmap + mask into base64 payloads and nulls the live buffers', async () => {
     const encoded = await encodeImageLayerProjectPixels(
       baseLayer({ bitmap: fakeBitmap('px'), mask: fakeBitmap('mk') }),

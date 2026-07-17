@@ -34,14 +34,32 @@ class RenderCountingBitmap {
   static reads = 0;
   width = 1;
   height = 1;
+  #bytes = new Uint8ClampedArray([1, 2, 3, 255]);
 
   getContext() {
     return {
+      drawImage: (source: LayerBitmap) => {
+        const context = source.getContext('2d');
+        if (!context) throw new Error('test bitmap source has no readable context');
+        this.#bytes = new Uint8ClampedArray(
+          context.getImageData(0, 0, source.width, source.height).data,
+        );
+      },
       getImageData: () => {
         RenderCountingBitmap.reads += 1;
-        return { width: 1, height: 1, data: new Uint8ClampedArray([1, 2, 3, 255]) };
+        return { width: 1, height: 1, data: new Uint8ClampedArray(this.#bytes) };
+      },
+      putImageData: (imageData: ImageData) => {
+        this.#bytes = new Uint8ClampedArray(imageData.data);
+      },
+      clearRect: () => {
+        this.#bytes.fill(0);
       },
     };
+  }
+
+  async convertToBlob(): Promise<Blob> {
+    return new Blob([this.#bytes]);
   }
 }
 
@@ -51,6 +69,7 @@ describe('ImageEditorHistoryPanel', () => {
 
   beforeEach(() => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('OffscreenCanvas', RenderCountingBitmap);
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);

@@ -1,27 +1,60 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { deserializeSlimg, serializeSlimg, type SlimgCodec } from './ImageSlimgFormat';
 import type { ImageDocument, LayerBitmap } from '../../types/imageEditor';
 import { buildImageDocumentSnapshotIntegrity, IMAGE_SNAPSHOT_MAX_LAYERS } from './ImageSnapshots';
 
-// A fake LayerBitmap: only width/height matter to the serializer. We tag it for round-trip checks.
-function fakeBitmap(width: number, height: number, tag: string): LayerBitmap {
-  return {
-    width,
-    height,
-    __tag: tag,
-    getContext: () => ({
+class TestOffscreenCanvas {
+  width: number;
+  height: number;
+  __tag: string;
+  #bytes: Uint8ClampedArray;
+
+  constructor(width: number, height: number, tag = '') {
+    this.width = width;
+    this.height = height;
+    this.__tag = tag;
+    const tagBytes = new TextEncoder().encode(tag);
+    this.#bytes = new Uint8ClampedArray(
+      Array.from(
+        { length: width * height * 4 },
+        (_, index) => tagBytes.length > 0 ? tagBytes[index % tagBytes.length] : 0,
+      ),
+    );
+  }
+
+  getContext() {
+    return {
+      drawImage: (source: LayerBitmap) => {
+        const context = source.getContext('2d');
+        if (!context) throw new Error('test bitmap source has no readable context');
+        this.#bytes = new Uint8ClampedArray(
+          context.getImageData(0, 0, source.width, source.height).data,
+        );
+      },
       getImageData: () => {
-        const tagBytes = new TextEncoder().encode(tag);
         return {
-          width,
-          height,
-          data: new Uint8ClampedArray(
-            Array.from({ length: width * height * 4 }, (_, index) => tagBytes[index % tagBytes.length]),
-          ),
+          width: this.width,
+          height: this.height,
+          data: new Uint8ClampedArray(this.#bytes),
         };
       },
-    }),
-  } as unknown as LayerBitmap;
+      putImageData: (imageData: ImageData) => {
+        this.#bytes = new Uint8ClampedArray(imageData.data);
+      },
+      clearRect: () => {
+        this.#bytes.fill(0);
+      },
+    };
+  }
+
+  async convertToBlob(): Promise<Blob> {
+    return new Blob([this.#bytes.buffer as ArrayBuffer]);
+  }
+}
+
+// A fake LayerBitmap with platform methods on its prototype and a round-trip tag expando.
+function fakeBitmap(width: number, height: number, tag: string): LayerBitmap {
+  return new TestOffscreenCanvas(width, height, tag) as unknown as LayerBitmap;
 }
 const codec: SlimgCodec = {
   // encode: store the tag as UTF-8 bytes so we can assert the round-trip carried the right pixels
@@ -43,6 +76,10 @@ function doc(): ImageDocument {
 }
 
 describe('ImageSlimgFormat', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = TestOffscreenCanvas as unknown as typeof OffscreenCanvas;
+  });
+
   it('round-trips a document: structure preserved, bitmaps/masks carried as assets', async () => {
     const bytes = await serializeSlimg(doc(), codec);
     const out = await deserializeSlimg(bytes, codec);

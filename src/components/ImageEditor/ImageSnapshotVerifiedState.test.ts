@@ -5,6 +5,7 @@ import {
   assertImageDocumentSnapshotDecodeBounds,
   buildImageDocumentSnapshotIntegrity,
   buildImageSnapshotReadinessDescriptor,
+  createImageDocumentSnapshot,
   disposeImageDocumentSnapshotResources,
   inspectImageDocumentSnapshotIntegrity,
   markImageDocumentSnapshotOwned,
@@ -256,6 +257,53 @@ describe('Image snapshot verified-state lifecycle', () => {
   });
 
   it.each(['bitmap', 'mask'] as const)(
+    'rejects callable %s metadata before ownership or pixel verification',
+    (role) => {
+      const value = snapshot();
+      const callable = Object.assign(() => 'must never cross snapshot ownership', {
+        state: { revision: 1 },
+      });
+      const resource = value.layers[0][role]! as LayerBitmap & { metadata?: unknown };
+      resource.metadata = { callable };
+
+      CountingBitmap.imageDataReads = 0;
+      CountingBitmap.codecCalls = 0;
+      expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['snapshot-bounds-invalid'],
+      });
+      expect(() => markImageDocumentSnapshotVerifiedOwned(value)).toThrow(/verified state.*snapshot-bounds-invalid/i);
+      expect((resource.metadata as { callable: typeof callable }).callable).toBe(callable);
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    },
+  );
+
+  it('invalidates cached readiness if a retained metadata field is changed to a callable', () => {
+    const value = snapshot();
+    const source = value.layers[0].bitmap! as LayerBitmap & {
+      metadata?: { state: unknown };
+    };
+    source.metadata = { state: 'detached-data' };
+    markImageDocumentSnapshotVerifiedOwned(value);
+    const retained = value.layers[0].bitmap! as LayerBitmap & {
+      metadata: { state: unknown };
+    };
+    retained.metadata.state = Object.assign(() => undefined, { state: { revision: 1 } });
+
+    CountingBitmap.imageDataReads = 0;
+    CountingBitmap.codecCalls = 0;
+    expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-bounds-invalid'],
+    });
+    expect(CountingBitmap.imageDataReads).toBe(0);
+    expect(CountingBitmap.codecCalls).toBe(0);
+  });
+
+  it.each(['bitmap', 'mask'] as const)(
     'binds nested binary %s metadata content across same-length mutation without pixel work',
     (role) => {
       const value = snapshot();
@@ -338,6 +386,53 @@ describe('Image snapshot verified-state lifecycle', () => {
       expect(CountingBitmap.codecCalls).toBe(0);
     },
   );
+
+  it('releases cache-entry-owned fresh-symbol bindings across repeated snapshot disposal', () => {
+    for (let iteration = 0; iteration < 64; iteration += 1) {
+      const value = snapshot();
+      const key = Symbol('repeated-fresh-key');
+      const identity = Symbol('repeated-fresh-value');
+      const resource = value.layers[0].bitmap! as unknown as Record<PropertyKey, unknown>;
+      resource[key] = { identity };
+      markImageDocumentSnapshotVerifiedOwned(value);
+      const retained = value.layers[0].bitmap! as unknown as Record<PropertyKey, unknown>;
+
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+      (retained[key] as { identity: symbol }).identity = Symbol('repeated-fresh-value');
+      expect(inspectImageDocumentSnapshotIntegrity(value)).toMatchObject({
+        complete: false,
+        reasons: ['verified-snapshot-binding-changed'],
+      });
+
+      const retainedBitmap = value.layers[0].bitmap!;
+      disposeImageDocumentSnapshotResources(value);
+      expect(retainedBitmap.width).toBe(0);
+      expect(retainedBitmap.height).toBe(0);
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    }
+  });
+
+  it('preserves exact symbol-key identity and makes post-cache fresh-key replacement impossible', () => {
+    const value = snapshot();
+    const sourceKey = Symbol('identity-key');
+    const source = value.layers[0].bitmap! as unknown as Record<PropertyKey, unknown>;
+    source[sourceKey] = { revision: 1 };
+    markImageDocumentSnapshotVerifiedOwned(value);
+    const retained = value.layers[0].bitmap! as unknown as Record<PropertyKey, unknown>;
+
+    expect(Reflect.ownKeys(retained)).toContain(sourceKey);
+    expect(Reflect.deleteProperty(retained, sourceKey)).toBe(true);
+    expect(Reflect.defineProperty(retained, Symbol('identity-key'), {
+      configurable: true,
+      enumerable: true,
+      value: { revision: 1 },
+      writable: true,
+    })).toBe(false);
+    expect(inspectImageDocumentSnapshotIntegrity(value)).toMatchObject({
+      complete: false,
+      reasons: ['verified-snapshot-binding-changed'],
+    });
+  });
 
   it.each(['bitmap', 'mask'] as const)(
     'adopts and binds direct %s bytes through the uncached owned-readiness path',
@@ -574,6 +669,41 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(originalMask.height).toBe(1);
     expect(CountingBitmap.imageDataReads).toBe(4);
     expect(CountingBitmap.codecCalls).toBe(0);
+  });
+
+  it('fails immediately with an actionable typed error when snapshot cloning has no OffscreenCanvas', () => {
+    const sourceDocument: ImageDocument = {
+      ...documentWith(snapshot()),
+      id: 'unsupported-platform-document',
+      layers: [layer('live-layer', 70)],
+      activeLayerId: 'live-layer',
+      snapshots: [],
+    };
+    const installedOffscreenCanvas = globalThis.OffscreenCanvas;
+    Reflect.deleteProperty(globalThis, 'OffscreenCanvas');
+    CountingBitmap.imageDataReads = 0;
+    CountingBitmap.codecCalls = 0;
+
+    try {
+      let thrown: unknown;
+      try {
+        createImageDocumentSnapshot(sourceDocument, 'Unsupported platform');
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({
+        name: 'UnsupportedLayerBitmapPlatformError',
+        code: 'LAYER_BITMAP_UNSUPPORTED_PLATFORM',
+      });
+      expect(String((thrown as Error | undefined)?.message)).toMatch(/OffscreenCanvas.*required/i);
+      expect(sourceDocument.snapshots).toEqual([]);
+      expect(sourceDocument.layers[0].bitmap?.width).toBe(1);
+      expect(sourceDocument.layers[0].bitmap?.height).toBe(1);
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    } finally {
+      globalThis.OffscreenCanvas = installedOffscreenCanvas;
+    }
   });
 
   it('keeps ordinary platform-shaped resources usable while controlling their own-field coverage', () => {

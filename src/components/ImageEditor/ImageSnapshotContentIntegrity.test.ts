@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   ImageDocumentSnapshot,
   ImageLayer,
@@ -23,22 +23,41 @@ import { clearAllSelections, getSelection, setSelection } from './selectionRegis
 class ByteBitmap {
   width: number;
   height: number;
-  readonly bytes: Uint8ClampedArray;
+  bytes: Uint8ClampedArray;
 
-  constructor(width: number, height: number, bytes: ArrayLike<number>) {
+  constructor(width: number, height: number, bytes?: ArrayLike<number>) {
     this.width = width;
     this.height = height;
-    this.bytes = new Uint8ClampedArray(bytes);
+    this.bytes = bytes
+      ? new Uint8ClampedArray(bytes)
+      : new Uint8ClampedArray(width * height * 4);
   }
 
   getContext() {
     return {
+      drawImage: (source: LayerBitmap) => {
+        const context = source.getContext('2d');
+        if (!context) throw new Error('test bitmap source has no readable context');
+        this.bytes = new Uint8ClampedArray(
+          context.getImageData(0, 0, source.width, source.height).data,
+        );
+      },
       getImageData: () => ({
         width: this.width,
         height: this.height,
         data: new Uint8ClampedArray(this.bytes),
       }),
+      putImageData: (imageData: ImageData) => {
+        this.bytes = new Uint8ClampedArray(imageData.data);
+      },
+      clearRect: () => {
+        this.bytes.fill(0);
+      },
     };
+  }
+
+  async convertToBlob(): Promise<Blob> {
+    return new Blob([this.bytes.buffer as ArrayBuffer]);
   }
 }
 
@@ -105,6 +124,10 @@ function flipBase64Byte(payload: string, index = 0): string {
 }
 
 describe('Image named snapshot cryptographic content integrity', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = ByteBitmap as unknown as typeof OffscreenCanvas;
+  });
+
   it('binds SHA-256 proof to canonical bitmap, mask, selection, role, dimensions, and layer identity', () => {
     const original = snapshot();
     expect(original.integrity?.version).toBe(2);
