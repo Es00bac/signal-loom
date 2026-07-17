@@ -21,6 +21,7 @@ import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
 import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
+  functionNodeMatchesCompositionMediaFamily,
   getCompositionTrackSettings,
   normalizeCompositionAudioTrackCounts,
   sanitizeCompositionAudioMigrationWarnings,
@@ -1753,6 +1754,18 @@ function collectResultInputForHandle(
       }
     }
     return undefined;
+  }
+
+  if (sourceNode.type === 'functionNode') {
+    const targetMediaFamily = acceptedTypes.includes('audioGen')
+      ? 'audio'
+      : acceptedTypes.includes('videoGen')
+        ? 'video'
+        : undefined;
+
+    if (targetMediaFamily && !functionNodeMatchesCompositionMediaFamily(sourceNode, targetMediaFamily)) {
+      return undefined;
+    }
   }
 
   const result = resolveNodeOutputAsset(sourceNode);

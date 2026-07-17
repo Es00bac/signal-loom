@@ -1156,6 +1156,54 @@ describe('flow store Composition audio track normalization (FBL-019)', () => {
       expect.objectContaining({ handle: 'composition-audio-x', reason: 'malformed' }),
     ]);
   });
+
+  it('supplies a Function node whose effective result type is audio as the composition-audio-1 execution source (independent review correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-audio-1', 'functionNode', {
+          resultType: 'audio',
+          result: 'https://example.test/fn-audio.mp3',
+          functionNode: createDefaultFunctionNodeConfig('Narration Function'),
+        }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'e1', source: 'fn-audio-1', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.audioInputs).toHaveLength(1);
+    expect(context.audioInputs?.[0]).toMatchObject({
+      url: 'https://example.test/fn-audio.mp3',
+      sourceNodeId: 'fn-audio-1',
+    });
+  });
+
+  it('does not feed a wrong-family Function result (video) into the composition-audio-1 execution input (independent review correction)', () => {
+    useFlowStore.setState({
+      nodes: [
+        createNode('fn-video-1', 'functionNode', {
+          resultType: 'video',
+          result: 'https://example.test/fn-video.mp4',
+          functionNode: createDefaultFunctionNodeConfig('Video Function'),
+        }),
+        createNode('composition-1', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [
+        { id: 'e1', source: 'fn-video-1', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    const composition = useFlowStore.getState().nodes.find((node) => node.id === 'composition-1')!;
+    const context = buildExecutionContextForNode(composition, useFlowStore.getState().nodes, useFlowStore.getState().edges);
+
+    expect(context.audioInputs).toEqual([]);
+  });
 });
 
 describe('flow store Boolean loop persistence', () => {

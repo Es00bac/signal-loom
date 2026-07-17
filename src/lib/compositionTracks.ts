@@ -22,6 +22,22 @@ export function isCompositionAudioProducingSourceType(type: FlowNodeType | undef
   return type != null && COMPOSITION_AUDIO_PRODUCING_SOURCE_TYPES.includes(type);
 }
 
+export type CompositionMediaFamily = 'audio' | 'video';
+
+/**
+ * A Function node's output is polymorphic (its `resultType` can be anything), so it can only be
+ * admitted onto a Composition lane when its own effective result type agrees with that lane's
+ * family. This is the single truth both the node's display (CompositionNode.tsx) and execution's
+ * input collection (flowStore.ts) check, so a Function node can never be shown as one family in
+ * the timeline while a different (or no) result is actually fed into execution (FBL-019).
+ */
+export function functionNodeMatchesCompositionMediaFamily(
+  node: Pick<AppNode, 'type' | 'data'>,
+  family: CompositionMediaFamily,
+): boolean {
+  return node.type === 'functionNode' && node.data.resultType === family;
+}
+
 const COMPOSITION_AUDIO_HANDLE_PREFIX = 'composition-audio-';
 const COMPOSITION_AUDIO_HANDLE_NUMERIC_PATTERN = /^composition-audio-(\d+)$/;
 

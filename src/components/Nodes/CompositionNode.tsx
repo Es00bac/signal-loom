@@ -22,11 +22,13 @@ import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
   formatCompositionAudioMigrationWarningMessage,
+  functionNodeMatchesCompositionMediaFamily,
   getCompositionTrackKeys,
   getCompositionTrackSettings,
   getConnectedCompositionAudioHandles,
   resolveCompositionAudioTrackModel,
 } from '../../lib/compositionTracks';
+import type { CompositionMediaFamily } from '../../lib/compositionTracks';
 import { isCompositionVideoConnection } from '../../lib/compositionEdgeMigration';
 import { useEditorStore } from '../../store/editorStore';
 import { useFlowStore } from '../../store/flowStore';
@@ -53,9 +55,9 @@ interface ConnectedMedia {
 
 function CompositionNodeComponent({ id, data }: AppNodeProps) {
   const connectionSignature = useFlowStore((state) => {
-    const video = findConnectedMedia(state.nodes, state.edges, id, COMPOSITION_VIDEO_HANDLE, ['videoGen', 'composition']);
+    const video = findConnectedMedia(state.nodes, state.edges, id, COMPOSITION_VIDEO_HANDLE, ['videoGen', 'composition', 'functionNode'], 'video');
     const audio = COMPOSITION_AUDIO_HANDLES.map((handle) =>
-      findConnectedMedia(state.nodes, state.edges, id, handle, ['audioGen']),
+      findConnectedMedia(state.nodes, state.edges, id, handle, ['audioGen', 'functionNode'], 'audio'),
     );
     const primary = [video, ...audio].filter(Boolean) as ConnectedMedia[];
     const connectedAudioHandles = getConnectedCompositionAudioHandles(id, state.edges);
@@ -73,10 +75,11 @@ function CompositionNodeComponent({ id, data }: AppNodeProps) {
       state.edges,
       id,
       COMPOSITION_VIDEO_HANDLE,
-      ['videoGen', 'composition'],
+      ['videoGen', 'composition', 'functionNode'],
+      'video',
     );
     const audio = COMPOSITION_AUDIO_HANDLES.map((handle) =>
-      findConnectedMedia(state.nodes, state.edges, id, handle, ['audioGen']),
+      findConnectedMedia(state.nodes, state.edges, id, handle, ['audioGen', 'functionNode'], 'audio'),
     );
     // Handle visibility must track the raw connection model (contracts and execution use it
     // the same way), not whether the connected source has produced media yet (FBL-019): an
@@ -556,6 +559,7 @@ function findConnectedMedia(
   targetNodeId: string,
   targetHandle: CompositionTargetHandle,
   acceptedTypes: Array<AppNode['type']>,
+  mediaFamily: CompositionMediaFamily,
 ): ConnectedMedia | undefined {
   const edge = edges.find((candidate) => {
     if (candidate.target !== targetNodeId) {
@@ -590,6 +594,10 @@ function findConnectedMedia(
     return undefined;
   }
 
+  if (sourceNode.type === 'functionNode' && !functionNodeMatchesCompositionMediaFamily(sourceNode, mediaFamily)) {
+    return undefined;
+  }
+
   const result = resultValueAsMediaUrl(
     (sourceNode.type === 'audioGen' || sourceNode.type === 'videoGen') &&
     (sourceNode.data.mediaMode ?? 'generate') === 'import'
@@ -605,7 +613,7 @@ function findConnectedMedia(
     handle: targetHandle,
     nodeId: sourceNode.id,
     label: getMediaLabel(sourceNode),
-    resultType: sourceNode.type === 'audioGen' ? 'audio' : 'video',
+    resultType: mediaFamily,
     url: result,
   };
 }
@@ -617,6 +625,10 @@ function getMediaLabel(node: AppNode): string {
 
   if (node.type === 'composition') {
     return 'Composition output';
+  }
+
+  if (node.type === 'functionNode') {
+    return node.data.functionNode?.title ?? 'Function output';
   }
 
   return node.data.modelId ?? 'Video track';

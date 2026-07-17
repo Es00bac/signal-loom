@@ -2,6 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useFlowStore } from '../../store/flowStore';
+import { createDefaultFunctionNodeConfig } from '../../lib/functionNodes';
 import type { AppNode } from '../../types/flow';
 import { CompositionNode } from './CompositionNode';
 
@@ -112,5 +113,77 @@ describe('CompositionNode composition audio migration warning display (FBL-019 c
     );
 
     expect(html).toContain('composition-audio-9');
+  });
+});
+
+describe('CompositionNode Function-produced audio parity (independent review correction)', () => {
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+  });
+
+  it('shows the real media for a Function node whose effective result type is audio, instead of "Connect media"', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'fn-audio-1',
+          type: 'functionNode',
+          position: { x: 0, y: 0 },
+          data: {
+            resultType: 'audio',
+            result: 'https://example.test/fn-audio.mp3',
+            functionNode: createDefaultFunctionNodeConfig('Narration Function'),
+          },
+        },
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        },
+      ] as AppNode[],
+      edges: [
+        { id: 'e1', source: 'fn-audio-1', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+
+    const html = renderCompositionNode(1);
+
+    expect(html).toContain('Narration Function');
+    // Only the still-unconnected video lane should fall back to "Connect media" (its label and
+    // its empty-timeline placeholder both contain the substring, hence 2 occurrences).
+    expect(html.match(/Connect media/g)).toHaveLength(2);
+  });
+
+  it('does not display a wrong-family Function result (video) as an audio track', () => {
+    useFlowStore.setState({
+      nodes: [
+        {
+          id: 'fn-video-1',
+          type: 'functionNode',
+          position: { x: 0, y: 0 },
+          data: {
+            resultType: 'video',
+            result: 'https://example.test/fn-video.mp4',
+            functionNode: createDefaultFunctionNodeConfig('Video Function'),
+          },
+        },
+        {
+          id: 'composition-1',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: { compositionAudioTrackCount: 1 },
+        },
+      ] as AppNode[],
+      edges: [
+        { id: 'e1', source: 'fn-video-1', target: 'composition-1', targetHandle: 'composition-audio-1' },
+      ],
+    });
+
+    const html = renderCompositionNode(1);
+
+    expect(html).not.toContain('Video Function');
+    // Both the video lane and the audio-1 lane render as unconnected (label + empty-timeline
+    // placeholder each contain the substring, hence 4 occurrences across the 2 lanes).
+    expect(html.match(/Connect media/g)).toHaveLength(4);
   });
 });
