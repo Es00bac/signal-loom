@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { ImageDocument, ImageDocumentSnapshot, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import {
   IMAGE_SNAPSHOT_MAX_METADATA_BYTES,
@@ -34,6 +34,51 @@ class CountingBitmap {
         return { width: 1, height: 1, data: new Uint8ClampedArray(this.#bytes) };
       },
     };
+  }
+
+  async convertToBlob(): Promise<Blob> {
+    CountingBitmap.codecCalls += 1;
+    return new Blob();
+  }
+}
+
+class SnapshotCloneCanvas {
+  width: number;
+  height: number;
+  #bytes: Uint8ClampedArray;
+  #context: {
+    drawImage: (source: LayerBitmap) => void;
+    getImageData: () => { width: number; height: number; data: Uint8ClampedArray };
+  };
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    this.#bytes = new Uint8ClampedArray(width * height * 4);
+    this.#context = {
+      drawImage: (source) => {
+        if (source instanceof SnapshotCloneCanvas) {
+          this.#bytes = source.snapshotBytes();
+          return;
+        }
+        const context = source.getContext('2d');
+        if (!context) throw new Error('snapshot clone source has no readable context');
+        this.#bytes = new Uint8ClampedArray(context.getImageData(0, 0, width, height).data);
+      },
+      getImageData: () => ({
+        width: this.width,
+        height: this.height,
+        data: new Uint8ClampedArray(this.#bytes),
+      }),
+    };
+  }
+
+  getContext() {
+    return this.#context;
+  }
+
+  snapshotBytes(): Uint8ClampedArray {
+    return new Uint8ClampedArray(this.#bytes);
   }
 
   async convertToBlob(): Promise<Blob> {
@@ -99,6 +144,12 @@ function documentWith(snapshotValue: ImageDocumentSnapshot): ImageDocument {
 }
 
 describe('Image snapshot verified-state lifecycle', () => {
+  beforeEach(() => {
+    globalThis.OffscreenCanvas = SnapshotCloneCanvas as unknown as typeof OffscreenCanvas;
+    CountingBitmap.imageDataReads = 0;
+    CountingBitmap.codecCalls = 0;
+  });
+
   it.each(['bitmap', 'mask'] as const)(
     'rejects cached %s resource metadata growth without pixel readback or codec work',
     (role) => {
@@ -106,7 +157,8 @@ describe('Image snapshot verified-state lifecycle', () => {
       const resource = value.layers[0][role]! as LayerBitmap & { evilMetadata?: string };
       resource.evilMetadata = 'bounded';
       markImageDocumentSnapshotVerifiedOwned(value);
-      resource.evilMetadata = 'x'.repeat(16 * 1024 * 1024);
+      const retained = value.layers[0][role]! as LayerBitmap & { evilMetadata?: string };
+      retained.evilMetadata = 'x'.repeat(16 * 1024 * 1024);
 
       CountingBitmap.imageDataReads = 0;
       CountingBitmap.codecCalls = 0;
@@ -186,12 +238,15 @@ describe('Image snapshot verified-state lifecycle', () => {
     };
     resource.legitimateMetadata = metadata;
     markImageDocumentSnapshotVerifiedOwned(value);
+    const retained = value.layers[0].bitmap! as LayerBitmap & {
+      legitimateMetadata: typeof metadata;
+    };
 
     CountingBitmap.imageDataReads = 0;
     expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
     expect(CountingBitmap.imageDataReads).toBe(0);
 
-    resource.legitimateMetadata.nested.value = 8;
+    retained.legitimateMetadata.nested.value = 8;
     expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
       complete: false,
       selectionComplete: false,
@@ -209,10 +264,13 @@ describe('Image snapshot verified-state lifecycle', () => {
       };
       resource.metadata = { data: new Uint8Array([1, 2, 3, 4]) };
       markImageDocumentSnapshotVerifiedOwned(value);
+      const retained = value.layers[0][role]! as LayerBitmap & {
+        metadata: { data: Uint8Array };
+      };
 
       CountingBitmap.imageDataReads = 0;
       CountingBitmap.codecCalls = 0;
-      resource.metadata.data[0] ^= 1;
+      retained.metadata.data[0] ^= 1;
       expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
         complete: false,
         selectionComplete: false,
@@ -224,6 +282,142 @@ describe('Image snapshot verified-state lifecycle', () => {
       expect(CountingBitmap.codecCalls).toBe(0);
     },
   );
+
+  it.each(['bitmap', 'mask'] as const)(
+    'binds direct root data bytes for cached %s resources across same-length mutation',
+    (role) => {
+      const value = snapshot();
+      const resource = value.layers[0][role]! as LayerBitmap & { data: Uint8Array };
+      resource.data = new Uint8Array([17, 18, 19, 20]);
+      markImageDocumentSnapshotVerifiedOwned(value);
+      const retained = value.layers[0][role]! as LayerBitmap & { data: Uint8Array };
+
+      CountingBitmap.imageDataReads = 0;
+      CountingBitmap.codecCalls = 0;
+      retained.data[2] ^= 1;
+      expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['verified-snapshot-binding-changed'],
+      });
+      expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
+        .namedSnapshots.snapshots[0].restorable).toBe(false);
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    },
+  );
+
+  it.each(['bitmap', 'mask'] as const)(
+    'binds own enumerable symbol-keyed binary metadata for cached %s resources',
+    (role) => {
+      const value = snapshot();
+      const enumerableKey = Symbol('enumerable-binary');
+      const hiddenKey = Symbol('non-enumerable-binary');
+      const resource = value.layers[0][role]! as unknown as Record<PropertyKey, unknown>;
+      resource[enumerableKey] = new Uint8Array([31, 32, 33, 34]);
+      Object.defineProperty(resource, hiddenKey, {
+        configurable: true,
+        enumerable: false,
+        value: new Uint8Array([41, 42, 43, 44]),
+      });
+      markImageDocumentSnapshotVerifiedOwned(value);
+      const retained = value.layers[0][role]! as unknown as Record<PropertyKey, unknown>;
+
+      CountingBitmap.imageDataReads = 0;
+      CountingBitmap.codecCalls = 0;
+      expect(retained[hiddenKey]).toBeUndefined();
+      (resource[hiddenKey] as Uint8Array)[0] ^= 1;
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+      (retained[enumerableKey] as Uint8Array)[0] ^= 1;
+      expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['verified-snapshot-binding-changed'],
+      });
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    },
+  );
+
+  it.each(['bitmap', 'mask'] as const)(
+    'adopts and binds direct %s bytes through the uncached owned-readiness path',
+    (role) => {
+      const value = markImageDocumentSnapshotOwned(snapshot());
+      const source = value.layers[0][role]! as LayerBitmap & { pixels: Uint8Array };
+      source.pixels = new Uint8Array([51, 52, 53, 54]);
+
+      CountingBitmap.imageDataReads = 0;
+      CountingBitmap.codecCalls = 0;
+      expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+      const retained = value.layers[0][role]! as LayerBitmap & { pixels: Uint8Array };
+      expect(retained).not.toBe(source);
+      expect(Array.from(retained.pixels)).toEqual([51, 52, 53, 54]);
+      expect(CountingBitmap.imageDataReads).toBe(4);
+      expect(CountingBitmap.codecCalls).toBe(0);
+
+      CountingBitmap.imageDataReads = 0;
+      retained.pixels[3] ^= 1;
+      expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['verified-snapshot-binding-changed'],
+      });
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    },
+  );
+
+  it.each(['bitmap', 'mask'] as const)(
+    'fails closed on detached binary metadata for uncached and cached %s resources',
+    (role) => {
+      const uncached = snapshot();
+      const uncachedResource = uncached.layers[0][role]! as LayerBitmap & {
+        metadata: { payload: Uint8Array };
+      };
+      const uncachedBuffer = new ArrayBuffer(4);
+      uncachedResource.metadata = { payload: new Uint8Array(uncachedBuffer) };
+      structuredClone(uncachedBuffer, { transfer: [uncachedBuffer] });
+      CountingBitmap.imageDataReads = 0;
+      expect(verifyImageDocumentSnapshotIntegrity(uncached)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['snapshot-bounds-invalid'],
+      });
+      expect(CountingBitmap.imageDataReads).toBe(0);
+
+      const cached = snapshot();
+      const cachedSource = cached.layers[0][role]! as LayerBitmap & { bytes: Uint8Array };
+      cachedSource.bytes = new Uint8Array([61, 62, 63, 64]);
+      markImageDocumentSnapshotVerifiedOwned(cached);
+      const cachedRetained = cached.layers[0][role]! as LayerBitmap & { bytes: Uint8Array };
+      structuredClone(cachedRetained.bytes.buffer, { transfer: [cachedRetained.bytes.buffer] });
+      CountingBitmap.imageDataReads = 0;
+      CountingBitmap.codecCalls = 0;
+      expect(inspectImageDocumentSnapshotIntegrity(cached).complete).toBe(false);
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    },
+  );
+
+  it('preserves metadata cycles and aliases in the detached retained graph', () => {
+    const value = snapshot();
+    const shared = { label: 'shared' };
+    const metadata: {
+      left: typeof shared;
+      right: typeof shared;
+      self?: unknown;
+    } = { left: shared, right: shared };
+    metadata.self = metadata;
+    (value.layers[0].bitmap! as LayerBitmap & { metadata: typeof metadata }).metadata = metadata;
+    markImageDocumentSnapshotVerifiedOwned(value);
+
+    const retained = (value.layers[0].bitmap! as LayerBitmap & { metadata: typeof metadata }).metadata;
+    expect(retained).not.toBe(metadata);
+    expect(retained.left).toBe(retained.right);
+    expect(retained.self).toBe(retained);
+    retained.right.label = 'changed through alias';
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+  });
 
   it.each(['bitmap', 'mask'] as const)(
     'rejects oversized nested binary %s metadata before uncached pixel verification',
@@ -247,9 +441,9 @@ describe('Image snapshot verified-state lifecycle', () => {
   );
 
   it.each(['bitmap', 'mask'] as const)(
-    'fails closed when an uncached %s Proxy hides oversized own metadata with ownKeys',
+    'detaches an uncached %s Proxy from hidden target metadata before retaining pixels',
     (role) => {
-      const value = snapshot();
+      const value = markImageDocumentSnapshotOwned(snapshot());
       const target = value.layers[0][role]! as LayerBitmap & { hiddenMetadata?: Uint8Array };
       target.hiddenMetadata = new Uint8Array(20 * 1024 * 1024);
       value.layers[0][role] = new Proxy(target, {
@@ -262,18 +456,17 @@ describe('Image snapshot verified-state lifecycle', () => {
 
       CountingBitmap.imageDataReads = 0;
       CountingBitmap.codecCalls = 0;
-      expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
-        complete: false,
-        selectionComplete: false,
-        reasons: ['snapshot-resource-hardening-failed'],
-      });
-      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+      expect(value.layers[0][role]).not.toBe(target);
+      expect((value.layers[0][role] as unknown as Record<string, unknown>).hiddenMetadata).toBeUndefined();
+      expect(target.hiddenMetadata?.byteLength).toBe(20 * 1024 * 1024);
+      expect(CountingBitmap.imageDataReads).toBe(4);
       expect(CountingBitmap.codecCalls).toBe(0);
     },
   );
 
   it.each(['bitmap', 'mask'] as const)(
-    'controls a cached %s Proxy so it cannot hide a later oversized own expando',
+    'retains a controlled %s clone while the discarded Proxy target remains unchanged',
     (role) => {
       const value = snapshot();
       const target = value.layers[0][role]! as LayerBitmap & { hiddenMetadata?: Uint8Array };
@@ -286,6 +479,7 @@ describe('Image snapshot verified-state lifecycle', () => {
       });
       value.layers[0][role] = proxy;
       markImageDocumentSnapshotVerifiedOwned(value);
+      const retained = value.layers[0][role]!;
 
       const added = Reflect.defineProperty(target, 'hiddenMetadata', {
         configurable: true,
@@ -295,8 +489,14 @@ describe('Image snapshot verified-state lifecycle', () => {
       });
       CountingBitmap.imageDataReads = 0;
       CountingBitmap.codecCalls = 0;
-      expect(added).toBe(false);
-      expect(Object.isExtensible(target)).toBe(false);
+      expect(added).toBe(true);
+      expect(Object.isExtensible(target)).toBe(true);
+      expect(Object.isExtensible(retained)).toBe(false);
+      expect(Reflect.defineProperty(retained, 'lateMetadata', {
+        configurable: true,
+        enumerable: true,
+        value: new Uint8Array(20 * 1024 * 1024),
+      })).toBe(false);
       expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
       expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
         .namedSnapshots.snapshots[0].restorable).toBe(true);
@@ -305,7 +505,7 @@ describe('Image snapshot verified-state lifecycle', () => {
     },
   );
 
-  it('fails closed without throwing or reading pixels for revoked and hardening-trap resource Proxies', () => {
+  it('fails closed for revoked Proxies and never invokes source preventExtensions traps', () => {
     const revokedValue = snapshot();
     const revocable = Proxy.revocable(revokedValue.layers[0].bitmap!, {});
     revokedValue.layers[0].bitmap = revocable.proxy;
@@ -317,22 +517,70 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(CountingBitmap.imageDataReads).toBe(0);
 
     const trappedValue = markImageDocumentSnapshotOwned(snapshot());
+    let preventExtensionsCalls = 0;
     trappedValue.layers[0].mask = new Proxy(trappedValue.layers[0].mask!, {
+      get: (target, key) => {
+        const property = Reflect.get(target, key, target);
+        return typeof property === 'function' ? property.bind(target) : property;
+      },
       preventExtensions: () => {
+        preventExtensionsCalls += 1;
         throw new Error('resource hardening trap');
       },
     });
     CountingBitmap.imageDataReads = 0;
-    expect(() => verifyImageDocumentSnapshotIntegrity(trappedValue)).not.toThrow();
-    expect(verifyImageDocumentSnapshotIntegrity(trappedValue).complete).toBe(false);
-    expect(CountingBitmap.imageDataReads).toBe(0);
+    let trappedResult: ReturnType<typeof verifyImageDocumentSnapshotIntegrity> | undefined;
+    expect(() => {
+      trappedResult = verifyImageDocumentSnapshotIntegrity(trappedValue);
+    }).not.toThrow();
+    expect(trappedResult?.complete).toBe(true);
+    expect(preventExtensionsCalls).toBe(0);
+    expect(CountingBitmap.imageDataReads).toBe(4);
+  });
+
+  it('rolls back every retained resource when descendant hardening fails partway', () => {
+    const value = markImageDocumentSnapshotOwned(snapshot());
+    const bitmapResource = value.layers[0].bitmap! as LayerBitmap & {
+      metadata?: { nested: { label: string } };
+    };
+    bitmapResource.metadata = { nested: { label: 'must remain extensible' } };
+    const originalMask = value.layers[0].mask!;
+    let maskOwnKeysCalls = 0;
+    value.layers[0].mask = new Proxy(originalMask, {
+      get: (target, key) => {
+        const property = Reflect.get(target, key, target);
+        return typeof property === 'function' ? property.bind(target) : property;
+      },
+      ownKeys: (target) => {
+        maskOwnKeysCalls += 1;
+        if (maskOwnKeysCalls > 1) throw new Error('second resource clone failed');
+        return Reflect.ownKeys(target);
+      },
+    });
+
+    CountingBitmap.imageDataReads = 0;
+    CountingBitmap.codecCalls = 0;
+    expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-resource-hardening-failed'],
+    });
+    expect(value.layers[0].bitmap).toBe(bitmapResource);
+    expect(Object.isExtensible(bitmapResource)).toBe(true);
+    expect(Object.isExtensible(bitmapResource.metadata!)).toBe(true);
+    expect(Object.isExtensible(bitmapResource.metadata!.nested)).toBe(true);
+    expect(value.layers[0].mask === originalMask).toBe(false);
+    expect(originalMask.width).toBe(1);
+    expect(originalMask.height).toBe(1);
+    expect(CountingBitmap.imageDataReads).toBe(4);
+    expect(CountingBitmap.codecCalls).toBe(0);
   });
 
   it('keeps ordinary platform-shaped resources usable while controlling their own-field coverage', () => {
     const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
 
-    expect(value.layers[0].bitmap).toBeInstanceOf(CountingBitmap);
-    expect(value.layers[0].mask).toBeInstanceOf(CountingBitmap);
+    expect(value.layers[0].bitmap).toBeInstanceOf(SnapshotCloneCanvas);
+    expect(value.layers[0].mask).toBeInstanceOf(SnapshotCloneCanvas);
     expect(Object.isExtensible(value.layers[0].bitmap!)).toBe(false);
     expect(Object.isExtensible(value.layers[0].mask!)).toBe(false);
     expect(value.layers[0].bitmap!.width).toBe(1);
@@ -373,10 +621,9 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(CountingBitmap.imageDataReads).toBe(0);
   });
 
-  it('fails closed on resource getters, Proxies, and replacement while ignoring excluded key classes', () => {
+  it('fails closed on retained resource getters and Proxies while excluding non-enumerable and inherited keys', () => {
     const value = snapshot();
     const original = value.layers[0].bitmap!;
-    const mutable = original as unknown as Record<PropertyKey, unknown>;
     const symbolKey = Symbol('resource-metadata');
     let getterCalls = 0;
 
@@ -384,7 +631,11 @@ describe('Image snapshot verified-state lifecycle', () => {
       configurable: true,
       value: 'x'.repeat(20 * 1024 * 1024),
     });
-    mutable[symbolKey] = 'x'.repeat(20 * 1024 * 1024);
+    Object.defineProperty(original, symbolKey, {
+      configurable: true,
+      enumerable: false,
+      value: 'x'.repeat(20 * 1024 * 1024),
+    });
     const inheritedMetadataPrototype = Object.create(Object.getPrototypeOf(original)) as {
       inheritedMetadata?: string;
     };
@@ -397,9 +648,11 @@ describe('Image snapshot verified-state lifecycle', () => {
       writable: true,
     });
     markImageDocumentSnapshotVerifiedOwned(value);
+    const retained = value.layers[0].bitmap!;
+    const retainedMutable = retained as unknown as Record<PropertyKey, unknown>;
     expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
 
-    Object.defineProperty(original, 'hostileMetadata', {
+    Object.defineProperty(retained, 'hostileMetadata', {
       configurable: true,
       enumerable: true,
       get: () => {
@@ -411,10 +664,8 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
     expect(getterCalls).toBe(0);
 
-    delete mutable.hostileMetadata;
-    delete mutable.hiddenMetadata;
-    delete mutable[symbolKey];
-    value.layers[0].bitmap = new Proxy(original, {
+    delete retainedMutable.hostileMetadata;
+    value.layers[0].bitmap = new Proxy(retained, {
       ownKeys: () => {
         throw new Error('resource Proxy inspection failed');
       },
@@ -425,21 +676,18 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(CountingBitmap.imageDataReads).toBe(0);
   });
 
-  it('fails closed when a sealed Canvas-like resource cannot be hardened', () => {
+  it('adopts sealed Canvas-like resources through detached controlled clones', () => {
     const explicit = markImageDocumentSnapshotOwned(snapshot());
     Object.preventExtensions(explicit.layers[0].bitmap!);
 
-    expect(verifyImageDocumentSnapshotIntegrity(explicit)).toEqual({
-      complete: false,
-      selectionComplete: false,
-      reasons: ['snapshot-resource-hardening-failed'],
-    });
+    expect(verifyImageDocumentSnapshotIntegrity(explicit).complete).toBe(true);
+    expect(explicit.layers[0].bitmap).not.toBeNull();
+    expect(Object.isExtensible(explicit.layers[0].bitmap!)).toBe(false);
 
     const trustedBuilderPath = snapshot();
     Object.preventExtensions(trustedBuilderPath.layers[0].bitmap!);
-    expect(() => markImageDocumentSnapshotVerifiedOwned(trustedBuilderPath)).toThrow(
-      /could not enter immutable verified state/i,
-    );
+    expect(() => markImageDocumentSnapshotVerifiedOwned(trustedBuilderPath)).not.toThrow();
+    expect(inspectImageDocumentSnapshotIntegrity(trustedBuilderPath).complete).toBe(true);
   });
 
   it('rejects oversized enumerable metadata added after the verified cache is populated', () => {
@@ -527,8 +775,8 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(elapsedMs).toBeGreaterThanOrEqual(0);
 
     expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
-    expect(CountingBitmap.imageDataReads).toBe(4);
-    expect(metadataReads).toBe(202);
+    expect(CountingBitmap.imageDataReads).toBe(0);
+    expect(metadataReads).toBe(203);
   });
 
   it('fails closed for oversized string, array, and object replacements before and after readiness', () => {
@@ -660,13 +908,13 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(CountingBitmap.imageDataReads).toBe(0);
 
     expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
-    expect(CountingBitmap.imageDataReads).toBe(4);
+    expect(CountingBitmap.imageDataReads).toBe(0);
     CountingBitmap.imageDataReads = 0;
     expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
     expect(CountingBitmap.imageDataReads).toBe(0);
   });
 
-  it('uses only own enumerable string-keyed metadata and fails closed on hostile getters and proxies', () => {
+  it('bounds own enumerable string and symbol metadata and fails closed on hostile getters and proxies', () => {
     const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
     const mutable = value as unknown as Record<PropertyKey, unknown>;
     const oversized = 'x'.repeat(IMAGE_SNAPSHOT_MAX_METADATA_BYTES);
@@ -674,10 +922,22 @@ describe('Image snapshot verified-state lifecycle', () => {
     const originalPrototype = Object.getPrototypeOf(value);
 
     Object.defineProperty(value, 'hiddenMetadata', { configurable: true, value: oversized });
-    mutable[symbolKey] = oversized;
+    Object.defineProperty(value, symbolKey, {
+      configurable: true,
+      enumerable: false,
+      value: oversized,
+    });
     Object.setPrototypeOf(value, { inheritedMetadata: oversized });
     expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
     expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+
+    Object.defineProperty(value, symbolKey, {
+      configurable: true,
+      enumerable: true,
+      value: oversized,
+    });
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(false);
 
     delete mutable.hiddenMetadata;
     delete mutable[symbolKey];
@@ -863,5 +1123,22 @@ describe('Image snapshot verified-state lifecycle', () => {
     expect(disposed.layers[0].bitmap?.width).toBe(0);
     expect(disposed.selectionMask?.data.byteLength).toBe(0);
     expect(inspectImageDocumentSnapshotIntegrity(disposed).complete).toBe(false);
+  });
+
+  it('disposes retained clones and their superseded owned sources exactly at snapshot disposal', () => {
+    const value = snapshot();
+    const sources = value.layers.flatMap((entry) => [entry.bitmap!, entry.mask!]);
+    markImageDocumentSnapshotVerifiedOwned(value);
+    const retained = value.layers.flatMap((entry) => [entry.bitmap!, entry.mask!]);
+
+    expect(retained.every((entry) => !sources.includes(entry))).toBe(true);
+    expect(sources.every((entry) => entry.width === 1 && entry.height === 1)).toBe(true);
+    disposeImageDocumentSnapshotResources(value);
+    expect(retained.every((entry) => entry.width === 0 && entry.height === 0)).toBe(true);
+    expect(sources.every((entry) => entry.width === 0 && entry.height === 0)).toBe(true);
+
+    disposeImageDocumentSnapshotResources(value);
+    expect(retained.every((entry) => entry.width === 0 && entry.height === 0)).toBe(true);
+    expect(sources.every((entry) => entry.width === 0 && entry.height === 0)).toBe(true);
   });
 });

@@ -129,6 +129,7 @@ export interface ImageSnapshotReadinessDescriptor {
 const ownedNamedSnapshots = new WeakSet<ImageDocumentSnapshot>();
 const verifiedNamedSnapshots = new WeakMap<ImageDocumentSnapshot, VerifiedSnapshotBinding>();
 const immutableSelectionBytes = new WeakMap<SelectionMaskSnapshot, { bytes: Uint8ClampedArray }>();
+const supersededOwnedBitmaps = new WeakMap<ImageDocumentSnapshot, Set<LayerBitmap>>();
 
 interface VerifiedSnapshotLayerBinding {
   layer: ImageLayer;
@@ -165,6 +166,17 @@ interface VerifiedSnapshotBinding {
 type SnapshotAssetRole = 'bitmap-rgba8' | 'mask-rgba8' | 'selection-alpha8';
 
 type UnknownRecord = Record<string, unknown>;
+type UnknownPropertyRecord = Record<PropertyKey, unknown>;
+
+interface EnumerableOwnEntry {
+  key: PropertyKey;
+  descriptor: PropertyDescriptor & { enumerable: true };
+}
+
+const metadataSymbolIds = new Map<symbol, number>();
+let nextMetadataSymbolId = 1;
+const metadataFunctionIds = new WeakMap<object, number>();
+let nextMetadataFunctionId = 1;
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null;
@@ -172,6 +184,49 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function nonemptyIdentity(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function enumerableOwnEntries(value: object): EnumerableOwnEntry[] {
+  const entries: EnumerableOwnEntry[] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) throw new Error('Image snapshot metadata descriptor is not safely readable.');
+    if (descriptor.enumerable) {
+      entries.push({ key, descriptor: descriptor as EnumerableOwnEntry['descriptor'] });
+    }
+  }
+  return entries;
+}
+
+function metadataKeyToken(key: PropertyKey): string {
+  if (typeof key === 'string') return `string-key:${key.length}:${key}`;
+  if (typeof key === 'number') return `number-key:${String(key)}`;
+  let id = metadataSymbolIds.get(key);
+  if (id === undefined) {
+    id = nextMetadataSymbolId;
+    nextMetadataSymbolId += 1;
+    metadataSymbolIds.set(key, id);
+  }
+  const globalKey = Symbol.keyFor(key);
+  const description = key.description ?? '';
+  return `symbol-key:${id}:global:${globalKey === undefined ? -1 : globalKey.length}:${globalKey ?? ''}:description:${description.length}:${description}`;
+}
+
+function metadataKeyByteLengthAtMost(key: PropertyKey, maximum: number): number {
+  return jsonStringByteLengthAtMost(
+    typeof key === 'string' ? key : metadataKeyToken(key),
+    maximum,
+  );
+}
+
+function metadataFunctionToken(value: object): string {
+  let id = metadataFunctionIds.get(value);
+  if (id === undefined) {
+    id = nextMetadataFunctionId;
+    nextMetadataFunctionId += 1;
+    metadataFunctionIds.set(value, id);
+  }
+  return `function:${id};`;
 }
 
 /**
@@ -429,8 +484,19 @@ function measureRawSnapshotMetadataBytes(
       continue;
     }
     if (value === undefined || typeof value === 'function' || typeof value === 'symbol') continue;
+    if (typeof ImageData !== 'undefined' && value instanceof ImageData) {
+      const pixelBytes = exactBinaryBytes(value.data);
+      add(Math.min(maximum + 1, pixelBytes.byteLength + 24));
+      continue;
+    }
     if (ArrayBuffer.isView(value)) {
-      add(Math.min(maximum + 1, value.byteLength * 4 + 2));
+      const bytes = exactBinaryBytes(value);
+      add(Math.min(maximum + 1, bytes.byteLength + 2));
+      continue;
+    }
+    if (value instanceof ArrayBuffer) {
+      const bytes = exactBinaryBytes(value);
+      add(Math.min(maximum + 1, bytes.byteLength + 2));
       continue;
     }
     if (typeof value !== 'object') continue;
@@ -453,25 +519,19 @@ function measureRawSnapshotMetadataBytes(
     }
     if (Array.isArray(value) && add(2 + Math.max(0, value.length - 1))) continue;
 
-    const record = value as UnknownRecord;
-    const keys = Object.keys(record);
-    if (add(2 + Math.max(0, keys.length - 1))) continue;
-    for (let index = keys.length - 1; index >= 0; index -= 1) {
-      const key = keys[index];
-      if (add(jsonStringByteLengthAtMost(key, maximum - bytes) + 1)) break;
-      const descriptor = bitmapMetadata
-        ? Object.getOwnPropertyDescriptor(record, key)
-        : undefined;
-      if (bitmapMetadata && (!descriptor || !descriptor.enumerable)) {
-        throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
-      }
-      if (bitmapMetadata && descriptor && !('value' in descriptor)) {
+    const record = value as UnknownPropertyRecord;
+    const entries = enumerableOwnEntries(record);
+    if (add(2 + Math.max(0, entries.length - 1))) continue;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const { key, descriptor } = entries[index];
+      if (add(metadataKeyByteLengthAtMost(key, maximum - bytes) + 1)) break;
+      if (bitmapMetadata && !('value' in descriptor)) {
         if (kind === 'bitmap-resource' && isImmutableBitmapDimensionDescriptor(record, key)) continue;
         throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
       }
       if (shouldSkipSnapshotPixelMetadataValue(kind, key, descriptor?.value, transport)) continue;
       stack.push({
-        value: descriptor ? descriptor.value : record[key],
+        value: 'value' in descriptor ? descriptor.value : record[key],
         kind: kind === 'snapshot' && key === 'layers'
           ? 'layer-array'
           : kind === 'layer' && transport !== 'native' && (key === 'bitmap' || key === 'mask')
@@ -488,31 +548,27 @@ function measureRawSnapshotMetadataBytes(
 
 function shouldSkipSnapshotPixelMetadataValue(
   kind: MetadataTraversalKind,
-  key: string,
-  value: unknown,
+  key: PropertyKey,
+  _value: unknown,
   transport: 'project' | 'native' | 'runtime',
 ): boolean {
+  if (typeof key !== 'string') return false;
   if (kind === 'layer' && (key === 'bitmapData' || key === 'maskData')) return true;
   if (kind === 'snapshot' && key === 'selectionMaskData') return true;
-  if (kind === 'bitmap-resource' && isOpaqueBitmapPixelBody(key, value)) {
-    return true;
-  }
   if (transport === 'native') return false;
   return kind === 'snapshot' && key === 'selectionMask';
 }
 
-const BITMAP_PIXEL_BODY_KEY = /^(?:_?(?:pixel|pixels|data|bytes|buffer)|imageData)$/i;
-
-function isOpaqueBitmapPixelBody(key: string, value: unknown): boolean {
-  if (!BITMAP_PIXEL_BODY_KEY.test(key)) return false;
-  return Array.isArray(value)
-    || ArrayBuffer.isView(value)
-    || value instanceof ArrayBuffer
-    || (typeof ImageData !== 'undefined' && value instanceof ImageData);
+function exactBinaryBytes(value: ArrayBuffer | ArrayBufferView): Uint8Array {
+  const buffer = value instanceof ArrayBuffer ? value : value.buffer;
+  if (buffer instanceof ArrayBuffer) buffer.slice(0, 0);
+  const byteOffset = value instanceof ArrayBuffer ? 0 : value.byteOffset;
+  const byteLength = value instanceof ArrayBuffer ? value.byteLength : value.byteLength;
+  return new Uint8Array(buffer, byteOffset, byteLength);
 }
 
-function isImmutableBitmapDimensionDescriptor(record: UnknownRecord, key: string): boolean {
-  return (key === 'width' || key === 'height')
+function isImmutableBitmapDimensionDescriptor(record: UnknownPropertyRecord, key: PropertyKey): boolean {
+  return typeof key === 'string' && (key === 'width' || key === 'height')
     && isBitmapImmutable(record as unknown as LayerBitmap);
 }
 
@@ -542,42 +598,201 @@ function controlBitmapMetadataOwnFields(bitmap: LayerBitmap): void {
     if (Object.isExtensible(value)) {
       throw new Error('Image snapshot bitmap metadata own-field coverage could not be controlled.');
     }
-    const record = value as UnknownRecord;
-    const keys = Object.keys(record);
-    for (let index = keys.length - 1; index >= 0; index -= 1) {
-      const key = keys[index];
-      const descriptor = Object.getOwnPropertyDescriptor(record, key);
-      if (!descriptor || !descriptor.enumerable) {
-        throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
-      }
+    const record = value as UnknownPropertyRecord;
+    const entries = enumerableOwnEntries(record);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const { key, descriptor } = entries[index];
       if (!('value' in descriptor)) {
         if (resourceRoot && isImmutableBitmapDimensionDescriptor(record, key)) continue;
         throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
       }
-      if (resourceRoot && isOpaqueBitmapPixelBody(key, descriptor.value)) continue;
       stack.push({ value: descriptor.value, resourceRoot: false, depth: depth + 1 });
     }
   }
 }
 
-function prepareSnapshotResourceCoverage(snapshot: ImageDocumentSnapshot): LayerBitmap[] {
-  const newlyImmutable: LayerBitmap[] = [];
+interface SnapshotResourceReplacement {
+  layer: ImageLayer;
+  role: 'bitmap' | 'mask';
+  original: LayerBitmap;
+  replacement: LayerBitmap;
+}
+
+interface PreparedSnapshotResourceCoverage {
+  commit: () => void;
+  rollback: () => void;
+  finalize: () => void;
+}
+
+function cloneMetadataValue(
+  value: unknown,
+  clones: Map<object, unknown>,
+  depth: number,
+): unknown {
+  if (depth > IMAGE_SNAPSHOT_MAX_METADATA_DEPTH) {
+    throw new Error(`Image snapshot bitmap metadata depth exceeds ${IMAGE_SNAPSHOT_MAX_METADATA_DEPTH}.`);
+  }
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
+  const existing = clones.get(value as object);
+  if (existing !== undefined) return existing;
+  if (ArrayBuffer.isView(value)) {
+    exactBinaryBytes(value);
+    const cloned = structuredClone(value);
+    clones.set(value, cloned);
+    return cloned;
+  }
+  if (value instanceof ArrayBuffer) {
+    exactBinaryBytes(value);
+    const cloned = value.slice(0);
+    clones.set(value, cloned);
+    return cloned;
+  }
+  if (typeof ImageData !== 'undefined' && value instanceof ImageData) {
+    const cloned = new ImageData(new Uint8ClampedArray(value.data), value.width, value.height, {
+      colorSpace: value.colorSpace,
+    });
+    clones.set(value, cloned);
+    return cloned;
+  }
+  if (typeof value === 'function') return value;
+
+  const entries = enumerableOwnEntries(value);
+  const clone: UnknownPropertyRecord | unknown[] = Array.isArray(value)
+    ? new Array(value.length)
+    : Object.create(null) as UnknownPropertyRecord;
+  clones.set(value, clone);
+  for (const { key, descriptor } of entries) {
+    if (!('value' in descriptor)) {
+      throw new Error('Image snapshot bitmap metadata accessor cannot enter verified state.');
+    }
+    Object.defineProperty(clone, key, {
+      ...descriptor,
+      value: cloneMetadataValue(descriptor.value, clones, depth + 1),
+    });
+  }
+  return clone;
+}
+
+function isCanonicalBitmapDimension(
+  bitmap: LayerBitmap,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): boolean {
+  if (key !== 'width' && key !== 'height') return false;
+  if ('value' in descriptor) return descriptor.value === bitmap[key];
+  return isBitmapImmutable(bitmap);
+}
+
+function copyBitmapEnumerableMetadata(
+  source: LayerBitmap,
+  destination: LayerBitmap,
+  clones: Map<object, unknown>,
+): void {
+  clones.set(source, destination);
+  for (const { key, descriptor } of enumerableOwnEntries(source)) {
+    if (isCanonicalBitmapDimension(source, key, descriptor)) continue;
+    if (!('value' in descriptor)) {
+      throw new Error('Image snapshot bitmap metadata accessor cannot enter verified state.');
+    }
+    const existing = Object.getOwnPropertyDescriptor(destination, key);
+    if (existing && !existing.configurable) {
+      throw new Error('Image snapshot bitmap metadata conflicts with its immutable pixel clone.');
+    }
+    Object.defineProperty(destination, key, {
+      ...descriptor,
+      value: cloneMetadataValue(descriptor.value, clones, 1),
+    });
+  }
+}
+
+function disposePreparedBitmap(bitmap: LayerBitmap): void {
+  releaseImmutableBitmap(bitmap);
+  try {
+    bitmap.width = 0;
+    bitmap.height = 0;
+  } catch {
+    // A failed fresh clone is unreachable after rollback; native reclamation remains platform-managed.
+  }
+}
+
+/**
+ * Build and harden a detached retained-resource graph before changing the
+ * snapshot. Proxy traps and descriptor failures can only affect fresh clones;
+ * rollback restores every resource identity before those clones are released.
+ */
+function prepareSnapshotResourceCoverage(
+  snapshot: ImageDocumentSnapshot,
+  reuseControlledResources = false,
+): PreparedSnapshotResourceCoverage {
+  const replacements: SnapshotResourceReplacement[] = [];
+  const clonedBitmaps = new Map<LayerBitmap, LayerBitmap>();
+  const metadataClones = new Map<object, unknown>();
+  const freshClones: LayerBitmap[] = [];
+  let committed = false;
+  let finalized = false;
   try {
     for (const layer of snapshot.layers) {
-      for (const bitmap of [layer.bitmap, layer.mask]) {
-        if (!bitmap) continue;
-        if (!isBitmapImmutable(bitmap)) {
-          makeBitmapImmutable(bitmap);
-          newlyImmutable.push(bitmap);
+      for (const role of ['bitmap', 'mask'] as const) {
+        const original = layer[role];
+        if (!original || reuseControlledResources) continue;
+        let replacement = clonedBitmaps.get(original);
+        if (!replacement) {
+          replacement = cloneBitmap(original);
+          clonedBitmaps.set(original, replacement);
+          metadataClones.set(original, replacement);
+          freshClones.push(replacement);
         }
-        controlBitmapMetadataOwnFields(bitmap);
+        replacements.push({ layer, role, original, replacement });
       }
     }
-    return newlyImmutable;
+    for (const [source, destination] of clonedBitmaps) {
+      copyBitmapEnumerableMetadata(source, destination, metadataClones);
+    }
+    for (const bitmap of freshClones) {
+      makeBitmapImmutable(bitmap);
+      controlBitmapMetadataOwnFields(bitmap);
+    }
   } catch (error) {
-    for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
+    for (const bitmap of freshClones.reverse()) disposePreparedBitmap(bitmap);
     throw new Error('Image snapshot resource own-field coverage could not be controlled.', { cause: error });
   }
+
+  const rollback = () => {
+    if (finalized) return;
+    if (committed) {
+      for (const replacement of replacements) replacement.layer[replacement.role] = replacement.original;
+      committed = false;
+    }
+    for (const bitmap of freshClones.splice(0).reverse()) disposePreparedBitmap(bitmap);
+  };
+  return {
+    commit: () => {
+      if (committed || finalized) return;
+      let applied = 0;
+      try {
+        for (const replacement of replacements) {
+          replacement.layer[replacement.role] = replacement.replacement;
+          applied += 1;
+        }
+        committed = true;
+      } catch (error) {
+        for (let index = applied - 1; index >= 0; index -= 1) {
+          const replacement = replacements[index];
+          replacement.layer[replacement.role] = replacement.original;
+        }
+        for (const bitmap of freshClones.splice(0).reverse()) disposePreparedBitmap(bitmap);
+        throw error;
+      }
+    },
+    rollback,
+    finalize: () => {
+      if (!committed || finalized) return;
+      const superseded = supersededOwnedBitmaps.get(snapshot) ?? new Set<LayerBitmap>();
+      for (const { original } of replacements) superseded.add(original);
+      if (superseded.size > 0) supersededOwnedBitmaps.set(snapshot, superseded);
+      finalized = true;
+    },
+  };
 }
 
 function jsonStringByteLengthAtMost(value: string, maximum: number): number {
@@ -981,9 +1196,17 @@ export function verifyImageDocumentSnapshotIntegrity(
 ): ImageDocumentSnapshotIntegrityResult {
   let structure = inspectSnapshotStructure(snapshot);
   if (!structure.complete) return structure;
-  let newlyImmutable: LayerBitmap[];
+  const cached = verifiedNamedSnapshots.get(snapshot);
+  const reuseControlledResources = Boolean(
+    cached
+    && verifiedResourceIdentitiesMatch(snapshot, cached)
+    && inspectSnapshotStructure(snapshot, { requireResourceOwnFieldCoverage: true }).complete
+    && verifiedBindingMatches(snapshot, cached),
+  );
+  let prepared: PreparedSnapshotResourceCoverage;
   try {
-    newlyImmutable = prepareSnapshotResourceCoverage(snapshot);
+    prepared = prepareSnapshotResourceCoverage(snapshot, reuseControlledResources);
+    prepared.commit();
   } catch {
     return {
       complete: false,
@@ -993,7 +1216,7 @@ export function verifyImageDocumentSnapshotIntegrity(
   }
   structure = inspectSnapshotStructure(snapshot, { requireResourceOwnFieldCoverage: true });
   if (!structure.complete) {
-    for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
+    prepared.rollback();
     return structure;
   }
   const integrity = snapshot.integrity!;
@@ -1033,20 +1256,23 @@ export function verifyImageDocumentSnapshotIntegrity(
   }
   const result = { complete: reasons.length === 0, selectionComplete, reasons };
   if (!result.complete) {
-    for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
+    prepared.rollback();
     return result;
   }
   if (result.complete && ownedNamedSnapshots.has(snapshot)) {
     try {
       cacheVerifiedOwnedSnapshot(snapshot, result);
+      prepared.finalize();
     } catch {
-      for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
+      prepared.rollback();
       return {
         complete: false,
         selectionComplete: false,
         reasons: ['snapshot-resource-hardening-failed'],
       };
     }
+  } else {
+    prepared.rollback();
   }
   return result;
 }
@@ -1099,16 +1325,25 @@ export function markImageDocumentSnapshotVerifiedOwned(snapshot: ImageDocumentSn
     if (!wasOwned) ownedNamedSnapshots.delete(snapshot);
     throw new Error(`Image snapshot cannot enter verified state: ${structure.reasons.join(', ')}.`);
   }
-  let newlyImmutable: LayerBitmap[] = [];
+  let prepared: PreparedSnapshotResourceCoverage | undefined;
   try {
-    newlyImmutable = prepareSnapshotResourceCoverage(snapshot);
+    const cached = verifiedNamedSnapshots.get(snapshot);
+    const reuseControlledResources = Boolean(
+      cached
+      && verifiedResourceIdentitiesMatch(snapshot, cached)
+      && inspectSnapshotStructure(snapshot, { requireResourceOwnFieldCoverage: true }).complete
+      && verifiedBindingMatches(snapshot, cached),
+    );
+    prepared = prepareSnapshotResourceCoverage(snapshot, reuseControlledResources);
+    prepared.commit();
     structure = inspectSnapshotStructure(snapshot, { requireResourceOwnFieldCoverage: true });
     if (!structure.complete) {
       throw new Error(`Image snapshot cannot enter verified state: ${structure.reasons.join(', ')}.`);
     }
     cacheVerifiedOwnedSnapshot(snapshot, { complete: true, selectionComplete: true, reasons: [] });
+    prepared.finalize();
   } catch (error) {
-    for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
+    prepared?.rollback();
     if (!wasOwned) ownedNamedSnapshots.delete(snapshot);
     verifiedNamedSnapshots.delete(snapshot);
     throw new Error('Image snapshot resources could not enter immutable verified state.', { cause: error });
@@ -1120,21 +1355,15 @@ function cacheVerifiedOwnedSnapshot(
   snapshot: ImageDocumentSnapshot,
   result: ImageDocumentSnapshotIntegrityResult,
 ): void {
-  const newlyImmutable: LayerBitmap[] = [];
-  try {
-    for (const layer of snapshot.layers) {
-      for (const bitmap of [layer.bitmap, layer.mask]) {
-        if (!bitmap || isBitmapImmutable(bitmap)) continue;
-        makeBitmapImmutable(bitmap);
-        newlyImmutable.push(bitmap);
+  for (const layer of snapshot.layers) {
+    for (const bitmap of [layer.bitmap, layer.mask]) {
+      if (bitmap && !isBitmapImmutable(bitmap)) {
+        throw new Error('Image snapshot cache received an uncontrolled bitmap resource.');
       }
     }
-    if (snapshot.selectionMask) makeSelectionSnapshotImmutable(snapshot.selectionMask);
-    verifiedNamedSnapshots.set(snapshot, captureVerifiedBinding(snapshot, result));
-  } catch (error) {
-    for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
-    throw error;
   }
+  if (snapshot.selectionMask) makeSelectionSnapshotImmutable(snapshot.selectionMask);
+  verifiedNamedSnapshots.set(snapshot, captureVerifiedBinding(snapshot, result));
 }
 
 function makeSelectionSnapshotImmutable(selection: SelectionMaskSnapshot): void {
@@ -1172,11 +1401,7 @@ function selectionProofSignature(proof: ImageDocumentSnapshotIntegrity['selectio
   return `${assetProofSignature(proof)}:${proof.byteLength}`;
 }
 
-/**
- * Bind own enumerable resource metadata without asking the canvas for pixels.
- * Binary pixel containers exposed by Canvas-like test/wrapper implementations
- * are described by shape only; their bytes remain covered by the pixel digest.
- */
+/** Bind every own enumerable string/symbol resource field without pixel readback. */
 function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
   if (!bitmap) return 'absent';
   const hasher = sha256.create();
@@ -1232,9 +1457,9 @@ function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
     } else if (value === undefined) {
       update('undefined;');
     } else if (typeof value === 'function') {
-      update('function;');
+      update(metadataFunctionToken(value));
     } else if (typeof value === 'symbol') {
-      update('symbol;');
+      update(`symbol-value:${metadataKeyToken(value)};`);
     } else {
       const priorId = seen.get(value);
       if (priorId !== undefined) {
@@ -1245,13 +1470,15 @@ function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
       nextObjectId += 1;
       seen.set(value, objectId);
       if (ArrayBuffer.isView(value)) {
-        update(`binary-view:${Object.prototype.toString.call(value)}:${value.byteOffset}:${value.byteLength};`);
-        updateBinary(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+        const bytes = exactBinaryBytes(value);
+        update(`binary-view:${Object.prototype.toString.call(value)}:${value.byteOffset}:${bytes.byteLength};`);
+        updateBinary(bytes);
         continue;
       }
       if (value instanceof ArrayBuffer) {
-        update(`array-buffer:${value.byteLength};`);
-        updateBinary(new Uint8Array(value));
+        const bytes = exactBinaryBytes(value);
+        update(`array-buffer:${bytes.byteLength};`);
+        updateBinary(bytes);
         continue;
       }
       if (typeof ImageData !== 'undefined' && value instanceof ImageData) {
@@ -1260,54 +1487,36 @@ function bitmapMetadataSignature(bitmap: LayerBitmap | null): string {
         continue;
       }
 
-      const record = value as UnknownRecord;
-      const keys = Object.keys(record);
+      const record = value as UnknownPropertyRecord;
+      const entries = enumerableOwnEntries(record);
       update(Array.isArray(value)
-        ? `array:${objectId}:length:${value.length}:keys:${keys.length}{`
-        : `object:${objectId}:keys:${keys.length}{`);
+        ? `array:${objectId}:length:${value.length}:keys:${entries.length}{`
+        : `object:${objectId}:keys:${entries.length}{`);
       stack.push({ kind: 'token', value: '}' });
-      for (let index = keys.length - 1; index >= 0; index -= 1) {
-        const key = keys[index];
-        const descriptor = Object.getOwnPropertyDescriptor(record, key);
-        if (!descriptor || !descriptor.enumerable) {
-          throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
-        }
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const { key, descriptor } = entries[index];
         if (!('value' in descriptor)) {
           if (entry.resourceRoot && isImmutableBitmapDimensionDescriptor(record, key)) {
-            stack.push({ kind: 'token', value: `key:${key.length}:${key}:immutable-dimension;` });
+            stack.push({ kind: 'token', value: `${metadataKeyToken(key)}:immutable-dimension;` });
             continue;
           }
           throw new Error('Image snapshot bitmap metadata descriptor is not safely readable.');
         }
         stack.push({ kind: 'token', value: ';' });
-        if (entry.resourceRoot && isOpaqueBitmapPixelBody(key, descriptor.value)) {
-          const pixelValue = descriptor.value;
-          const length = opaqueBitmapPixelBodyLength(pixelValue);
-          stack.push({ kind: 'token', value: `opaque-pixel-body:${length}` });
-        } else {
-          stack.push({
-            kind: 'value',
-            value: descriptor.value,
-            resourceRoot: false,
-            depth: entry.depth + 1,
-          });
-        }
+        stack.push({
+          kind: 'value',
+          value: descriptor.value,
+          resourceRoot: false,
+          depth: entry.depth + 1,
+        });
         stack.push({
           kind: 'token',
-          value: `key:${key.length}:${key}:w${descriptor.writable === true ? 1 : 0}:c${descriptor.configurable === true ? 1 : 0}:`,
+          value: `${metadataKeyToken(key)}:w${descriptor.writable === true ? 1 : 0}:c${descriptor.configurable === true ? 1 : 0}:`,
         });
       }
     }
   }
   return `sha256:${[...hasher.digest()].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
-}
-
-function opaqueBitmapPixelBodyLength(value: unknown): number {
-  if (Array.isArray(value)) return value.length;
-  if (ArrayBuffer.isView(value)) return value.byteLength;
-  if (value instanceof ArrayBuffer) return value.byteLength;
-  if (typeof ImageData !== 'undefined' && value instanceof ImageData) return value.data.byteLength;
-  return 0;
 }
 
 function captureVerifiedBinding(
@@ -1419,6 +1628,7 @@ function collectSnapshotBitmaps(snapshot: ImageDocumentSnapshot, target: Set<Lay
     if (layer.bitmap) target.add(layer.bitmap);
     if (layer.mask) target.add(layer.mask);
   }
+  for (const bitmap of supersededOwnedBitmaps.get(snapshot) ?? []) target.add(bitmap);
 }
 
 function collectDocumentLiveBitmaps(document: ImageDocument, target: Set<LayerBitmap>): void {
@@ -1452,6 +1662,7 @@ export function disposeImageDocumentSnapshotResources(
       bitmap.height = 0;
     }
   }
+  supersededOwnedBitmaps.delete(snapshot);
   ownedNamedSnapshots.delete(snapshot);
 }
 
