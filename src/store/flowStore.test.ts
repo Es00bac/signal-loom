@@ -24,6 +24,8 @@ import {
 import { useConfirmationStore } from './confirmationStore';
 import { useFlowStore } from './flowStore';
 import { useSourceBinStore } from './sourceBinStore';
+import { useSettingsStore } from './settingsStore';
+import { useProjectUsageStore } from './projectUsageStore';
 import * as flowExecution from '../lib/flowExecution';
 import { createDefaultFunctionNodeConfig } from '../lib/functionNodes';
 import { API_REQUESTER_PERSISTED_CREDENTIAL_MARKER } from '../lib/apiRequesterCredentials';
@@ -1370,6 +1372,94 @@ describe('flow store Boolean loop persistence', () => {
     expect(verify.data).toMatchObject({ result: decision, resultType: 'boolean' });
     expect(verify.data.resultHistory?.[0]).toMatchObject({ result: decision, resultType: 'boolean' });
     expect(verify.data.envelopeItems?.[0]).toMatchObject({ value: String(decision), kind: 'boolean' });
+  });
+});
+
+describe('Function multi-result persistence', () => {
+  const originalApiKeys = useSettingsStore.getState().apiKeys;
+  const originalProviderSettings = useSettingsStore.getState().providerSettings;
+
+  beforeEach(() => {
+    useFlowStore.setState({ nodes: [], edges: [], bookmarkSidebarOpen: true });
+    useSourceBinStore.setState({
+      bins: [{ id: 'default', name: 'Source Library', items: [], collapsed: false, createdAt: 1 }],
+      dismissedSourceKeys: [],
+      sidebarOpen: true,
+      nativeSyncStatus: { state: 'idle' },
+      scratchDirectoryHandle: undefined,
+      nativeScratchDirectoryPath: undefined,
+    });
+    useProjectUsageStore.getState().restoreSnapshot(undefined);
+    useSettingsStore.setState({
+      apiKeys: { ...originalApiKeys, atlas: 'atlas-key' },
+      providerSettings: {
+        ...originalProviderSettings,
+        atlasBaseUrl: 'https://api.atlascloud.ai/api/v1',
+        batchMaxRetries: 0,
+      },
+    });
+  });
+
+  afterEach(() => {
+    useSettingsStore.setState({ apiKeys: originalApiKeys, providerSettings: originalProviderSettings });
+    useProjectUsageStore.getState().restoreSnapshot(undefined);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('stores each Function additional result once and attributes its provider usage once', async () => {
+    const config = createDefaultFunctionNodeConfig('Atlas pair');
+    config.contract.outputPorts = [{
+      id: 'image-output', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0,
+    }];
+    config.graph = {
+      version: 1,
+      nodes: [
+        createNode('atlas-prompt', 'textNode', { mode: 'prompt', prompt: 'two source-bin images' }),
+        createNode('atlas-image', 'imageGen', { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell' }),
+      ],
+      edges: [{ id: 'atlas-prompt-to-image', source: 'atlas-prompt', target: 'atlas-image' }],
+    };
+    config.outputBindings = [{
+      ...config.outputBindings[0], targetOutputPortId: 'image-output', sourceNodeId: 'atlas-image', resultType: 'image',
+    }];
+    useFlowStore.setState({ nodes: [createNode('function', 'functionNode', { functionNode: config })] });
+
+    vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('data:image/png;base64,UFJJTUFSWQ==')
+      .mockReturnValueOnce('data:image/webp;base64,QURESVRJT05BTA==');
+    vi.stubGlobal('fetch', vi.fn((url: string | URL | Request) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/model/generateImage')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: { outputs: [
+          'https://cdn.atlascloud.ai/primary.png',
+          'https://cdn.atlascloud.ai/additional.webp',
+        ] } }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response(new Blob(['image'], {
+        type: requestUrl.endsWith('.webp') ? 'image/webp' : 'image/png',
+      }), { status: 200, headers: { 'content-type': requestUrl.endsWith('.webp') ? 'image/webp' : 'image/png' } }));
+    }));
+
+    await useFlowStore.getState().runNode('function');
+
+    const items = useSourceBinStore.getState().getAllItems();
+    const functionNode = useFlowStore.getState().nodes.find((node) => node.id === 'function');
+    const ledger = useProjectUsageStore.getState().ledger.entries;
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.mimeType).sort()).toEqual(['image/png', 'image/webp']);
+    expect(functionNode?.data.functionOutputs?.['image-output']).toMatchObject({
+      resultType: 'image',
+      mimeType: 'image/png',
+      additionalResults: [{ mimeType: 'image/webp' }],
+    });
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      nodeId: 'atlas-image',
+      provider: 'atlas',
+      modelId: 'black-forest-labs/flux-schnell',
+      imageCount: 2,
+    });
   });
 });
 

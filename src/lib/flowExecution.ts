@@ -540,12 +540,19 @@ async function executeFunctionNode(
 
   if (plan.length === 0) {
     const functionOutputs: Record<string, FunctionNodeOutput> = {};
+    let primaryOutcome: FunctionExecutionOutcome | undefined;
     for (const binding of config.outputBindings) {
       const rawValue = resolveFunctionOutputFromGraph(config, binding, prepared, flowInputs);
-      functionOutputs[binding.targetOutputPortId] = serializeFunctionExecutionOutcome(config, binding, rawValue);
+      const outcome = serializeFunctionExecutionOutcome(config, binding, rawValue);
+      functionOutputs[binding.targetOutputPortId] = outcome;
+      if (binding === outputBinding) primaryOutcome = outcome;
     }
-    const primary = functionOutputs[outputBinding.targetOutputPortId];
-    return { ...withoutProviderSpend(primary), functionOutputs };
+    if (!primaryOutcome) {
+      throw new Error('Function primary output could not be resolved.');
+    }
+    // `FunctionExecutionOutcome` owns the boundary status message, whereas named
+    // outputs intentionally retain only routable values and media metadata.
+    return { ...withoutProviderSpend(primaryOutcome), functionOutputs };
   }
 
   if (!options.functionRuntime) {
@@ -2381,6 +2388,7 @@ async function executeAtlasNativeImageNode(input: {
     usage: buildImageUsage('atlas', input.modelId, {
       costUsd: estimate.costUsd,
       confidence: imageUsageConfidenceFromEstimate(estimate.confidence),
+      imageCount: materialized.length,
       notes: estimate.notes,
     }),
   };
@@ -3509,6 +3517,7 @@ function buildImageUsage(
   options: {
     costUsd?: number;
     confidence: UsageTelemetry['confidence'];
+    imageCount?: number;
     notes?: string[];
   },
 ): UsageTelemetry {
@@ -3517,7 +3526,7 @@ function buildImageUsage(
     confidence: options.confidence,
     provider,
     modelId,
-    imageCount: 1,
+    imageCount: options.imageCount ?? 1,
     costUsd: options.costUsd,
     notes: options.notes,
   };

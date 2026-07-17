@@ -1,5 +1,5 @@
 import type { Edge } from '@xyflow/react';
-import type { AppNode, EnvelopeItem, ResultType, VideoReferenceType } from '../types/flow';
+import type { AppNode, EnvelopeItem, FunctionNodeOutput, ResultType, VideoReferenceType } from '../types/flow';
 import {
   referenceSlotNumberForHandle,
   stableReferenceGuidanceJson,
@@ -234,7 +234,7 @@ export function evaluateNodeSignal(
     case 'functionNode': {
       const namedOutput = sourceHandle ? node.data.functionOutputs?.[sourceHandle] : undefined;
       if (namedOutput) {
-        return scalarSignal(namedOutput.resultType, namedOutput.result, node.id, {
+        return scalarSignal(namedOutput.resultType, deserializeFunctionOutputValue(namedOutput), node.id, {
           label: node.data.customTitle ?? node.data.functionNode?.title,
           mimeType: namedOutput.mimeType,
         });
@@ -1278,6 +1278,26 @@ function scalarSignal(
     items: options.items,
     diagnostics: options.diagnostics ?? [],
   };
+}
+
+/** Function results cross the execution boundary as strings for persistence, so restore
+ * declared scalar/container values before routing a named output to another node. */
+function deserializeFunctionOutputValue(output: FunctionNodeOutput): unknown {
+  if (output.resultType === 'number') {
+    const value = Number(output.result);
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (output.resultType === 'boolean') {
+    return output.result === 'true';
+  }
+  if (output.resultType === 'json' || output.resultType === 'list' || output.resultType === 'envelope' || output.resultType === 'package') {
+    try {
+      return JSON.parse(output.result) as unknown;
+    } catch {
+      return output.result;
+    }
+  }
+  return output.result;
 }
 
 function emptySignal(kind: FlowSignalKind, nodeId?: string, diagnostics: FlowDiagnostic[] = []): FlowSignal {

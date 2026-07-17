@@ -18,6 +18,24 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('flow signal evaluation', () => {
+  it('preserves declared scalar types when routing a named Function output', () => {
+    const functionNode = createNode({
+      id: 'function',
+      type: 'functionNode',
+      data: {
+        functionOutputs: {
+          count: { result: '42', resultType: 'number' },
+          approved: { result: 'true', resultType: 'boolean' },
+        },
+      },
+    });
+
+    expect(evaluateNodeSignal('function', [functionNode], [], new Set(), new Map([[functionNode.id, functionNode]]), 'count'))
+      .toMatchObject({ kind: 'number', value: 42, diagnostics: [] });
+    expect(evaluateNodeSignal('function', [functionNode], [], new Set(), new Map([[functionNode.id, functionNode]]), 'approved'))
+      .toMatchObject({ kind: 'boolean', value: true, diagnostics: [] });
+  });
+
   it('renders local string-template slots across casing without corrupting double braces or literal braces', () => {
     const nodes = [
       createNode({ id: 'slot-a', type: 'textNode', data: { prompt: 'alpha' } }),

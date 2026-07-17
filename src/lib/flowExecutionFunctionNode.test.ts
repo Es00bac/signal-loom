@@ -4,7 +4,7 @@ import { executeNodeRequest } from './flowExecution';
 import { buildCollapsedFunctionNode, createDefaultFunctionNodeConfig } from './functionNodes';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
 import { buildNodeExecutionContext, flowFunctionNodeExecutionRuntime } from '../store/flowStore';
-import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
+import type { AppNode, RuntimeSettingsSnapshot, UsageTelemetry } from '../types/flow';
 
 // Collapsed functions execute internal text providers through the same dynamic import the
 // canvas uses; capture the OpenAI chat call so tests can serve fresh internal text.
@@ -108,6 +108,13 @@ function imageResponse(body: string): Response {
   return new Response(new Blob([body], { type: 'image/png' }), {
     status: 200,
     headers: { 'content-type': 'image/png' },
+  });
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
   });
 }
 
@@ -305,6 +312,88 @@ describe('executeNodeRequest collapsed reusable functions', () => {
 
     expect(execution.result).toBe('FIRST');
     expect(execution.functionOutputs?.['second-output']?.result).toBe('SECOND');
+  });
+
+  it('retains provider additional media, MIME, and internal usage on a named Function output', async () => {
+    const config = createDefaultFunctionNodeConfig('Atlas image pair');
+    config.contract.outputPorts = [{
+      id: 'image-output', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0,
+    }];
+    config.graph = {
+      version: 1,
+      nodes: [
+        node('atlas-prompt', 'textNode', { mode: 'prompt', prompt: 'two exact images' }),
+        node('atlas-image', 'imageGen', {
+          provider: 'atlas',
+          modelId: 'black-forest-labs/flux-schnell',
+        }),
+      ],
+      edges: [{ id: 'atlas-prompt-to-image', source: 'atlas-prompt', target: 'atlas-image' }],
+    };
+    config.outputBindings = [{
+      ...config.outputBindings[0], targetOutputPortId: 'image-output', sourceNodeId: 'atlas-image', resultType: 'image',
+    }];
+
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:function-atlas-primary')
+      .mockReturnValueOnce('blob:function-atlas-additional');
+    const fetchMock = vi.fn((url: string | URL | Request) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/model/generateImage')) {
+        return Promise.resolve(jsonResponse({ data: { outputs: [
+          'https://cdn.atlascloud.ai/primary.png',
+          'https://cdn.atlascloud.ai/additional.webp',
+        ] } }));
+      }
+      if (requestUrl.endsWith('/primary.png')) {
+        return Promise.resolve(new Response(new Blob(['PRIMARY'], { type: 'image/png' }), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        }));
+      }
+      return Promise.resolve(new Response(new Blob(['ADDITIONAL'], { type: 'image/webp' }), {
+        status: 200,
+        headers: { 'content-type': 'image/webp' },
+      }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const attributed: Array<{ node: AppNode; usage: UsageTelemetry }> = [];
+
+    const execution = await executeNodeRequest(functionNodeFor(config), {
+      prompt: 'two exact images', config: DEFAULT_EXECUTION_CONFIG,
+    }, {
+      ...baseSettings,
+      apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+      providerSettings: {
+        ...baseSettings.providerSettings,
+        atlasBaseUrl: 'https://api.atlascloud.ai/api/v1',
+        batchMaxRetries: 0,
+      },
+    }, undefined, {
+      functionRuntime: flowFunctionNodeExecutionRuntime,
+      onInternalUsage: (entry) => attributed.push(entry),
+    });
+
+    const output = execution.functionOutputs?.['image-output'];
+    expect(createObjectUrl).toHaveBeenCalledTimes(2);
+    expect(execution).toMatchObject({
+      result: 'blob:function-atlas-primary',
+      resultType: 'image',
+      mimeType: 'image/png',
+      additionalResults: [{ result: 'blob:function-atlas-additional', mimeType: 'image/webp' }],
+    });
+    expect(output).toMatchObject({
+      result: 'blob:function-atlas-primary',
+      resultType: 'image',
+      mimeType: 'image/png',
+      additionalResults: [{ result: 'blob:function-atlas-additional', mimeType: 'image/webp' }],
+    });
+    expect(execution.usageAttributions).toHaveLength(1);
+    expect(attributed).toHaveLength(1);
+    expect(attributed[0]).toMatchObject({
+      node: { id: 'atlas-image', type: 'imageGen' },
+      usage: { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell', imageCount: 2 },
+    });
   });
 
   it('passes the outer abort signal to an in-flight internal Stability request', async () => {

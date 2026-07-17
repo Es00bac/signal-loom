@@ -4872,6 +4872,7 @@ export const useFlowStore = create<FlowState>()(
                 result: firstItem.value,
                 resultType: execution.resultType,
                 resultMimeType: firstItem.mimeType,
+                functionOutputs: execution.functionOutputs,
                 envelopeItems,
                 resultHistory: multiAttemptState.attempts,
                 selectedResultId: multiAttemptState.selectedAttemptId,
