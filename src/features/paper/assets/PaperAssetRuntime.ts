@@ -44,7 +44,7 @@ export async function buildPaperDocumentExactManagedFontOutput(document: PaperDo
  */
 export async function materializePaperDocumentAssetUrls(
   document: PaperDocument,
-  sourceItems: readonly Pick<SourceBinLibraryItem, 'id' | 'assetUrl'>[] = [],
+  sourceItems: readonly Pick<SourceBinLibraryItem, 'id' | 'assetUrl' | 'mimeType'>[] = [],
 ): Promise<PaperDocument> {
   const sourceById = new Map(sourceItems.map((item) => [item.id, item]));
   const [pages, parentPages] = await Promise.all([
@@ -62,16 +62,20 @@ export async function materializePaperDocumentAssetUrls(
 
 async function materializePaperFrameContainer<T extends { frames: PaperFrame[] }>(
   container: T,
-  sourceById: ReadonlyMap<string, Pick<SourceBinLibraryItem, 'id' | 'assetUrl'>>,
+  sourceById: ReadonlyMap<string, Pick<SourceBinLibraryItem, 'id' | 'assetUrl' | 'mimeType'>>,
 ): Promise<{ value: T; changed: boolean }> {
   let changed = false;
   const frames = await Promise.all(container.frames.map(async (frame) => {
     const asset = frame.asset;
     if (!asset) return frame;
-    let url = resolvePaperFrameAssetUrl(
-      asset,
-      asset.sourceBinItemId ? sourceById.get(asset.sourceBinItemId) : undefined,
-    );
+    const linkedSourceItem = asset.sourceBinItemId ? sourceById.get(asset.sourceBinItemId) : undefined;
+    let url = resolvePaperFrameAssetUrl(asset, linkedSourceItem);
+    // An in-place Source Library replacement changes the payload without rewriting persisted frame
+    // metadata. When the export copy adopts the item's current URL it must adopt the item's current
+    // media type with it, or downstream whole-document classification trusts a stale MIME.
+    const currentSourceMimeType = url && url === linkedSourceItem?.assetUrl
+      ? linkedSourceItem.mimeType
+      : undefined;
     if (!url && asset.locator?.kind === 'managed') {
       const record = await paperAssetRepository.get(asset.locator.ref.id);
       if (!record) {
@@ -92,6 +96,7 @@ async function materializePaperFrameContainer<T extends { frames: PaperFrame[] }
       ...frame,
       asset: {
         ...asset,
+        ...(currentSourceMimeType ? { mimeType: currentSourceMimeType } : {}),
         locator: { kind: 'external' as const, url },
       },
     };

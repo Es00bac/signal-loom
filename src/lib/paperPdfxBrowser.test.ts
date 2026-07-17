@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   exportPdfx: vi.fn(),
   buildPage: vi.fn(),
   rasterize: vi.fn(),
+  sourceItems: [] as Array<{ id: string; label: string; kind: string; mimeType?: string; assetUrl?: string; createdAt: number }>,
 }));
 
 vi.mock('./paperPageFlattenExport', () => ({
@@ -23,13 +24,16 @@ vi.mock('../features/paper/assets/PaperAssetRuntime', () => ({
   paperAssetRepository: { get: vi.fn() },
 }));
 vi.mock('../store/sourceBinStore', () => ({
-  useSourceBinStore: { getState: () => ({ getAllItems: () => [] }) },
+  useSourceBinStore: { getState: () => ({ getAllItems: () => mocks.sourceItems }) },
 }));
 
 import { exportPaperDocumentToPdfxInBrowser } from './paperPdfxBrowser';
 
 describe('exportPaperDocumentToPdfxInBrowser placed-document boundary', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sourceItems = [];
+  });
 
   it('returns the same typed capability outcome before profile/materialization/raster work', async () => {
     const base = createDefaultPaperDocument({ title: 'PDF/X placed PDF boundary' });
@@ -44,5 +48,42 @@ describe('exportPaperDocumentToPdfxInBrowser placed-document boundary', () => {
     expect(mocks.buildPage).not.toHaveBeenCalled();
     expect(mocks.rasterize).not.toHaveBeenCalled();
     expect(mocks.exportPdfx).not.toHaveBeenCalled();
+  });
+
+  it('blocks a linked frame whose current Source Library item is now a PDF before profile or materialization work', async () => {
+    mocks.sourceItems = [{
+      id: 'replaced', label: 'Panel art', kind: 'document', mimeType: 'application/pdf',
+      assetUrl: 'blob:https://app.test/replaced-pdf', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Current source PDF boundary' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Panel art', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+      asset: { sourceBinItemId: 'replaced', label: 'panel.png', kind: 'image', mimeType: 'image/png' },
+    });
+
+    await expect(exportPaperDocumentToPdfxInBrowser(document, { standard: 'pdf-x-4' })).rejects.toThrow(PaperPlacedDocumentRasterizationError);
+    expect(mocks.resolveProfile).not.toHaveBeenCalled();
+    expect(mocks.materialize).not.toHaveBeenCalled();
+    expect(mocks.exportPdfx).not.toHaveBeenCalled();
+  });
+
+  it('does not falsely block stale persisted PDF metadata when the current linked item is an image', async () => {
+    mocks.sourceItems = [{
+      id: 'replaced', label: 'Reference art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'blob:https://app.test/current-image', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Current source image pass' });
+    const { document } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'document', label: 'Reference.pdf', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+      asset: { sourceBinItemId: 'replaced', label: 'Reference.pdf', kind: 'document', mimeType: 'application/pdf' },
+    });
+    mocks.resolveProfile.mockResolvedValue({ status: 'ready', bytes: new Uint8Array([1]) });
+    mocks.materialize.mockResolvedValue(document);
+    const exported = { bytes: new Uint8Array([2]) };
+    mocks.exportPdfx.mockResolvedValue(exported);
+
+    await expect(exportPaperDocumentToPdfxInBrowser(document, { standard: 'pdf-x-4' })).resolves.toBe(exported);
+    expect(mocks.materialize).toHaveBeenCalledWith(document, mocks.sourceItems);
+    expect(mocks.exportPdfx).toHaveBeenCalledTimes(1);
   });
 });

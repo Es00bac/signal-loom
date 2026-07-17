@@ -9,6 +9,7 @@ import {
   PaperPlacedDocumentRasterizationError,
 } from './paperPlacedDocumentRasterization';
 import { buildFlattenedPaperPageSvgExport, buildFlattenedPaperPageSvgExportWithEmbeddedAssets } from './paperPageFlattenExport';
+import { buildPaperPlacedSourceItemMimeTypeLookup } from './paperPlacedPdf';
 import { buildPaperWebcomicImageDataPages } from './paperWebcomicExport';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -94,6 +95,51 @@ describe('placed-document rasterization capability boundary', () => {
     await expect(buildPaperCbzRasterExport(document, { rasterize })).rejects.toThrow(PaperPlacedDocumentRasterizationError);
     await expect(buildPaperKdpImageArchiveExport(document, { rasterize })).rejects.toThrow(PaperPlacedDocumentRasterizationError);
     expect(rasterize).not.toHaveBeenCalled();
+  });
+
+  it('rejects an uppercase DATA: scheme PDF in a mixed document before any page raster callback', async () => {
+    const first = createDefaultPaperDocument({ title: 'Mixed scheme casing' });
+    const second = { ...first.pages[0], id: 'page-2', pageNumber: 2, frames: [] };
+    const withSecondPage = { ...first, pages: [first.pages[0], second] };
+    const withImage = addFrameToPaperPage(withSecondPage, first.pages[0].id, {
+      kind: 'image', label: 'Page one art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 50,
+      asset: { label: 'Page one art', kind: 'image', mimeType: 'image/png', locator: { kind: 'external', url: 'data:image/png;base64,iVBORw0KGgo=' } },
+    }).document;
+    const document = addFrameToPaperPage(withImage, second.id, {
+      kind: 'image', label: 'Shouted casing.jpg', xMm: 10, yMm: 10, widthMm: 50, heightMm: 50,
+      asset: { label: 'Shouted casing.jpg', kind: 'image', mimeType: 'image/png', locator: { kind: 'external', url: 'DATA:APPLICATION/X-PDF;base64,JVBERi0=' } },
+    }).document;
+    const rasterize = vi.fn();
+
+    expect(collectPaperPlacedDocumentRasterizationIssues(document)).toMatchObject([
+      { pageNumber: 2, mimeType: 'application/x-pdf', isPdf: true },
+    ]);
+    await expect(buildPaperWebcomicImageDataPages(document, { rasterize })).rejects.toThrow(PaperPlacedDocumentRasterizationError);
+    await expect(buildPaperCbzRasterExport(document, { rasterize })).rejects.toThrow(PaperPlacedDocumentRasterizationError);
+    await expect(buildPaperKdpImageArchiveExport(document, { rasterize })).rejects.toThrow(PaperPlacedDocumentRasterizationError);
+    expect(rasterize).not.toHaveBeenCalled();
+  });
+
+  it('classifies linked frames by the current Source Library item in both replacement directions', () => {
+    const base = createDefaultPaperDocument({ title: 'Replaced source links' });
+    const staleImage = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Replaced with PDF', xMm: 10, yMm: 10, widthMm: 40, heightMm: 30,
+      asset: { sourceBinItemId: 'now-pdf', label: 'panel.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    const document = addFrameToPaperPage(staleImage, staleImage.pages[0].id, {
+      kind: 'document', label: 'Replaced with image', xMm: 60, yMm: 10, widthMm: 40, heightMm: 30,
+      asset: { sourceBinItemId: 'now-image', label: 'reference.pdf', kind: 'document', mimeType: 'application/pdf' },
+    }).document;
+    const resolveSourceItemMimeType = buildPaperPlacedSourceItemMimeTypeLookup([
+      { id: 'now-pdf', mimeType: 'application/pdf', assetUrl: 'blob:https://app.test/now-pdf' },
+      { id: 'now-image', mimeType: 'image/jpeg', assetUrl: 'blob:https://app.test/now-image' },
+    ]);
+
+    const issues = collectPaperPlacedDocumentRasterizationIssues(document, undefined, { resolveSourceItemMimeType });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ frameLabel: 'panel.png', mimeType: 'application/pdf', isPdf: true });
+    expect(() => assertPaperDocumentSupportsRasterization(document, undefined, { resolveSourceItemMimeType }))
+      .toThrow(PaperPlacedDocumentRasterizationError);
   });
 
   it('keeps compatible vector/live-print HTML available with the native PDF object placement', () => {

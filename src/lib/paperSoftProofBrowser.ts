@@ -20,6 +20,7 @@ import {
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
 import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
+import { buildPaperPlacedSourceItemMimeTypeLookup } from './paperPlacedPdf';
 
 export interface SoftProofPreviewOptions extends SoftProofOptions {
   /** Preview render resolution. Lower than print DPI keeps the round-trip fast (default 150). */
@@ -41,7 +42,12 @@ export async function softProofPaperPageInBrowser(
   pageId: string,
   options: SoftProofPreviewOptions = {},
 ): Promise<SoftProofPreviewResult> {
-  assertPaperDocumentSupportsRasterization(document, [pageId]);
+  // The current Source Library items are authoritative for linked frames whose persisted metadata
+  // predates an in-place source replacement.
+  const sourceItems = useSourceBinStore.getState().getAllItems();
+  assertPaperDocumentSupportsRasterization(document, [pageId], {
+    resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
+  });
   const outputProfile = await resolveExactPaperOutputProfile({
     profiles: document.managedIccProfiles ?? [],
     getAsset: (id) => paperAssetRepository.get(id),
@@ -57,7 +63,7 @@ export async function softProofPaperPageInBrowser(
   return usingOwnedPaperResource(proof, async () => {
     const materializedDocument = await materializePaperDocumentAssetUrls(
       document,
-      useSourceBinStore.getState().getAllItems(),
+      sourceItems,
     );
     const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
     const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exact.document, pageId, {

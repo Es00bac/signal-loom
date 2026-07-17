@@ -53,6 +53,31 @@ describe('paperPreflight', () => {
       detail: expect.stringContaining('Print HTML/live print'),
     }));
   });
+  it('trusts the current Source Library item over stale persisted frame MIME in both replacement directions', () => {
+    const capabilityCode = 'paper-placed-document-rasterization-unsupported';
+    const staleImageBase = createDefaultPaperDocument({ title: 'Replaced with PDF preflight' });
+    const { document: staleImageDocument } = addFrameToPaperPage(staleImageBase, staleImageBase.pages[0].id, {
+      kind: 'image', xMm: 10, yMm: 10, widthMm: 70, heightMm: 40, label: 'Linked art',
+      asset: { sourceBinItemId: 'linked-item', label: 'panel.png', kind: 'image', mimeType: 'image/png' },
+    });
+    const stalePdfBase = createDefaultPaperDocument({ title: 'Replaced with image preflight' });
+    const { document: stalePdfDocument } = addFrameToPaperPage(stalePdfBase, stalePdfBase.pages[0].id, {
+      kind: 'document', xMm: 10, yMm: 10, widthMm: 70, heightMm: 40, label: 'Reference.pdf',
+      asset: { sourceBinItemId: 'linked-item', label: 'Reference.pdf', kind: 'document', mimeType: 'application/pdf' },
+    });
+
+    const replacedWithPdf = analyzePaperPreflight(staleImageDocument, [{
+      id: 'linked-item', label: 'Linked art', kind: 'document', mimeType: 'application/pdf',
+      assetUrl: 'blob:https://app.test/current-pdf', createdAt: 1,
+    }]);
+    const replacedWithImage = analyzePaperPreflight(stalePdfDocument, [{
+      id: 'linked-item', label: 'Reference art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'blob:https://app.test/current-image', createdAt: 1,
+    }]);
+
+    expect(replacedWithPdf.issues).toContainEqual(expect.objectContaining({ severity: 'error', code: capabilityCode }));
+    expect(replacedWithImage.issues.filter((issue) => issue.code === capabilityCode)).toHaveLength(0);
+  });
   it('flags missing image links, empty text, bleed, margin, and comic page-count risks', () => {
     const base = updatePaperDocumentSetup(createDefaultPaperDocument({ title: 'Preflight', preset: 'comic-book' }), {
       bleedMm: 0,

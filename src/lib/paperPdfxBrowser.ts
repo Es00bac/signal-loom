@@ -24,6 +24,7 @@ import {
 } from '../features/paper/assets/PaperAssetRuntime';
 import { useSourceBinStore } from '../store/sourceBinStore';
 import { assertPaperDocumentSupportsRasterization } from './paperPlacedDocumentRasterization';
+import { buildPaperPlacedSourceItemMimeTypeLookup } from './paperPlacedPdf';
 
 async function loadManagedPaperFont(assetRef: BinaryAssetRef): Promise<Uint8Array> {
   const record = await paperAssetRepository.get(assetRef.id);
@@ -39,8 +40,13 @@ export async function exportPaperDocumentToPdfxInBrowser(
   options: Omit<PaperPdfxPipelineOptions, 'outputProfile'>,
 ): Promise<PdfxExportResult> {
   // PDF/X may flatten only selected groups, but a placed PDF has no trustworthy browser raster
-  // adapter. Stop before profile/materialization work so no mixed-page handoff is created.
-  assertPaperDocumentSupportsRasterization(document);
+  // adapter. Stop before profile/materialization work so no mixed-page handoff is created. The
+  // current Source Library items are authoritative for linked frames whose persisted metadata
+  // predates an in-place source replacement.
+  const sourceItems = useSourceBinStore.getState().getAllItems();
+  assertPaperDocumentSupportsRasterization(document, undefined, {
+    resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
+  });
   const outputProfile = await resolveExactPaperOutputProfile({
     profiles: document.managedIccProfiles ?? [],
     getAsset: (id) => paperAssetRepository.get(id),
@@ -51,7 +57,7 @@ export async function exportPaperDocumentToPdfxInBrowser(
   }
   const materializedDocument = await materializePaperDocumentAssetUrls(
     document,
-    useSourceBinStore.getState().getAllItems(),
+    sourceItems,
   );
   const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
   const exportDocument = exact.document;

@@ -100,7 +100,6 @@ import {
   publishRasterizedPaperPageSourcePayload,
   publishRasterizedPaperPagesSourcePayloads,
 } from '../../../lib/paperPageFlattenExport';
-import { assertPaperDocumentSupportsRasterization } from '../../../lib/paperPlacedDocumentRasterization';
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
 import { paperEmphasisMarkToCss, tokenizePaperInlineText } from '../../../lib/paperJapaneseText';
@@ -356,6 +355,7 @@ import {
   resolvePaperPanelMode,
 } from './PaperWorkspaceUtils';
 import {
+  assertPaperDocumentSupportsRasterizationWithCurrentSources,
   beginGuideDragFromRuler,
   bubbleHandlePatch,
   buildPaperEyedropperFrameColorPatch,
@@ -1414,7 +1414,7 @@ export function PaperWorkspace() {
             void exportPaperPdfxAndSave(document, setStatus);
           } else {
             try {
-              assertPaperDocumentSupportsRasterization(document);
+              assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
             } catch (error) {
               setStatus(error instanceof Error ? error.message : 'PDF export is unavailable.');
               return;
@@ -1539,7 +1539,7 @@ export function PaperWorkspace() {
       case 'paper:export-cbz': {
         if (!await confirmPreflightBeforeExport('raster CBZ export', { rasterTarget: true })) return;
         try {
-          assertPaperDocumentSupportsRasterization(document);
+          assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'CBZ export is unavailable.';
           setStatus(`CBZ export failed: ${message}`);
@@ -3529,7 +3529,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
   ): Promise<SourceBinLibraryItem> => {
     // Complete-document capability preflight must happen before source/repository asset reads or
     // the first Source item write, so a PDF on page two cannot leak page one.
-    assertPaperDocumentSupportsRasterization(document, [pageId]);
+    assertPaperDocumentSupportsRasterizationWithCurrentSources(document, [pageId]);
     const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
     const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
     const item = await publishRasterizedPaperPageSourcePayload(exact.document, pageId, {
@@ -3570,7 +3570,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       if (label === null) return;
       const envelopeLabel = label.trim() || `${document.title} flattened pages`;
       const envelopeId = `paper-envelope-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
-      assertPaperDocumentSupportsRasterization(document);
+      assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
       setStatus(`Flattening ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} into "${envelopeLabel}"...`);
       const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
       const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
@@ -3597,7 +3597,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
 
   const runWebcomicImageExport = useCallback(async (settings: PaperWebcomicExportSettings) => {
     try {
-      assertPaperDocumentSupportsRasterization(document);
+      assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Paper page image export is unavailable.';
       setStatus(message);
@@ -3636,7 +3636,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
 
   const runKdpImageExport = useCallback(async (settings: PaperKdpExportSettings) => {
     try {
-      assertPaperDocumentSupportsRasterization(document);
+      assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'KDP raster export is unavailable.';
       setStatus(message);

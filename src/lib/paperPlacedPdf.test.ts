@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PaperFrame } from '../types/paper';
 import { addFrameToPaperPage, createDefaultPaperDocument, exportPaperDocumentToPrintHtml } from './paperDocument';
-import { classifyPaperPlacedPdf } from './paperPlacedPdf';
+import { buildPaperPlacedSourceItemMimeTypeLookup, classifyPaperPlacedPdf } from './paperPlacedPdf';
 
 function placedFrame(overrides: Partial<Pick<PaperFrame, 'kind' | 'label' | 'asset'>> = {}): Pick<PaperFrame, 'kind' | 'label' | 'asset'> {
   return {
@@ -75,6 +75,23 @@ describe('placed Paper asset MIME precedence', () => {
     expect(classification).toMatchObject({ isPdf: false, isImage: false, blocksRasterization: false });
   });
 
+  it('classifies an uppercase DATA: scheme PDF exactly like its lowercase form', () => {
+    const classification = classifyPaperPlacedPdf(placedFrame({
+      label: 'thumbnail.jpg',
+      asset: { label: 'thumbnail.jpg', kind: 'image', locator: { kind: 'external', url: 'DATA:APPLICATION/X-PDF;base64,JVBERi0=' } },
+    }));
+
+    expect(classification).toMatchObject({ isPdf: true, isImage: false, blocksRasterization: true, mimeType: 'application/x-pdf', canEmbedForLivePrint: true });
+  });
+
+  it('keeps a mixed-case data: scheme image on the ordinary image path', () => {
+    const classification = classifyPaperPlacedPdf(placedFrame({
+      asset: { label: 'retained-reference.pdf', kind: 'image', format: 'pdf', locator: { kind: 'external', url: 'Data:IMAGE/PNG;base64,iVBORw0KGgo=' } },
+    }));
+
+    expect(classification).toMatchObject({ isPdf: false, isImage: true, blocksRasterization: false, mimeType: 'image/png' });
+  });
+
   it('chooses image versus PDF live-print elements by resolved MIME, not the retained filename', () => {
     const base = createDefaultPaperDocument({ title: 'MIME print elements' });
     const png = addFrameToPaperPage(base, base.pages[0].id, {
@@ -90,5 +107,56 @@ describe('placed Paper asset MIME precedence', () => {
     expect(html).toContain('<img alt="old-reference.pdf" src="data:image/png;base64,iVBORw0KGgo="');
     expect(html).not.toContain('<object data="data:image/png;base64,iVBORw0KGgo="');
     expect(html).toContain('<object data="data:application/pdf;base64,JVBERi0=" type="application/pdf"');
+  });
+});
+
+describe('current linked Source Library item authority', () => {
+  const resolveSourceItemMimeType = buildPaperPlacedSourceItemMimeTypeLookup([
+    { id: 'replaced-with-pdf', mimeType: 'application/pdf', assetUrl: 'blob:https://app.test/current-pdf' },
+    { id: 'replaced-with-image', mimeType: 'image/png', assetUrl: 'blob:https://app.test/current-image' },
+    { id: 'uppercase-data', assetUrl: 'DATA:APPLICATION/PDF;base64,JVBERi0=' },
+    { id: 'undetermined', mimeType: 'application/octet-stream', assetUrl: 'blob:https://app.test/opaque' },
+  ]);
+
+  it('blocks a current PDF source even when persisted frame metadata still claims an image', () => {
+    const classification = classifyPaperPlacedPdf(placedFrame({
+      label: 'panel-art.png',
+      asset: {
+        sourceBinItemId: 'replaced-with-pdf', label: 'panel-art.png', kind: 'image', mimeType: 'image/png',
+        locator: { kind: 'external', url: 'data:image/png;base64,iVBORw0KGgo=' },
+      },
+    }), { resolveSourceItemMimeType });
+
+    expect(classification).toMatchObject({ isPdf: true, isImage: false, blocksRasterization: true, mimeType: 'application/pdf' });
+  });
+
+  it('keeps a current image source on the image path even when persisted frame metadata claims a PDF', () => {
+    const classification = classifyPaperPlacedPdf(placedFrame({
+      label: 'reference.pdf',
+      asset: {
+        sourceBinItemId: 'replaced-with-image', label: 'reference.pdf', kind: 'document', mimeType: 'application/pdf',
+        locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' },
+      },
+    }), { resolveSourceItemMimeType });
+
+    expect(classification).toMatchObject({ isPdf: false, isImage: true, blocksRasterization: false, mimeType: 'image/png' });
+  });
+
+  it('resolves the current item media type from an uppercase data-URL payload header', () => {
+    expect(resolveSourceItemMimeType('uppercase-data')).toBe('application/pdf');
+  });
+
+  it('falls back to persisted metadata when the link is dangling or the current type is undetermined', () => {
+    expect(resolveSourceItemMimeType('missing-item')).toBeUndefined();
+    expect(resolveSourceItemMimeType('undetermined')).toBeUndefined();
+
+    const classification = classifyPaperPlacedPdf(placedFrame({
+      asset: {
+        sourceBinItemId: 'missing-item', label: 'kept.pdf', kind: 'document', mimeType: 'application/pdf',
+        locator: { kind: 'external', url: 'data:application/pdf;base64,JVBERi0=' },
+      },
+    }), { resolveSourceItemMimeType });
+
+    expect(classification).toMatchObject({ isPdf: true, blocksRasterization: true, mimeType: 'application/pdf' });
   });
 });

@@ -21,6 +21,15 @@ import {
   samplePixelColorFromCanvas,
   verticesForEditableFrame,
 } from './PaperWorkspaceUtils';
+import { materializePaperDocumentAssetUrls } from '../../features/paper/assets/PaperAssetRuntime';
+
+const sourceStoreMocks = vi.hoisted(() => ({
+  items: [] as Array<{ id: string; label: string; kind: string; mimeType?: string; assetUrl?: string; createdAt: number }>,
+}));
+
+vi.mock('../../store/sourceBinStore', () => ({
+  useSourceBinStore: { getState: () => ({ getAllItems: () => sourceStoreMocks.items }) },
+}));
 
 type DrawImageArgs = Parameters<CanvasRenderingContext2D['drawImage']>;
 
@@ -825,5 +834,106 @@ describe('PaperWorkspaceUtils editable frame vertices', () => {
       modifierActive: true,
       vertexInteractionActive: false,
     })).toBe(false);
+  });
+});
+
+describe('current-source placed document boundary for shipping export routes', () => {
+  beforeEach(() => {
+    sourceStoreMocks.items = [];
+  });
+
+  it('blocks the native raster PDF route on a current-PDF linked source before chooser, canvas, or status work', async () => {
+    sourceStoreMocks.items = [{
+      id: 'replaced', label: 'Panel art', kind: 'document', mimeType: 'application/pdf',
+      assetUrl: 'blob:https://app.test/replaced-pdf', createdAt: 1,
+    }];
+    const choosePaperPdfExportPath = vi.fn();
+    const exportPaperPdf = vi.fn();
+    const createElement = vi.fn();
+    vi.stubGlobal('window', { signalLoomNative: { choosePaperPdfExportPath, exportPaperPdf } });
+    vi.stubGlobal('document', { createElement });
+    const base = createDefaultPaperDocument({ title: 'Replaced link blocks' });
+    const { document: paperDoc } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Panel art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'replaced', label: 'panel.png', kind: 'image', mimeType: 'image/png' },
+    });
+    const statuses: string[] = [];
+
+    await expect(exportPaperPdfDocument(paperDoc, (status) => statuses.push(status))).rejects.toThrow('cannot rasterize');
+    expect(choosePaperPdfExportPath).not.toHaveBeenCalled();
+    expect(exportPaperPdf).not.toHaveBeenCalled();
+    expect(createElement).not.toHaveBeenCalled();
+    expect(statuses).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it('stops the strict PDF/X, KDP PDF, and webcomic image routes on a current-PDF linked source before their work begins', async () => {
+    sourceStoreMocks.items = [{
+      id: 'replaced', label: 'Panel art', kind: 'document', mimeType: 'application/pdf',
+      assetUrl: 'blob:https://app.test/replaced-pdf', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Replaced link strict' });
+    const { document: paperDoc } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Panel art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'replaced', label: 'panel.png', kind: 'image', mimeType: 'image/png' },
+    });
+    const exportPdfx = vi.fn(async () => {
+      throw new Error('strict export must not run');
+    });
+    const downloadPdf = vi.fn();
+    const chooseDirectory = vi.fn();
+    vi.stubGlobal('window', {
+      signalLoomNative: { choosePaperImageExportDirectory: chooseDirectory, exportPaperImages: vi.fn() },
+    });
+    const statuses: string[] = [];
+
+    await exportPaperPdfxAndSave(paperDoc, (status) => statuses.push(status), { exportPdfx, downloadPdf });
+    expect(statuses.at(-1)).toContain('cannot rasterize');
+    await exportPaperKdpPdfAndSave(paperDoc, (status) => statuses.push(status), { exportPdfx, downloadPdf });
+    expect(statuses.at(-1)).toContain('cannot rasterize');
+    await expect(exportPaperWebcomicImages(paperDoc, (status) => statuses.push(status), { format: 'png' }))
+      .rejects.toThrow('cannot rasterize');
+    expect(exportPdfx).not.toHaveBeenCalled();
+    expect(downloadPdf).not.toHaveBeenCalled();
+    expect(chooseDirectory).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('does not falsely block a stale persisted PDF frame whose current linked item is an image', async () => {
+    // A data-URL-backed item keeps the whole route runnable in Node; blob-backed replacement is
+    // covered by the PaperAssetRuntime MIME-stamp test and the PDF/X browser boundary test.
+    sourceStoreMocks.items = [{
+      id: 'replaced', label: 'Reference art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,iVBORw0KGgo=', createdAt: 1,
+    }];
+    const choosePaperPdfExportPath = vi.fn().mockResolvedValue({ canceled: false, filePath: '/tmp/Replaced-Link.pdf' });
+    const exportPaperPdf = vi.fn().mockResolvedValue({ canceled: false, filePath: '/tmp/Replaced-Link.pdf', bytes: 2048 });
+    vi.stubGlobal('window', { signalLoomNative: { choosePaperPdfExportPath, exportPaperPdf } });
+    vi.stubGlobal('Image', class {
+      decoding = 'sync';
+      src = '';
+      decode = vi.fn().mockResolvedValue(undefined);
+    });
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({
+        width: 0,
+        height: 0,
+        getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+        toDataURL: vi.fn(() => 'data:image/png;base64,replaced-link'),
+      })),
+    });
+    const base = createDefaultPaperDocument({ title: 'Replaced link passes' });
+    const { document: paperDoc } = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Reference art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'replaced', label: 'reference.pdf', kind: 'image', mimeType: 'application/pdf' },
+    });
+    const outputDocument = await materializePaperDocumentAssetUrls(paperDoc, sourceStoreMocks.items);
+    const statuses: string[] = [];
+
+    const outcome = await exportPaperPdfDocument(outputDocument, (status) => statuses.push(status));
+
+    expect(outcome.state).toBe('success');
+    expect(exportPaperPdf).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });

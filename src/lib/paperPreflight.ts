@@ -8,6 +8,7 @@ import { resolveTextFace } from './paperFontLibrary';
 import { hasPaperAssetReference } from './paperAssetReferences';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
 import { collectPaperPlacedDocumentRasterizationIssues } from './paperPlacedDocumentRasterization';
+import { buildPaperPlacedSourceItemMimeTypeLookup } from './paperPlacedPdf';
 
 export type PaperPreflightSeverity = 'error' | 'warning' | 'info';
 export type PaperPreflightProfileId = 'generic-pdf' | 'comic-print' | 'manga-print' | 'webtoon';
@@ -152,8 +153,11 @@ export function analyzePaperPreflight(
 
   // Live print can preserve a PDF through <object>, but every browser raster route shares an
   // image-only adapter. Surface that boundary here, with the exact page/frame remediation, rather
-  // than allowing a late HTMLImageElement decode failure during export.
-  for (const capabilityIssue of collectPaperPlacedDocumentRasterizationIssues(document)) {
+  // than allowing a late HTMLImageElement decode failure during export. The current Source Library
+  // items decide the media type of linked frames whose persisted metadata predates a replacement.
+  for (const capabilityIssue of collectPaperPlacedDocumentRasterizationIssues(document, undefined, {
+    resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
+  })) {
     issues.push(issue(
       'error',
       capabilityIssue.isPdf ? 'Placed PDF cannot be flattened in this build' : 'Placed document cannot be flattened in this build',

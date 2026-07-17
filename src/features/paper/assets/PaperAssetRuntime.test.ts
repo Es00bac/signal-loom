@@ -56,6 +56,35 @@ describe('materializePaperDocumentAssetUrls', () => {
     });
   });
 
+  it('adopts the current source item media type with its URL when the persisted frame MIME is stale', async () => {
+    const base = createDefaultPaperDocument({ title: 'Replaced source media type' });
+    const withStaleImage = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', xMm: 10, yMm: 10, widthMm: 40, heightMm: 30,
+      asset: { sourceBinItemId: 'now-pdf', label: 'panel.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    const { document } = addFrameToPaperPage(withStaleImage, withStaleImage.pages[0].id, {
+      kind: 'document', xMm: 60, yMm: 10, widthMm: 40, heightMm: 30,
+      asset: { sourceBinItemId: 'now-image', label: 'reference.pdf', kind: 'document', mimeType: 'application/pdf' },
+    });
+
+    const output = await materializePaperDocumentAssetUrls(document, [
+      { id: 'now-pdf', assetUrl: 'blob:https://app.test/now-pdf', mimeType: 'application/pdf' },
+      { id: 'now-image', assetUrl: 'blob:https://app.test/now-image', mimeType: 'image/jpeg' },
+    ]);
+
+    const [staleImageFrame, stalePdfFrame] = output.pages[0].frames;
+    expect(staleImageFrame.asset).toMatchObject({
+      mimeType: 'application/pdf',
+      locator: { kind: 'external', url: 'blob:https://app.test/now-pdf' },
+    });
+    expect(stalePdfFrame.asset).toMatchObject({
+      mimeType: 'image/jpeg',
+      locator: { kind: 'external', url: 'blob:https://app.test/now-image' },
+    });
+    expect(document.pages[0].frames[0].asset?.mimeType).toBe('image/png');
+    expect(document.pages[0].frames[1].asset?.mimeType).toBe('application/pdf');
+  });
+
   it('materializes managed art on parent pages for inherited output', async () => {
     const record = await createBinaryAssetRecord(new Uint8Array([10, 11, 12]), { mimeType: 'image/png' });
     await paperAssetRepository.put(record);

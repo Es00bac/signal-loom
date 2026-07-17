@@ -1,3 +1,4 @@
+import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperFrame } from '../types/paper';
 
 /** PDF MIME types commonly emitted by browsers, DAMs, and older Acrobat integrations. */
@@ -18,20 +19,35 @@ export interface PaperPlacedPdfClassification {
   canEmbedForLivePrint: boolean;
 }
 
+export interface PaperPlacedDocumentClassificationOptions {
+  /**
+   * Definitive media type of the CURRENT Source Library item behind a `sourceBinItemId` link.
+   * An in-place source replacement changes the payload without rewriting persisted frame state,
+   * so a decisive current-source MIME outranks every persisted frame metadata field.
+   */
+  resolveSourceItemMimeType?: (sourceBinItemId: string) => string | undefined;
+}
+
 /**
  * Classify only bounded metadata. In particular, never decode a data URL or inspect its payload:
  * the media type is confined to the short header before its first comma.
  */
-export function classifyPaperPlacedPdf(frame: Pick<PaperFrame, 'kind' | 'label' | 'asset'>): PaperPlacedPdfClassification {
+export function classifyPaperPlacedPdf(
+  frame: Pick<PaperFrame, 'kind' | 'label' | 'asset'>,
+  options?: PaperPlacedDocumentClassificationOptions,
+): PaperPlacedPdfClassification {
   if (frame.kind !== 'document' && frame.kind !== 'image') {
     return { isPdf: false, isImage: false, blocksRasterization: false, canEmbedForLivePrint: false };
   }
 
   const asset = frame.asset;
-  // The managed reference is content-addressed and verified before export materialization. A valid
-  // data URL carries the media type of its concrete payload. Both outrank loose asset metadata;
-  // all three outrank retained format/name hints from an asset that has since been replaced.
+  // The current linked Source Library item is what materialization will actually hand to output
+  // work, so its media type outranks everything the frame persisted. Below it, the managed
+  // reference is content-addressed and verified before export materialization, and a valid data
+  // URL carries the media type of its concrete payload. All of these outrank loose asset metadata
+  // and retained format/name hints from an asset that has since been replaced.
   const resolvedMimeType = [
+    asset?.sourceBinItemId ? normalizeMimeType(options?.resolveSourceItemMimeType?.(asset.sourceBinItemId)) : undefined,
     normalizeMimeType(asset?.locator?.kind === 'managed' ? asset.locator.ref.mimeType : undefined),
     mimeTypeFromBoundedDataUrl(asset?.locator?.kind === 'external' ? asset.locator.url : undefined),
     normalizeMimeType(asset?.mimeType),
@@ -53,6 +69,29 @@ export function classifyPaperPlacedPdf(frame: Pick<PaperFrame, 'kind' | 'label' 
   };
 }
 
+/**
+ * Definitive media type of a current Source Library item: the bounded header of its concrete
+ * data-URL payload first, then its maintained MIME record. Returns undefined when neither is a
+ * decisive placed-asset type, so callers fall back to persisted frame metadata conservatively.
+ */
+export function resolvePaperSourceItemMimeType(
+  item: Pick<SourceBinLibraryItem, 'mimeType' | 'assetUrl'> | undefined,
+): string | undefined {
+  if (!item) return undefined;
+  return [
+    mimeTypeFromBoundedDataUrl(item.assetUrl),
+    normalizeMimeType(item.mimeType),
+  ].find(isDecisivePlacedAssetMimeType);
+}
+
+/** Current-source MIME lookup over a Source Library snapshot, for the whole-document boundary. */
+export function buildPaperPlacedSourceItemMimeTypeLookup(
+  sourceItems: readonly Pick<SourceBinLibraryItem, 'id' | 'mimeType' | 'assetUrl'>[],
+): (sourceBinItemId: string) => string | undefined {
+  const sourceById = new Map(sourceItems.map((item) => [item.id, item]));
+  return (sourceBinItemId) => resolvePaperSourceItemMimeType(sourceById.get(sourceBinItemId));
+}
+
 export function isPaperPdfMimeType(value: string | undefined): boolean {
   return Boolean(value && PAPER_PDF_MIME_TYPES.has(value));
 }
@@ -72,7 +111,9 @@ function normalizeMimeType(value: string | undefined): string | undefined {
 }
 
 function mimeTypeFromBoundedDataUrl(value: string | undefined): string | undefined {
-  if (typeof value !== 'string' || !value.startsWith('data:')) return undefined;
+  // RFC 3986 schemes are case-insensitive: `DATA:APPLICATION/PDF,...` names the same resource
+  // class as its lowercase form and must not slip past whole-document classification.
+  if (typeof value !== 'string' || !/^data:/i.test(value)) return undefined;
   const boundedHeader = value.slice(0, 512);
   const comma = boundedHeader.indexOf(',');
   // A data URL without a comma is incomplete. Do not bless its claimed media type as resolved

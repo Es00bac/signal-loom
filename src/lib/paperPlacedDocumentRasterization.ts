@@ -5,7 +5,11 @@
 
 import type { PaperDocument, PaperFrame } from '../types/paper';
 import { resolvePaperPageFramesForOutput } from './paperDocument';
-import { classifyPaperPlacedPdf, type PaperPlacedPdfClassification } from './paperPlacedPdf';
+import {
+  classifyPaperPlacedPdf,
+  type PaperPlacedDocumentClassificationOptions,
+  type PaperPlacedPdfClassification,
+} from './paperPlacedPdf';
 
 export interface PaperPlacedDocumentRasterizationIssue {
   code: 'paper-placed-document-rasterization-unsupported';
@@ -38,6 +42,7 @@ export class PaperPlacedDocumentRasterizationError extends Error {
 export function collectPaperPlacedDocumentRasterizationIssues(
   document: PaperDocument,
   pageIds: readonly string[] = document.pages.map((page) => page.id),
+  options: PaperPlacedDocumentClassificationOptions = {},
 ): PaperPlacedDocumentRasterizationIssue[] {
   const requested = validatePaperRasterPageIds(document, pageIds);
   const issues: PaperPlacedDocumentRasterizationIssue[] = [];
@@ -45,7 +50,7 @@ export function collectPaperPlacedDocumentRasterizationIssues(
   for (const page of document.pages) {
     if (!requested.has(page.id)) continue;
     for (const frame of resolvePaperPageFramesForOutput(document, page)) {
-      const classification = classifyPaperPlacedPdf(frame);
+      const classification = classifyPaperPlacedPdf(frame, options);
       if (!classification.blocksRasterization) continue;
       issues.push(createIssue(page.id, page.pageNumber, frame, classification));
     }
@@ -57,11 +62,12 @@ export function collectPaperPlacedDocumentRasterizationIssues(
 export function assertPaperDocumentSupportsRasterization(
   document: PaperDocument,
   pageIds?: readonly string[],
+  options: PaperPlacedDocumentClassificationOptions = {},
 ): void {
   // Raster output is transactional. A supplied id proves that the requested page exists, but never
   // narrows the capability pass: a PDF on a later page must block before page one has side effects.
   if (pageIds) validatePaperRasterPageIds(document, pageIds);
-  const issues = collectPaperPlacedDocumentRasterizationIssues(document);
+  const issues = collectPaperPlacedDocumentRasterizationIssues(document, undefined, options);
   if (issues.length > 0) throw new PaperPlacedDocumentRasterizationError(issues);
 }
 
