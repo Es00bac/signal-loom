@@ -279,6 +279,19 @@ export interface NativeProjectAuthorityDescriptor {
   filePath?: string;
 }
 
+// Project-affecting side channels (Source Library and BroadcastChannel workspace commands)
+// obtain the claim from this renderer-local holder. App updates it only after adoption; stores
+// therefore cannot accidentally mint authority from a displayed file path.
+let currentProjectAuthorityClaim: NativeProjectAuthorityDescriptor | undefined;
+
+export function setCurrentProjectAuthorityClaim(claim: NativeProjectAuthorityDescriptor | undefined): void {
+  currentProjectAuthorityClaim = claim ? { ...claim } : undefined;
+}
+
+export function getCurrentProjectAuthorityClaim(): NativeProjectAuthorityDescriptor | undefined {
+  return currentProjectAuthorityClaim ? { ...currentProjectAuthorityClaim } : undefined;
+}
+
 export type NativeProjectSaveRejectionCode =
   /** The renderer never adopted any project authority (fresh/reloaded window mid-boot). */
   | 'unopened'
@@ -287,7 +300,11 @@ export type NativeProjectSaveRejectionCode =
   /** Right identity, but another window already saved a newer version. */
   | 'stale'
   /** The claim looks current but this renderer never confirmed adopting it. */
-  | 'unauthorized';
+  | 'unauthorized'
+  /** Staged target/startup publication could not commit and was rolled back. */
+  | 'commit-failed'
+  /** The renderer was destroyed/reloaded before the closed commit began. */
+  | 'sender-gone';
 
 export interface NativeProjectSaveRejection {
   code: NativeProjectSaveRejectionCode;
@@ -605,8 +622,8 @@ export interface SignalLoomNativeBridge {
   // Push the interface language ('en' | 'ja') so the native + KDE menus translate their labels.
   setLocale?: (locale: string) => Promise<{ ok?: boolean }>;
   getSourceLibrarySnapshot: () => Promise<SourceLibraryNativeSnapshotResult>;
-  syncSourceLibrarySnapshot: (snapshot: SourceLibraryNativeSnapshotResult['snapshot']) => Promise<{ ok?: boolean; version?: number; error?: string }>;
-  applySourceLibraryChange: (change: SourceLibraryNativeChange) => Promise<{ ok?: boolean; version?: number; error?: string }>;
+  syncSourceLibrarySnapshot: (request: { snapshot: SourceLibraryNativeSnapshotResult['snapshot']; claim?: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
+  applySourceLibraryChange: (request: { change: SourceLibraryNativeChange; claim?: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
   showAbout: (options?: { edition?: string }) => Promise<void>;
   openPath: (filePath: string) => Promise<{ ok?: boolean; error?: string }>;
   // At-rest encryption via the OS keychain (safeStorage). Optional: only present on builds that
@@ -622,7 +639,7 @@ export interface SignalLoomNativeBridge {
 }
 
 export interface SignalLoomAutomationBridge {
-  applySourceLibraryChange?: (change: SourceLibraryNativeChange) => Promise<{ ok?: boolean; version?: number; error?: string }>;
+  applySourceLibraryChange?: (request: { change: SourceLibraryNativeChange; claim?: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
 }
 
 declare global {

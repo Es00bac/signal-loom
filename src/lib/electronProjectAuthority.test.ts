@@ -31,7 +31,7 @@ interface HarnessAdoptResult {
 
 interface ProjectAuthorityGateway {
   getCurrent: () => NativeProjectAuthorityDescriptor;
-  commitStartup: (filePath: string | undefined) => NativeProjectAuthorityDescriptor;
+  commitStartup: (snapshot?: { filePath?: string; scratchDirectoryPath?: string; document?: unknown }) => NativeProjectAuthorityDescriptor;
   openProject: (request: {
     senderId: number;
     rendererEpoch?: number;
@@ -45,10 +45,10 @@ interface ProjectAuthorityGateway {
     isSenderLive?: () => boolean;
     claim?: NativeProjectAuthorityDescriptor;
     resolveFilePath: (currentFilePath: string | undefined) => Promise<string | undefined> | string | undefined;
-    write: (filePath: string) => Promise<{ canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string }>;
+    write: (filePath: string, isLiveImmediatelyBeforeWrite?: () => boolean) => Promise<{ canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string } | { commit: () => { canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string }; rollback?: () => void }>;
     publish?: (snapshot: HarnessAdoptResult) => void;
   }) => Promise<HarnessProjectFileResult>;
-  clearProject: (request: { senderId: number; reset?: () => Promise<void>; publish?: (snapshot: HarnessAdoptResult) => void }) => Promise<{ ok: boolean; authority: NativeProjectAuthorityDescriptor }>;
+  clearProject: (request: { senderId: number; rendererEpoch?: number; isSenderLive?: () => boolean; reset?: () => Promise<void | { commit: () => void; rollback?: () => void }>; publish?: (snapshot: HarnessAdoptResult) => void }) => Promise<{ ok: boolean; authority?: NativeProjectAuthorityDescriptor; rejected?: NativeProjectSaveRejection }>;
   confirmAdoption: (senderId: number, claim: unknown, rendererEpoch?: number, isSenderLive?: () => boolean) => { ok: boolean; stale?: boolean; current: NativeProjectAuthorityDescriptor };
   buildAdoptResponse: () => HarnessAdoptResult;
   authorizeSave: (senderId: number, claim: unknown) => { ok: true } | { ok: false; rejected: NativeProjectSaveRejection };
@@ -119,7 +119,7 @@ function createMainHarness(module: ProjectAuthorityModule, options: { startup?: 
     disk.set(options.startup.filePath, options.startup.document);
     currentProjectPath = options.startup.filePath;
     startupProject = { ...options.startup };
-    gateway.commitStartup(options.startup.filePath);
+    gateway.commitStartup({ filePath: options.startup.filePath, document: options.startup.document });
   }
 
   async function openDocumentFromPath(filePath: string) {
@@ -929,17 +929,88 @@ describe('desktop project authority arbitration (AUD-001, two independent render
     expect(gateway.getCurrent()).toEqual(claim);
     expect(gateway.buildAdoptResponse()).toEqual(canonicalBefore);
   });
+
+  it('treats a sender death during the closed target commit as an accepted save, never a rejected split', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claim = gateway.getCurrent();
+    let live = true;
+    let target = DOC_A;
+    expect(gateway.confirmAdoption(1, claim, 0, () => live).ok).toBe(true);
+
+    const result = await gateway.saveProject({
+      senderId: 1,
+      rendererEpoch: 0,
+      isSenderLive: () => live,
+      claim,
+      resolveFilePath: () => '/projects/A.sloom',
+      write: async () => ({
+        commit: () => {
+          target = DOC_B;
+          live = false; // Simulates destruction immediately after atomic rename/write.
+          return { canceled: false, filePath: '/projects/A.sloom', document: DOC_B };
+        },
+        rollback: () => { target = DOC_A; },
+      }),
+    });
+
+    expect(result.rejected).toBeUndefined();
+    expect(target).toEqual(DOC_B);
+    expect(gateway.getCurrent().version).toBe(claim.version + 1);
+    expect(gateway.buildAdoptResponse().document).toEqual(DOC_B);
+  });
+
+  it('rolls target and canonical authority back when publication throws, while observer throws are isolated', async () => {
+    const module = await loadProjectAuthorityModule();
+    const broadcasts: NativeProjectAuthorityChangedEvent[] = [];
+    const gateway = module.createProjectAuthority({ broadcast: (event) => {
+      broadcasts.push(event);
+      throw new Error('listener exploded');
+    } });
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claim = gateway.getCurrent();
+    gateway.confirmAdoption(1, claim);
+    let target = DOC_A;
+
+    const rejected = await gateway.saveProject({
+      senderId: 1,
+      claim,
+      resolveFilePath: () => '/projects/A.sloom',
+      write: async () => ({
+        commit: () => { target = DOC_B; return { canceled: false, filePath: '/projects/A.sloom', document: DOC_B }; },
+        rollback: () => { target = DOC_A; },
+      }),
+      publish: () => { throw new Error('publish exploded'); },
+    });
+    expect(rejected.rejected?.code).toBe('commit-failed');
+    expect(target).toEqual(DOC_A);
+    expect(gateway.getCurrent()).toEqual(claim);
+
+    const accepted = await gateway.saveProject({
+      senderId: 1,
+      claim,
+      resolveFilePath: () => '/projects/A.sloom',
+      write: async () => ({ canceled: false, filePath: '/projects/A.sloom', document: DOC_B }),
+    });
+    expect(accepted.rejected).toBeUndefined();
+    expect(gateway.getCurrent().version).toBe(claim.version + 1);
+    expect(broadcasts).toHaveLength(1);
+  });
 });
 
 describe('project authority renderer wiring source guards (AUD-001)', () => {
   it('keeps native save/open preparation side-effect free until the authority transaction commits', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
-    const saveBody = source.slice(source.indexOf('async function writeProjectDocument('), source.indexOf('async function backupExistingProjectBeforeOverwrite('));
+    const saveBody = source.slice(source.indexOf('async function writeProjectDocument('), source.indexOf('async function openProjectDocumentFromPath('));
     const openBody = source.slice(source.indexOf('async function openProjectDocumentFromPath('), source.indexOf('/** Synchronous half of the authority commit:'));
 
-    // Sol's reproducer: a failed remember-path write currently observes a disk/canonical
-    // publication that happened first; Open has the same early global publication shape.
-    expect(saveBody.indexOf('await rememberProjectPath(filePath)')).toBeLessThan(saveBody.indexOf('await writeFile(filePath'));
+    // Save/Open only stage asynchronous work. Their commit closures use sync rename/startup
+    // replacement, so no sender-liveness callback can run after the target changes.
+    expect(saveBody).toContain('const stagedTarget =');
+    expect(saveBody).toContain('renameSync(stagedTarget, filePath)');
+    expect(saveBody).toContain('startupRecord.commit()');
+    expect(saveBody).not.toContain('await rememberProjectPath(filePath)');
     expect(saveBody).not.toContain('setCurrentProjectAssetRoots(');
     expect(openBody).not.toContain('setCurrentProjectAssetRoots(');
     expect(source).toMatch(/function publishCommittedProjectSnapshot\([\s\S]{0,700}setCurrentProjectAssetRoots/);

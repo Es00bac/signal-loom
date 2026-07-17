@@ -178,6 +178,11 @@ const initialDocument = createDefaultPaperDocument({ title: 'Untitled Paper Layo
 const initialDocumentId = initialDocument.id || 'paper-document-initial';
 const PAPER_TOOLS: readonly PaperTool[] = ['select', 'hand', 'text', 'image', 'speech', 'thought', 'caption', 'panel', 'shape', 'line', 'ellipse', 'triangle', 'pentagon', 'hexagon', 'eyedropper', 'gutterKnife'];
 const MAX_PAPER_HISTORY = 50;
+// A project save/restore establishes a baseline for every Paper tab. Undo history belongs to
+// only the active tab, so it cannot truthfully answer whether an inactive tab is dirty.
+let savedPaperDocumentSignatures = new Map<string, string>([
+  [initialDocumentId, paperWorkspaceDocumentSignature(createPaperWorkspaceDocumentSnapshot(initialDocumentId, initialDocument))],
+]);
 
 interface PaperHistorySnapshot {
   document: PaperDocument;
@@ -947,6 +952,9 @@ export const usePaperStore = create<PaperState & PaperActions>()(
           clipboardFrames: get().clipboardFrames,
           styleClipboard: get().styleClipboard,
         });
+        savedPaperDocumentSignatures = new Map(
+          nextState.documents.map((document) => [document.id, paperWorkspaceDocumentSignature(document)]),
+        );
       },
 
       applyRemotePaperDocumentChange: (change) => {
@@ -1093,6 +1101,19 @@ function syncActivePaperDocument(state: PaperState): PaperWorkspaceDocumentSnaps
   const activeIndex = state.documents.findIndex((candidate) => candidate.id === state.activeDocumentId);
   if (activeIndex < 0) return [...state.documents, activeDocument];
   return state.documents.map((candidate, index) => index === activeIndex ? activeDocument : candidate);
+}
+
+function paperWorkspaceDocumentSignature(document: PaperWorkspaceDocumentSnapshot): string {
+  // Selection/tool/zoom are UI state, not authored project content. A stable JSON representation
+  // of the document is sufficient because Paper reducers replace rather than mutate it.
+  return JSON.stringify(document.document);
+}
+
+export function getDirtyPaperWorkspaceDocumentTitles(): string[] {
+  const state = usePaperStore.getState();
+  return syncActivePaperDocument(state)
+    .filter((document) => savedPaperDocumentSignatures.get(document.id) !== paperWorkspaceDocumentSignature(document))
+    .map((document) => document.document.title);
 }
 
 function paperStatePatchFromWorkspaceSnapshot(

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createWorkspaceWindowCommandEnvelope,
@@ -9,6 +9,7 @@ import {
   shouldRunFlowOwnedSourceBinIngest,
 } from './workspaceWindowCommands';
 import type { SourceBin, SourceBinLibraryItem } from '../store/sourceBinStore';
+import { setCurrentProjectAuthorityClaim } from './nativeApp';
 
 function item(id: string): SourceBinLibraryItem {
   return {
@@ -32,6 +33,19 @@ function bin(items: SourceBinLibraryItem[], id = 'default'): SourceBin {
 }
 
 describe('workspace window commands', () => {
+  beforeEach(() => {
+    setCurrentProjectAuthorityClaim({ authorityId: 'authority-test', version: 1 });
+  });
+
+  it('rejects a stale workspace command authority before any local workspace mutation', () => {
+    const envelope = createWorkspaceWindowCommandEnvelope('sender-paper', {
+      type: 'source-bin-items-added',
+      items: [item('stale-image')],
+    });
+    setCurrentProjectAuthorityClaim({ authorityId: 'authority-new', version: 2 });
+    expect(getWorkspaceWindowCommandForWorkspace(envelope, 'sender-image', 'image')).toBeUndefined();
+  });
+
   it('ignores commands from the same renderer and commands for another workspace', () => {
     const ownEnvelope = createWorkspaceWindowCommandEnvelope('sender-a', {
       type: 'source-bin-items-added',

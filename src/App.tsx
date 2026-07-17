@@ -133,6 +133,8 @@ import { registerAndroidFileOpenHandler } from './lib/androidFileOpen';
 import {
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
+  getCurrentProjectAuthorityClaim,
+  setCurrentProjectAuthorityClaim,
   type NativeMenuCommand,
   type NativeProjectAdoptResult,
 } from './lib/nativeApp';
@@ -965,12 +967,20 @@ function FlowApp() {
       if (!event?.change) {
         return;
       }
+      const claim = getCurrentProjectAuthorityClaim();
+      if (event.authority && (!claim || event.authority.authorityId !== claim.authorityId || event.authority.version !== claim.version)) {
+        return;
+      }
 
       applySourceLibraryChangeToRenderer(event.change, event.version);
     });
 
     void bridge.getSourceLibrarySnapshot().then((result) => {
-      if (cancelled || !result?.snapshot || result.version <= 0) {
+      const claim = getCurrentProjectAuthorityClaim();
+      if (
+        cancelled || !result?.snapshot || result.version <= 0
+        || (result.authority && (!claim || result.authority.authorityId !== claim.authorityId || result.authority.version !== claim.version))
+      ) {
         return;
       }
 
@@ -1003,7 +1013,7 @@ function FlowApp() {
       if (!bridge?.applySourceLibraryChange) {
         return { error: 'native bridge missing' };
       }
-      return bridge.applySourceLibraryChange(change);
+      return bridge.applySourceLibraryChange({ change, claim: getCurrentProjectAuthorityClaim() });
     };
     globalWindow.signalLoomAutomation = automationBridge;
 
@@ -1247,6 +1257,7 @@ function FlowApp() {
           setNativeScratchDirectoryPath(undefined);
         },
         onStateChanged: (state) => {
+          setCurrentProjectAuthorityClaim(state.claim);
           setProjectAuthorityUiState(state);
           setNativeProjectPath(state.filePath);
         },
@@ -1299,9 +1310,19 @@ function FlowApp() {
           return;
         }
 
+        const clearResult = await bridge?.clearProjectPath();
+        if (clearResult && clearResult.ok === false) {
+          await showAlertDialog({
+            title: 'New Project Failed',
+            message: 'The native project reset was not committed, so the current workspace was left unchanged.',
+            tone: 'danger',
+          });
+          return;
+        }
+        // Native authority commits first. Only then clear renderer stores, and the reset helper
+        // restores its exact Flow/Paper/Image/Source snapshot if a late local phase fails.
         resetSourceLibraryNativeSyncTracking();
         await resetProjectDocument({ allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
-        const clearResult = await bridge?.clearProjectPath();
         if (clearResult?.authority) {
           // This window's freshly reset stores are the new blank project's canonical state.
           await getProjectAuthorityClient().adoptSnapshot({ authority: clearResult.authority });

@@ -4,6 +4,7 @@ import {
   isWorkspaceWindowView,
   type WorkspaceWindowView,
 } from './workspaceWindows';
+import { getCurrentProjectAuthorityClaim, type NativeProjectAuthorityDescriptor } from './nativeApp';
 
 export const WORKSPACE_WINDOW_COMMAND_CHANNEL = 'signal-loom-workspace-window-commands';
 
@@ -69,6 +70,7 @@ export type WorkspaceWindowCommand =
 export interface WorkspaceWindowCommandEnvelope {
   senderId: string;
   command: WorkspaceWindowCommand;
+  authority?: NativeProjectAuthorityDescriptor;
 }
 
 let cachedSenderId: string | undefined;
@@ -89,6 +91,7 @@ export function createWorkspaceWindowCommandEnvelope(
   return {
     senderId,
     command,
+    authority: getCurrentProjectAuthorityClaim(),
   };
 }
 
@@ -113,6 +116,15 @@ export function getWorkspaceWindowCommandForWorkspace(
   }
 
   const { command } = envelope;
+  const localAuthority = getCurrentProjectAuthorityClaim();
+  if (
+    !localAuthority
+    || !envelope.authority
+    || envelope.authority.authorityId !== localAuthority.authorityId
+    || envelope.authority.version !== localAuthority.version
+  ) {
+    return undefined;
+  }
   if (command.targetWorkspace && command.targetWorkspace !== activeWorkspaceView) {
     return undefined;
   }
@@ -291,7 +303,16 @@ function isWorkspaceWindowCommandEnvelope(value: unknown): value is WorkspaceWin
     return false;
   }
 
-  return typeof value.senderId === 'string' && isWorkspaceWindowCommand(value.command);
+  return typeof value.senderId === 'string'
+    && isWorkspaceWindowCommand(value.command)
+    && isProjectAuthorityDescriptor(value.authority);
+}
+
+function isProjectAuthorityDescriptor(value: unknown): value is NativeProjectAuthorityDescriptor {
+  return isPlainRecord(value)
+    && typeof value.authorityId === 'string'
+    && value.authorityId.length > 0
+    && Number.isInteger(value.version);
 }
 
 function isWorkspaceWindowCommand(value: unknown): value is WorkspaceWindowCommand {

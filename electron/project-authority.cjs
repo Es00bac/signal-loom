@@ -125,6 +125,40 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
     adoptions.set(senderId, { authorityId: current.authorityId, version: current.version, rendererEpoch });
   }
 
+  // A project operation may prepare arbitrary asynchronous I/O, but its externally visible
+  // effects must not begin until this closed commit section.  Main supplies staged operations
+  // whose commit/rollback methods are synchronous (rename/write only); that leaves no event-loop
+  // turn in which a renderer can die after the target changed but before authority advances.
+  function asStagedResult(result) {
+    if (result && typeof result === 'object' && typeof result.commit === 'function') {
+      return result;
+    }
+    return { result, commit: () => result, rollback: () => undefined };
+  }
+
+  function safelyEmit(event) {
+    try {
+      emit(event);
+    } catch {
+      // Observers are never part of authority publication. A bad BrowserWindow listener must
+      // not reject an operation that has already committed its canonical snapshot.
+    }
+  }
+
+  function publishAtomically(snapshot, previous, publish, restorePublish) {
+    try {
+      if (publish) publish(snapshot);
+      return true;
+    } catch (error) {
+      try {
+        if (restorePublish) restorePublish(previous);
+      } catch {
+        // Best effort only; the gateway itself is restored by the caller below.
+      }
+      return false;
+    }
+  }
+
   return {
     getCurrent,
     authorizeSave,
@@ -143,22 +177,29 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * renderer is NOT auto-adopted: it must hydrate the returned document and confirm, the
      * same as every other window.
      */
-    async openProject({ senderId, rendererEpoch = 0, isSenderLive, load, publish }) {
+    async openProject({ senderId, rendererEpoch = 0, isSenderLive, load, publish, restorePublish }) {
       return runExclusive(async () => {
         if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        const loaded = await load();
+        const staged = asStagedResult(await load());
         if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        current = { authorityId: mint(), version: 1, filePath: loaded.filePath };
-        canonical = {
-          filePath: loaded.filePath,
-          scratchDirectoryPath: loaded.scratchDirectoryPath,
-          document: loaded.document,
-        };
-        // Publication is deliberately synchronous: authority and visible canonical state change
-        // in one main-owned commit, after every awaited dialog/I/O preparation boundary.
-        if (publish) publish({ ...canonical, authority: getCurrent() });
-        emit({ authority: getCurrent(), reason: 'open', initiatorWebContentsId: senderId });
-        return { ...loaded, authority: getCurrent() };
+        const previous = { current, canonical };
+        let loaded;
+        try {
+          loaded = staged.commit();
+          current = { authorityId: mint(), version: 1, filePath: loaded.filePath };
+          canonical = { filePath: loaded.filePath, scratchDirectoryPath: loaded.scratchDirectoryPath, document: loaded.document };
+          const snapshot = { ...canonical, authority: getCurrent() };
+          if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
+            throw new Error('Project publication failed.');
+          }
+          safelyEmit({ authority: getCurrent(), reason: 'open', initiatorWebContentsId: senderId });
+          return { ...loaded, authority: getCurrent() };
+        } catch (error) {
+          current = previous.current;
+          canonical = previous.canonical;
+          try { staged.rollback(); } catch {}
+          return { canceled: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
+        }
       });
     },
 
@@ -169,7 +210,7 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * A same-path save advances the version; a path rebind (first save of a blank project,
      * or Save As) mints a fresh identity at version 1. Only the writer is auto-adopted.
      */
-    async saveProject({ senderId, rendererEpoch = 0, isSenderLive, claim, resolveFilePath, write, publish }) {
+    async saveProject({ senderId, rendererEpoch = 0, isSenderLive, claim, resolveFilePath, write, publish, restorePublish }) {
       const precheck = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
       if (!precheck.ok) {
         return { canceled: false, rejected: precheck.rejected };
@@ -190,28 +231,32 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
           return { canceled: false, rejected: recheck.rejected };
         }
 
-        const written = await write(filePath, () => senderIsLive(isSenderLive));
+        const staged = asStagedResult(await write(filePath, () => senderIsLive(isSenderLive)));
         if (!senderIsLive(isSenderLive)) {
           const rejected = buildRejection('sender-gone', 'The requesting window is no longer live.');
           return { canceled: false, rejected: rejected.rejected };
         }
-        const rebinding = filePath !== current.filePath;
-        current = rebinding
-          ? { authorityId: mint(), version: 1, filePath }
-          : { ...current, version: current.version + 1 };
-        canonical = {
-          filePath,
-          scratchDirectoryPath: written.scratchDirectoryPath,
-          document: written.document,
-        };
-        if (publish) publish({ ...canonical, authority: getCurrent() });
-        recordAdoption(senderId, rendererEpoch);
-        emit({
-          authority: getCurrent(),
-          reason: rebinding ? 'save-as' : 'save',
-          initiatorWebContentsId: senderId,
-        });
-        return { ...written, authority: getCurrent() };
+        const previous = { current, canonical };
+        try {
+          // No liveness probe is permitted after commit(): it would turn a successful atomic
+          // target replacement into a rejected IPC with old authority.
+          const written = staged.commit();
+          const rebinding = filePath !== current.filePath;
+          current = rebinding ? { authorityId: mint(), version: 1, filePath } : { ...current, version: current.version + 1 };
+          canonical = { filePath, scratchDirectoryPath: written.scratchDirectoryPath, document: written.document };
+          const snapshot = { ...canonical, authority: getCurrent() };
+          if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
+            throw new Error('Project publication failed.');
+          }
+          recordAdoption(senderId, rendererEpoch);
+          safelyEmit({ authority: getCurrent(), reason: rebinding ? 'save-as' : 'save', initiatorWebContentsId: senderId });
+          return { ...written, authority: getCurrent() };
+        } catch (error) {
+          current = previous.current;
+          canonical = previous.canonical;
+          try { staged.rollback(); } catch {}
+          return { canceled: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
+        }
       });
     },
 
@@ -220,19 +265,29 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * own stores before invoking this, so its state IS the new canonical blank snapshot and
      * it is adopted directly.
      */
-    async clearProject({ senderId, rendererEpoch = 0, isSenderLive, reset, publish }) {
+    async clearProject({ senderId, rendererEpoch = 0, isSenderLive, reset, publish, restorePublish }) {
       return runExclusive(async () => {
         if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        if (reset) {
-          await reset();
-        }
+        const staged = asStagedResult(reset ? await reset() : undefined);
         if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        current = { authorityId: mint(), version: 1, filePath: undefined };
-        canonical = { filePath: undefined, scratchDirectoryPath: undefined, document: undefined };
-        if (publish) publish({ ...canonical, authority: getCurrent() });
-        recordAdoption(senderId, rendererEpoch);
-        emit({ authority: getCurrent(), reason: 'clear', initiatorWebContentsId: senderId });
-        return { ok: true, authority: getCurrent() };
+        const previous = { current, canonical };
+        try {
+          staged.commit();
+          current = { authorityId: mint(), version: 1, filePath: undefined };
+          canonical = { filePath: undefined, scratchDirectoryPath: undefined, document: undefined };
+          const snapshot = { ...canonical, authority: getCurrent() };
+          if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
+            throw new Error('Project publication failed.');
+          }
+          recordAdoption(senderId, rendererEpoch);
+          safelyEmit({ authority: getCurrent(), reason: 'clear', initiatorWebContentsId: senderId });
+          return { ok: true, authority: getCurrent() };
+        } catch (error) {
+          current = previous.current;
+          canonical = previous.canonical;
+          try { staged.rollback(); } catch {}
+          return { ok: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
+        }
       });
     },
 

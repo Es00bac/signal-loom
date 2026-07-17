@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, net, protocol, safeStorage, shell } from 'electron';
 import { execFile, spawn } from 'node:child_process';
-import { chmodSync, existsSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -552,7 +552,7 @@ function getIpcWindow(event) {
 function broadcastProjectPathChanged() {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send('signal-loom:project-path-changed', currentProjectPath);
+      try { window.webContents.send('signal-loom:project-path-changed', currentProjectPath); } catch {}
     }
   }
 }
@@ -560,7 +560,7 @@ function broadcastProjectPathChanged() {
 function broadcastProjectAuthorityChanged(event) {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send('signal-loom:project-authority-changed', event);
+      try { window.webContents.send('signal-loom:project-authority-changed', event); } catch {}
     }
   }
   // Legacy display listeners keep receiving the bare path alongside the versioned event.
@@ -729,11 +729,12 @@ function broadcastSourceLibraryChanged(change) {
   const event = {
     version: sourceLibraryVersion,
     change: clonePlain(change),
+    authority: projectAuthority?.getCurrent?.(),
   };
 
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) {
-      window.webContents.send('signal-loom:source-library-changed', event);
+      try { window.webContents.send('signal-loom:source-library-changed', event); } catch {}
     }
   }
 }
@@ -1315,6 +1316,39 @@ async function chooseProjectSavePath(existingPath, parentWindow) {
   return ensureSignalLoomProjectExtension(result.filePath);
 }
 
+async function stageProjectStartupRecord(filePath) {
+  const statePath = getStartupProjectStatePath();
+  const previous = await readFile(statePath).catch(() => undefined);
+  const next = !filePath || isSignalLoomProjectBackupPath(filePath)
+    ? undefined
+    : Buffer.from(serializeStartupProjectState(filePath), 'utf8');
+  return {
+    commit() {
+      if (next) {
+        mkdirSync(dirname(statePath), { recursive: true });
+        writeFileSync(statePath, next);
+      } else {
+        rmSync(statePath, { force: true });
+      }
+    },
+    rollback() {
+      if (previous) {
+        writeFileSync(statePath, previous);
+      } else {
+        rmSync(statePath, { force: true });
+      }
+    },
+  };
+}
+
+async function stageBlankProjectReset() {
+  const startupRecord = await stageProjectStartupRecord(undefined);
+  return {
+    commit: () => startupRecord.commit(),
+    rollback: () => startupRecord.rollback(),
+  };
+}
+
 async function writeProjectDocument(filePath, document, isSenderLive = () => true) {
   const assertSenderLive = () => {
     if (!isSenderLive()) throw new Error('The requesting renderer is no longer live.');
@@ -1324,40 +1358,52 @@ async function writeProjectDocument(filePath, document, isSenderLive = () => tru
   assertSenderLive();
   const prepared = await prepareProjectDocumentForNativeSave(filePath, document);
   assertSenderLive();
-  await backupExistingProjectBeforeOverwrite(filePath);
+  const previousTarget = await readFile(filePath).catch(() => undefined);
   assertSenderLive();
-  // Make the restart record durable before the target is touched. If remembering fails, no
-  // project bytes or canonical in-memory state have been changed.
-  await rememberProjectPath(filePath);
+  const stagedTarget = `${filePath}.sloom-stage-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  await writeFile(stagedTarget, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
   assertSenderLive();
-  await writeFile(filePath, `${JSON.stringify(prepared.document, null, 2)}\n`, 'utf8');
+  const startupRecord = await stageProjectStartupRecord(filePath);
   assertSenderLive();
-  await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
+  const backupPath = previousTarget && shouldWriteProjectSaveDirectly(filePath)
+    ? buildProjectOverwriteBackupPath(filePath)
+    : undefined;
+  let committed = false;
+  let createdBackupPath;
 
   return {
-    canceled: false,
-    filePath,
-    scratchDirectoryPath: prepared.scratchDirectoryPath,
-    document: prepared.document,
+    commit() {
+      // This is the closed commit: no await, liveness callback, renderer callback, or observer
+      // runs between replacing the target and advancing the authority gateway.
+      if (backupPath) {
+        let candidate = backupPath;
+        for (let attempt = 2; existsSync(candidate); attempt += 1) candidate = `${backupPath}-${attempt}`;
+        writeFileSync(candidate, previousTarget);
+        createdBackupPath = candidate;
+      }
+      try {
+        renameSync(stagedTarget, filePath);
+        startupRecord.commit();
+        committed = true;
+      } catch (error) {
+        if (previousTarget) writeFileSync(filePath, previousTarget);
+        else rmSync(filePath, { force: true });
+        if (createdBackupPath) rmSync(createdBackupPath, { force: true });
+        startupRecord.rollback();
+        throw error;
+      }
+      return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
+    },
+    rollback() {
+      if (committed) {
+        if (previousTarget) writeFileSync(filePath, previousTarget);
+        else rmSync(filePath, { force: true });
+      }
+      rmSync(stagedTarget, { force: true });
+      if (createdBackupPath) rmSync(createdBackupPath, { force: true });
+      startupRecord.rollback();
+    },
   };
-}
-
-async function backupExistingProjectBeforeOverwrite(filePath) {
-  if (!shouldWriteProjectSaveDirectly(filePath)) return;
-
-  try {
-    const existing = await stat(filePath);
-    if (!existing.isFile() || existing.size <= 0) return;
-  } catch {
-    return;
-  }
-
-  const baseBackupPath = buildProjectOverwriteBackupPath(filePath);
-  let backupPath = baseBackupPath;
-  for (let attempt = 2; existsSync(backupPath); attempt += 1) {
-    backupPath = `${baseBackupPath}-${attempt}`;
-  }
-  await copyFile(filePath, backupPath);
 }
 
 async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) {
@@ -1369,16 +1415,14 @@ async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) 
   assertSenderLive();
   const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
   assertSenderLive();
-  await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
+  const startupRecord = await stageProjectStartupRecord(filePath);
   assertSenderLive();
-  await rememberProjectPath(filePath);
-  assertSenderLive();
-
   return {
-    canceled: false,
-    filePath,
-    scratchDirectoryPath: prepared.scratchDirectoryPath,
-    document: prepared.document,
+    commit() {
+      startupRecord.commit();
+      return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
+    },
+    rollback: () => startupRecord.rollback(),
   };
 }
 
@@ -1393,6 +1437,19 @@ function publishCommittedProjectSnapshot(snapshot) {
       document: snapshot.document,
     }
     : undefined;
+  // Source state is part of the same canonical project snapshot. Capability registration is
+  // derived/cache work and deliberately isolated from the commit; it cannot reject publication.
+  sourceLibrarySnapshot = normalizeSourceLibrarySnapshot(snapshot.document?.sourceBin);
+  sourceLibraryVersion += 1;
+  void registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true }).catch(() => undefined);
+  broadcastSourceLibraryChanged({ type: 'source-library-snapshot', snapshot: getSourceLibrarySnapshot() });
+}
+
+// The gateway invokes this only if synchronous publication itself throws. It restores every
+// main-process mirror from the previous *canonical* snapshot before the staged disk rollback,
+// so a rejected request cannot leave globals/adoption/source state on different projects.
+function restoreCommittedProjectSnapshot(snapshot) {
+  publishCommittedProjectSnapshot(snapshot);
 }
 
 async function getNativeFilePathFromAssetUrl(assetUrl) {
@@ -2637,11 +2694,11 @@ function installIpcHandlers() {
       senderId: event.sender.id,
       rendererEpoch,
       isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
-      reset: async () => {
-        await resetSourceLibrarySnapshot({ broadcast: true });
-        await forgetRememberedProjectPath();
-      },
+      // Do not clear Source/startup before the final authority commit. The staged reset can be
+      // rolled back if the sender disappears or publication fails.
+      reset: stageBlankProjectReset,
       publish: publishCommittedProjectSnapshot,
+      restorePublish: restoreCommittedProjectSnapshot,
     });
   });
 
@@ -2656,6 +2713,7 @@ function installIpcHandlers() {
         isSenderLive,
         load: () => openProjectDocumentFromPath(automationPath, isSenderLive),
         publish: publishCommittedProjectSnapshot,
+        restorePublish: restoreCommittedProjectSnapshot,
       });
     }
 
@@ -2678,6 +2736,7 @@ function installIpcHandlers() {
       isSenderLive,
       load: () => openProjectDocumentFromPath(result.filePaths[0], isSenderLive),
       publish: publishCommittedProjectSnapshot,
+      restorePublish: restoreCommittedProjectSnapshot,
     });
   });
 
@@ -2701,6 +2760,7 @@ function installIpcHandlers() {
       },
       write: (filePath, isLiveImmediatelyBeforeWrite) => writeProjectDocument(filePath, document, isLiveImmediatelyBeforeWrite),
       publish: publishCommittedProjectSnapshot,
+      restorePublish: restoreCommittedProjectSnapshot,
     });
   });
 
@@ -2716,6 +2776,7 @@ function installIpcHandlers() {
       resolveFilePath: (currentFilePath) => chooseProjectSavePath(currentFilePath, getIpcWindow(event)),
       write: (filePath, isLiveImmediatelyBeforeWrite) => writeProjectDocument(filePath, document, isLiveImmediatelyBeforeWrite),
       publish: publishCommittedProjectSnapshot,
+      restorePublish: restoreCommittedProjectSnapshot,
     });
   });
 
@@ -3190,14 +3251,32 @@ function installIpcHandlers() {
   ipcMain.handle('signal-loom:source-library-get-snapshot', async () => ({
     version: sourceLibraryVersion,
     snapshot: getSourceLibrarySnapshot(),
+    authority: projectAuthority.getCurrent(),
   }));
 
-  ipcMain.handle('signal-loom:source-library-sync-snapshot', async (_event, snapshot) => ({
-    ok: true,
-    version: await setSourceLibrarySnapshot(snapshot, { broadcast: true }),
-  }));
+  ipcMain.handle('signal-loom:source-library-sync-snapshot', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    const authorization = projectAuthority.authorizeSave(
+      event.sender.id,
+      request?.claim,
+      rendererEpoch,
+      () => isLiveAuthoritySender(event.sender, rendererEpoch),
+    );
+    if (!authorization.ok) return { ok: false, error: authorization.rejected.message, rejected: authorization.rejected };
+    return { ok: true, version: await setSourceLibrarySnapshot(request?.snapshot, { broadcast: true }) };
+  });
 
-  ipcMain.handle('signal-loom:source-library-apply-change', async (_event, change) => applySourceLibraryChange(change));
+  ipcMain.handle('signal-loom:source-library-apply-change', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    const authorization = projectAuthority.authorizeSave(
+      event.sender.id,
+      request?.claim,
+      rendererEpoch,
+      () => isLiveAuthoritySender(event.sender, rendererEpoch),
+    );
+    if (!authorization.ok) return { ok: false, error: authorization.rejected.message, rejected: authorization.rejected };
+    return applySourceLibraryChange(request?.change);
+  });
 
   ipcMain.handle('signal-loom:show-about', async (event, options) => {
     const win = getIpcWindow(event);

@@ -22,7 +22,7 @@ import { useEditorStore } from '../store/editorStore';
 import { useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import { useImageEditorStore } from '../store/imageEditorStore';
-import { usePaperStore } from '../store/paperStore';
+import { getDirtyPaperWorkspaceDocumentTitles, usePaperStore } from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import { useSourceBinStore } from '../store/sourceBinStore';
 import { getEditorAssets } from './editorAssets';
@@ -56,13 +56,10 @@ function assertDirtyImageReplacementAllowed(options: ProjectDocumentReplacementO
 
 function assertDirtyPaperReplacementAllowed(options: ProjectDocumentReplacementOptions): void {
   if (options.allowDirtyPaperReplacement) return;
-  const paperStore = usePaperStore.getState();
-  // Paper's undo history is its durable unsaved-edit indicator. It is reset only on restore;
-  // unlike Image, Paper has multiple canonical tabs, so protecting the active history prevents
-  // an Open in another renderer from silently replacing authored layout work.
-  if (paperStore.undoStack.length === 0) return;
+  const dirtyTitles = getDirtyPaperWorkspaceDocumentTitles();
+  if (dirtyTitles.length === 0) return;
   throw new Error(
-    `Project replacement was blocked because the active Paper document "${paperStore.document.title}" has unsaved edits. `
+    `Project replacement was blocked because Paper document "${dirtyTitles[0]}" has unsaved edits. `
     + 'Save or discard it explicitly before replacing the project.',
   );
 }
@@ -287,14 +284,23 @@ export async function resetProjectDocument(
 ): Promise<void> {
   assertDirtyImageReplacementAllowed(options);
   assertDirtyPaperReplacementAllowed(options);
-  useFlowStore.getState().replaceFlowSnapshot({
-    nodes: [],
-    edges: [],
-  });
-  useFlowWorkspaceStore.getState().reset();
-  useEditorStore.getState().restoreWorkspaceSnapshot(undefined);
-  await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
-  useProjectUsageStore.getState().restoreSnapshot(undefined);
-  usePaperStore.getState().restoreSnapshot(undefined);
-  useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+  // Reset is a renderer transaction too. In particular Source restore can await native asset
+  // work after Flow/Paper/Image have already changed; retain an exact project snapshot and put
+  // every workspace back if any later phase fails.
+  const previous = await buildCurrentProjectDocument({ includeAssetData: true });
+  try {
+    useFlowStore.getState().replaceFlowSnapshot({ nodes: [], edges: [] });
+    useFlowWorkspaceStore.getState().reset();
+    useEditorStore.getState().restoreWorkspaceSnapshot(undefined);
+    await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
+    useProjectUsageStore.getState().restoreSnapshot(undefined);
+    usePaperStore.getState().restoreSnapshot(undefined);
+    await useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+  } catch (error) {
+    await restoreProjectDocument(previous, {
+      allowDirtyImageReplacement: true,
+      allowDirtyPaperReplacement: true,
+    }).catch(() => undefined);
+    throw error;
+  }
 }

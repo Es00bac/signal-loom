@@ -100,7 +100,7 @@ describe('restoreProjectDocument', () => {
       name: 'Incoming Paper',
       savedAt: 1,
       flow: { version: 3, nodes: [], edges: [] },
-    })).rejects.toThrow('active Paper document');
+    })).rejects.toThrow('Paper document');
 
     expect(usePaperStore.getState().document).toEqual(before);
     await restoreProjectDocument({
@@ -110,6 +110,29 @@ describe('restoreProjectDocument', () => {
       savedAt: 1,
       flow: { version: 3, nodes: [], edges: [] },
     }, { allowDirtyPaperReplacement: true });
+  });
+
+  it('blocks replacement for a dirty inactive Paper tab, not merely the active undo stack', async () => {
+    const paperStore = usePaperStore.getState();
+    paperStore.createNewDocument({ title: 'Edited inactive tab' });
+    const editedDocumentId = usePaperStore.getState().activeDocumentId;
+    paperStore.createNewDocument({ title: 'Clean active tab' });
+    // Treat the two-tab project as a saved baseline, then edit the first tab and leave the
+    // second active. The historical active undo stack is intentionally empty after switching.
+    paperStore.restoreSnapshot(paperStore.exportSnapshot());
+    paperStore.setActiveDocument(editedDocumentId);
+    paperStore.addPage();
+    paperStore.setActiveDocument(usePaperStore.getState().documents.find((document) => document.id !== editedDocumentId)!.id);
+    expect(usePaperStore.getState().activeDocumentId).not.toBe(editedDocumentId);
+    expect(usePaperStore.getState().undoStack).toHaveLength(0);
+
+    await expect(restoreProjectDocument({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'incoming-inactive-paper-project',
+      name: 'Incoming Paper',
+      savedAt: 1,
+      flow: { version: 3, nodes: [], edges: [] },
+    })).rejects.toThrow('Edited inactive tab');
   });
 
   it('serializes Image documents as a clean saved baseline without clearing live dirty state', async () => {

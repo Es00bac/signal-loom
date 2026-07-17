@@ -157,13 +157,15 @@ describe('source bin live workspace sync', () => {
 
     await vi.waitFor(() => {
       expect(syncSourceLibrarySnapshot).toHaveBeenCalledWith(expect.objectContaining({
-        bins: [
-          expect.objectContaining({
-            items: [
-              expect.objectContaining({ id: 'direct-image-1', label: 'Paper reference.png' }),
-            ],
-          }),
-        ],
+        snapshot: expect.objectContaining({
+          bins: [
+            expect.objectContaining({
+              items: [
+                expect.objectContaining({ id: 'direct-image-1', label: 'Paper reference.png' }),
+              ],
+            }),
+          ],
+        }),
       }));
     });
     expect(useSourceBinStore.getState().nativeSyncStatus).toMatchObject({

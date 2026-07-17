@@ -19,7 +19,7 @@ import {
 } from '../lib/androidSourceAssetStorage';
 import { buildMediaAssetSignaturePart } from '../lib/mediaAssetSignature';
 import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
-import { getSignalLoomNativeBridge } from '../lib/nativeApp';
+import { getCurrentProjectAuthorityClaim, getSignalLoomNativeBridge } from '../lib/nativeApp';
 import { initializeLanServerProxy, notifyLanSourceLibraryChange } from '../lib/androidLanServer';
 import { getHostSourceLibraryVersion } from '../lib/lanHostService';
 import {
@@ -427,7 +427,7 @@ function syncNativeSourceLibrarySnapshot(snapshot: SourceBinProjectSnapshot): vo
     message: 'Syncing Source Library snapshot with native windows.',
   }));
 
-  void bridge.syncSourceLibrarySnapshot(snapshot)
+  void bridge.syncSourceLibrarySnapshot({ snapshot, claim: getCurrentProjectAuthorityClaim() })
     .then((result) => {
       if (sourceLibraryNativeAckNeedsRepair(result)) {
         setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
@@ -457,7 +457,7 @@ function publishNativeSourceLibraryChange(change: SourceLibraryNativeChange): vo
     message: 'Sending Source Library change to native windows.',
   }));
 
-  void bridge.applySourceLibraryChange(change)
+  void bridge.applySourceLibraryChange({ change, claim: getCurrentProjectAuthorityClaim() })
     .then((result) => {
       if (sourceLibraryNativeAckNeedsRepair(result)) {
         return repairNativeSourceLibrarySnapshot(describeNativeSourceLibraryAckFailure(
@@ -504,7 +504,7 @@ async function repairNativeSourceLibrarySnapshot(reason: unknown): Promise<void>
 
   try {
     const snapshot = await useSourceBinStore.getState().exportProjectSnapshot();
-    const result = await bridge.syncSourceLibrarySnapshot(snapshot);
+    const result = await bridge.syncSourceLibrarySnapshot({ snapshot, claim: getCurrentProjectAuthorityClaim() });
     if (sourceLibraryNativeAckNeedsRepair(result)) {
       setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
         message: describeNativeSourceLibraryAckFailure(result, 'Native Source Library snapshot repair was rejected.'),

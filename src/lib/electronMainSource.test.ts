@@ -48,10 +48,10 @@ describe('Electron main process source guards', () => {
   it('does not remember or overwrite opened .sloom backup files on normal Save', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
 
-    expect(source).toMatch(/async function rememberProjectPath[\s\S]*isSignalLoomProjectBackupPath\(filePath\)[\s\S]*forgetRememberedProjectPath/);
+    expect(source).toMatch(/async function stageProjectStartupRecord[\s\S]*isSignalLoomProjectBackupPath\(filePath\)[\s\S]*rmSync\(statePath/);
     expect(source).toContain('getProjectSaveDialogDefaultPath(existingPath)');
     expect(source).toMatch(/const automationPath = getAutomationProjectSavePath\(process\.env\)[\s\S]*automationPath[\s\S]*ensureSignalLoomProjectExtension\(automationPath\)[\s\S]*shouldWriteProjectSaveDirectly\(currentFilePath\)/);
-    expect(source).toMatch(/async function backupExistingProjectBeforeOverwrite[\s\S]*buildProjectOverwriteBackupPath\(filePath\)[\s\S]*copyFile\(filePath, backupPath\)/);
+    expect(source).toMatch(/async function writeProjectDocument[\s\S]*buildProjectOverwriteBackupPath\(filePath\)[\s\S]*writeFileSync\(candidate, previousTarget\)[\s\S]*renameSync\(stagedTarget, filePath\)/);
   });
 
   it('clears stale remembered startup paths that cannot be resolved', () => {
@@ -235,5 +235,11 @@ describe('project authority arbitration wiring (AUD-001)', () => {
     const writeHelper = source.match(/async function writeProjectDocument[\s\S]*?\n\}/)?.[0] ?? '';
     expect(writeHelper.length).toBeGreaterThan(0);
     expect(writeHelper).not.toContain('broadcastProjectPathChanged()');
+  });
+
+  it('requires the current adopted authority for Source Library snapshot and delta mutations', () => {
+    expect(source).toMatch(/'signal-loom:source-library-sync-snapshot'[\s\S]{0,520}projectAuthority\.authorizeSave\([\s\S]{0,180}request\?\.claim/);
+    expect(source).toMatch(/'signal-loom:source-library-apply-change'[\s\S]{0,520}projectAuthority\.authorizeSave\([\s\S]{0,180}request\?\.claim/);
+    expect(source).toMatch(/getSourceLibrarySnapshot\(\)[\s\S]{0,120}authority: projectAuthority\.getCurrent\(\)/);
   });
 });

@@ -1,4 +1,5 @@
 import type { SourceBin, SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
+import type { NativeProjectAuthorityDescriptor } from './nativeApp';
 import {
   mergeSourceBinItemsIntoBins,
   removeSourceBinItemFromBins,
@@ -32,11 +33,13 @@ export type SourceLibraryNativeChange =
 export interface SourceLibraryNativeEvent {
   version: number;
   change: SourceLibraryNativeChange;
+  authority?: NativeProjectAuthorityDescriptor;
 }
 
 export interface SourceLibraryNativeSnapshotResult {
   version: number;
   snapshot: SourceBinProjectSnapshot;
+  authority?: NativeProjectAuthorityDescriptor;
 }
 
 export type SourceLibraryNativeSyncState = 'idle' | 'syncing' | 'repairing' | 'synced' | 'degraded';
