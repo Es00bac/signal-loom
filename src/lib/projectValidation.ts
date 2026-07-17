@@ -35,6 +35,10 @@ import { CURRENT_PROJECT_SCHEMA_VERSION, isFlowNodeType } from './projectSchema'
 import { sanitizeProjectUsageLedgerSnapshot } from './projectUsageLedger';
 import { sanitizeImageLayerLocks } from './imageLayerLocks';
 import {
+  assertImageDocumentSnapshotDecodeBounds,
+  IMAGE_PROJECT_MAX_SNAPSHOTS,
+} from '../components/ImageEditor/ImageSnapshots';
+import {
   omitImageLayerLinkGroup,
   sanitizeImageLayerLinkGroupId,
 } from './imageLayerLinks';
@@ -632,15 +636,31 @@ function samePaperAssetIds(left: readonly BinaryAssetId[], right: readonly Binar
 export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProjectSnapshot | undefined {
   if (snapshot === undefined) return undefined;
   if (!isRecord(snapshot)) return undefined;
-  const documents = Array.isArray(snapshot.documents)
-    ? snapshot.documents.flatMap((doc, index) => {
+  const rawDocuments = Array.isArray(snapshot.documents) ? snapshot.documents : [];
+  const projectSnapshots = rawDocuments.flatMap((doc) => (
+    isRecord(doc) && Array.isArray(doc.snapshots) ? doc.snapshots : []
+  ));
+  assertImageDocumentSnapshotDecodeBounds(projectSnapshots, {
+    transport: 'project',
+    maxSnapshots: IMAGE_PROJECT_MAX_SNAPSHOTS,
+  });
+  const documents = rawDocuments.length > 0
+    ? rawDocuments.flatMap((doc, index) => {
         if (!isRecord(doc)) return [];
         const width = finiteNumber(doc.width, 0);
         const height = finiteNumber(doc.height, 0);
         if (width <= 0 || height <= 0) return [];
         const layers = Array.isArray(doc.layers) ? doc.layers.filter(isRecord) : [];
         const sanitizedLayers = sanitizeImageLayerCollection(layers);
-        const snapshots = Array.isArray(doc.snapshots) ? doc.snapshots.filter(isRecord) : [];
+        const rawSnapshots = Array.isArray(doc.snapshots) ? doc.snapshots : [];
+        assertImageDocumentSnapshotDecodeBounds(rawSnapshots, { transport: 'project' });
+        const snapshots = rawSnapshots.filter(isRecord);
+        const sanitizedSnapshots = snapshots.map((namedSnapshot, snapshotIndex) => sanitizeImageDocumentSnapshot(
+          namedSnapshot,
+          snapshotIndex,
+          { width, height },
+        ));
+        assertImageDocumentSnapshotDecodeBounds(sanitizedSnapshots, { transport: 'project' });
         const activeLayerEditTarget: ImageLayerEditTarget = doc.activeLayerEditTarget === 'mask' ? 'mask' : 'layer';
         return [{
           ...doc,
@@ -661,10 +681,7 @@ export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProje
             ? { zoom: finiteNumber(doc.viewport.zoom, 1), panX: finiteNumber(doc.viewport.panX, 0), panY: finiteNumber(doc.viewport.panY, 0) }
             : { zoom: 1, panX: 0, panY: 0 },
           dirty: Boolean(doc.dirty),
-          snapshots: snapshots.map((snapshot, snapshotIndex) => sanitizeImageDocumentSnapshot(snapshot, snapshotIndex, {
-            width,
-            height,
-          })),
+          snapshots: sanitizedSnapshots,
         }];
       })
     : [];

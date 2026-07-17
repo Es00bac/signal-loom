@@ -1,9 +1,10 @@
 import type { ImageDocumentSnapshot, ImageLayer, LayerBitmap, SelectionMaskSnapshot } from '../../types/imageEditor';
 import { bitmapFromUrl, bitmapToPngDataUrl } from './LayerBitmap';
 import {
+  assertImageDocumentSnapshotDecodeBounds,
   buildImageDocumentSnapshotIntegrity,
-  inspectImageDocumentSnapshotIntegrity,
-  markImageDocumentSnapshotOwned,
+  markImageDocumentSnapshotVerifiedOwned,
+  verifyImageDocumentSnapshotIntegrity,
 } from './ImageSnapshots';
 
 /**
@@ -13,7 +14,7 @@ import {
  */
 export interface ImageLayerPixelCodec {
   encode: (bitmap: LayerBitmap) => Promise<string>;
-  decode: (dataUrl: string) => Promise<LayerBitmap>;
+  decode: (dataUrl: string, expected?: { width: number; height: number }) => Promise<LayerBitmap>;
 }
 
 export const defaultImageLayerPixelCodec: ImageLayerPixelCodec = {
@@ -43,17 +44,21 @@ export async function encodeImageLayerProjectPixels(
 export async function decodeImageLayerProjectPixels(
   layer: ImageLayer,
   codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
+  expected?: {
+    bitmap?: { width: number; height: number };
+    mask?: { width: number; height: number };
+  },
 ): Promise<ImageLayer> {
   let bitmap = layer.bitmap;
   let mask = layer.mask;
   const decodedOwned = new Set<LayerBitmap>();
   try {
     if (layer.bitmapData) {
-      bitmap = await codec.decode(layer.bitmapData);
+      bitmap = await codec.decode(layer.bitmapData, expected?.bitmap);
       decodedOwned.add(bitmap);
     }
     if (layer.maskData) {
-      mask = await codec.decode(layer.maskData);
+      mask = await codec.decode(layer.maskData, expected?.mask);
       decodedOwned.add(mask);
     }
     return { ...layer, bitmap, mask, bitmapData: undefined, maskData: undefined };
@@ -122,7 +127,8 @@ export async function encodeImageDocumentSnapshotProjectPixels(
   snapshot: ImageDocumentSnapshot,
   codec: ImageLayerPixelCodec = defaultImageLayerPixelCodec,
 ): Promise<ImageDocumentSnapshot> {
-  if (!inspectImageDocumentSnapshotIntegrity(snapshot).complete) {
+  assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
+  if (!verifyImageDocumentSnapshotIntegrity(snapshot).complete) {
     return unavailableSnapshot(snapshot);
   }
   const layers = await Promise.all(snapshot.layers.map((layer) => encodeImageLayerProjectPixels(layer, codec)));
@@ -150,6 +156,7 @@ export async function decodeImageDocumentSnapshotProjectPixels(
   if (snapshot.pixelState !== 'complete' || !snapshot.integrity || snapshot.integrity.version !== 2) {
     return unavailableSnapshot(snapshot);
   }
+  assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'project' });
   const decodedLayers: ImageLayer[] = [];
   try {
     const proofById = new Map(snapshot.integrity.layers.map((proof) => [proof.layerId, proof] as const));
@@ -165,7 +172,10 @@ export async function decodeImageDocumentSnapshotProjectPixels(
       if (proof.mask.present !== Boolean(layer.maskData)) {
         throw new Error(`Snapshot layer ${layer.id} mask payload presence mismatch.`);
       }
-      const decoded = await decodeImageLayerProjectPixels(layer, codec);
+      const decoded = await decodeImageLayerProjectPixels(layer, codec, {
+        ...(proof.bitmap.present ? { bitmap: { width: proof.bitmap.width, height: proof.bitmap.height } } : {}),
+        ...(proof.mask.present ? { mask: { width: proof.mask.width, height: proof.mask.height } } : {}),
+      });
       if (
         (proof.bitmap.present && (!decoded.bitmap || decoded.bitmap.width !== proof.bitmap.width || decoded.bitmap.height !== proof.bitmap.height))
         || (!proof.bitmap.present && decoded.bitmap)
@@ -191,10 +201,10 @@ export async function decodeImageDocumentSnapshotProjectPixels(
       selectionMaskData: undefined,
       pixelState: 'complete' as const,
     };
-    if (!inspectImageDocumentSnapshotIntegrity(decoded).complete) {
+    if (!verifyImageDocumentSnapshotIntegrity(decoded).complete) {
       throw new Error('Decoded snapshot does not match its integrity proof.');
     }
-    return markImageDocumentSnapshotOwned(decoded);
+    return markImageDocumentSnapshotVerifiedOwned(decoded);
   } catch (error) {
     const unique = new Set<LayerBitmap>();
     for (const layer of decodedLayers) {

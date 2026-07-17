@@ -927,8 +927,8 @@ describe('sanitizeProjectDocument', () => {
             createdAt: 10,
             updatedAt: 15,
             pixelState: 'complete',
-            width: -20,
-            height: 0,
+            width: 800,
+            height: 600,
             layers: [{
               id: 'vector-layer',
               name: 'Editable SFX',
@@ -1092,6 +1092,132 @@ describe('sanitizeProjectDocument', () => {
 
     expect(() => currentSnapshotProject('not-a-digest')).toThrow(/malformed cryptographic/i);
     expect(() => currentSnapshotProject()).toThrow(/malformed cryptographic/i);
+  });
+
+  it('requires a one-to-one current snapshot layer/proof identity match in project JSON', () => {
+    const makeInput = () => ({
+      imageEditor: {
+        activeDocId: 'identity-doc',
+        documents: [{
+          id: 'identity-doc', title: 'Identity', width: 1, height: 1,
+          layers: [], activeLayerId: null, hasSelection: false, selectionVersion: 0,
+          viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+          snapshots: [{
+            id: 'identity-snapshot', name: 'Identity', createdAt: 1, width: 1, height: 1,
+            layers: ['layer-a', 'layer-b'].map((id) => ({
+              id, name: id, type: 'image', visible: true, locked: false, opacity: 1,
+              blendMode: 'normal', x: 0, y: 0, bitmap: null, mask: null,
+              bitmapData: 'AAAA', bitmapVersion: 0,
+            })),
+            activeLayerId: 'layer-a', hasSelection: false, selectionVersion: 0,
+            pixelState: 'complete',
+            integrity: {
+              version: 2,
+              layers: ['layer-a', 'layer-b'].map((layerId, index) => ({
+                layerId,
+                bitmap: { present: true, width: 1, height: 1, contentDigest: `sha256:${String(index + 1).repeat(64)}` },
+                mask: { present: false, width: 0, height: 0 },
+              })),
+              selection: { present: false, width: 0, height: 0, byteLength: 0 },
+            },
+          }],
+        }],
+      },
+    });
+    const mutateAndSanitize = (mutate: (namedSnapshot: Record<string, unknown>) => void) => {
+      const input = makeInput();
+      const namedSnapshot = input.imageEditor.documents[0].snapshots[0] as unknown as Record<string, unknown>;
+      mutate(namedSnapshot);
+      return projectWith(input);
+    };
+
+    expect(() => mutateAndSanitize((namedSnapshot) => {
+      (namedSnapshot.layers as Array<{ id: string }>)[1].id = 'layer-a';
+    })).toThrow(/identity|duplicate/i);
+    expect(() => mutateAndSanitize((namedSnapshot) => {
+      const integrity = namedSnapshot.integrity as { layers: Array<{ layerId: string }> };
+      integrity.layers[1] = structuredClone(integrity.layers[0]);
+    })).toThrow(/identity|duplicate/i);
+    expect(() => mutateAndSanitize((namedSnapshot) => {
+      (namedSnapshot.integrity as { layers: unknown[] }).layers.pop();
+    })).toThrow(/identity|count|missing/i);
+    expect(() => mutateAndSanitize((namedSnapshot) => {
+      const layers = (namedSnapshot.integrity as { layers: Array<Record<string, unknown>> }).layers;
+      layers.push({ ...structuredClone(layers[0]), layerId: 'unused-proof' });
+    })).toThrow(/identity|count|extra/i);
+
+    const reordered = mutateAndSanitize((namedSnapshot) => {
+      (namedSnapshot.integrity as { layers: unknown[] }).layers.reverse();
+    });
+    expect(reordered.imageEditor?.documents[0].snapshots?.[0].pixelState).toBe('complete');
+  });
+
+  it('rejects hostile project snapshot count, dimensions, and aggregate decoded bytes before decode', () => {
+    const base = {
+      id: 'bounded', name: 'Bounded', createdAt: 1, width: 1, height: 1,
+      layers: [], activeLayerId: null, hasSelection: false, selectionVersion: 0,
+      pixelState: 'unavailable',
+    };
+    const wrap = (snapshots: unknown[]) => projectWith({
+      imageEditor: {
+        activeDocId: 'bounded-doc',
+        documents: [{
+          id: 'bounded-doc', title: 'Bounded', width: 1, height: 1,
+          layers: [], activeLayerId: null, hasSelection: false, selectionVersion: 0,
+          viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false, snapshots,
+        }],
+      },
+    });
+    expect(() => wrap(Array.from({ length: 13 }, (_, index) => ({ ...base, id: `bounded-${index}` }))))
+      .toThrow(/count exceeds/i);
+
+    const hostile = {
+      ...base,
+      pixelState: 'complete',
+      layers: [{
+        id: 'large', name: 'Large', type: 'image', visible: true, locked: false,
+        opacity: 1, blendMode: 'normal', x: 0, y: 0, bitmap: null, mask: null,
+        bitmapData: 'AAAA', bitmapVersion: 0,
+      }],
+      integrity: {
+        version: 2,
+        layers: [{
+          layerId: 'large',
+          bitmap: { present: true, width: 1, height: 1, contentDigest: `sha256:${'1'.repeat(64)}` },
+          mask: { present: false, width: 0, height: 0 },
+        }],
+        selection: { present: false, width: 0, height: 0, byteLength: 0 },
+      },
+    };
+    expect(() => wrap([{ ...hostile, width: 16_385 }])).toThrow(/16384/i);
+
+    const aggregate = structuredClone(hostile);
+    aggregate.width = 12_000;
+    aggregate.height = 12_000;
+    aggregate.layers.push({ ...structuredClone(aggregate.layers[0]), id: 'large-2' });
+    aggregate.integrity.layers = ['large', 'large-2'].map((layerId) => ({
+      layerId,
+      bitmap: { present: true, width: 12_000, height: 12_000, contentDigest: `sha256:${'2'.repeat(64)}` },
+      mask: { present: false, width: 0, height: 0 },
+    }));
+    expect(() => wrap([aggregate])).toThrow(/aggregate pixels exceed/i);
+
+    const oneLarge = structuredClone(hostile);
+    oneLarge.width = 12_000;
+    oneLarge.height = 12_000;
+    oneLarge.integrity.layers[0].bitmap.width = 12_000;
+    oneLarge.integrity.layers[0].bitmap.height = 12_000;
+    expect(() => projectWith({
+      imageEditor: {
+        activeDocId: 'bounded-doc-a',
+        documents: ['a', 'b'].map((suffix) => ({
+          id: `bounded-doc-${suffix}`, title: 'Bounded', width: 1, height: 1,
+          layers: [], activeLayerId: null, hasSelection: false, selectionVersion: 0,
+          viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+          snapshots: [{ ...structuredClone(oneLarge), id: `large-${suffix}` }],
+        })),
+      },
+    })).toThrow(/aggregate pixels exceed/i);
   });
 
   it('rejects documents without array-shaped flow snapshots', () => {

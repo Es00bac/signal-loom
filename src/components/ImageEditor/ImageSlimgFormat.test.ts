@@ -231,6 +231,117 @@ describe('ImageSlimgFormat', () => {
     expect(legacy.snapshots?.[0].integrity?.version as number).toBe(1);
   });
 
+  it('requires exact native snapshot layer/proof identity and permits reordered proofs before decode', async () => {
+    const live = doc();
+    const snapshotLayers = [
+      { ...live.layers[0], id: 'native-a', bitmap: fakeBitmap(64, 48, 'NATIVE-A'), mask: null },
+      { ...live.layers[0], id: 'native-b', bitmap: fakeBitmap(64, 48, 'NATIVE-B'), mask: null },
+    ];
+    live.snapshots = [{
+      id: 'native-identity', name: 'Native identity', createdAt: 6, width: 64, height: 48,
+      layers: snapshotLayers, activeLayerId: 'native-a', hasSelection: false, selectionVersion: 0,
+      pixelState: 'complete', integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers),
+    }];
+    const { unpackContainer, packContainer } = await import('../../shared/files/SignalLoomContainer');
+    const { manifest, assets } = unpackContainer(await serializeSlimg(live, codec));
+    let decodeCalls = 0;
+    const trackedCodec: SlimgCodec = {
+      encode: codec.encode,
+      decode: async (...args) => {
+        decodeCalls += 1;
+        return codec.decode(...args);
+      },
+    };
+    const mutateAndOpen = async (mutate: (namedSnapshot: Record<string, unknown>) => void) => {
+      const cloned = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+      const namedSnapshot = (cloned.document as { snapshots: Array<Record<string, unknown>> }).snapshots[0];
+      mutate(namedSnapshot);
+      decodeCalls = 0;
+      return deserializeSlimg(packContainer(cloned, assets), trackedCodec);
+    };
+
+    await expect(mutateAndOpen((namedSnapshot) => {
+      (namedSnapshot.layers as Array<{ id: string }>)[1].id = 'native-a';
+    })).rejects.toThrow(/identity|duplicate/i);
+    expect(decodeCalls).toBe(0);
+    await expect(mutateAndOpen((namedSnapshot) => {
+      const proofs = (namedSnapshot.integrity as { layers: Array<Record<string, unknown>> }).layers;
+      proofs[1] = structuredClone(proofs[0]);
+    })).rejects.toThrow(/identity|duplicate/i);
+    expect(decodeCalls).toBe(0);
+    await expect(mutateAndOpen((namedSnapshot) => {
+      (namedSnapshot.integrity as { layers: unknown[] }).layers.pop();
+    })).rejects.toThrow(/identity|count|missing/i);
+    expect(decodeCalls).toBe(0);
+    await expect(mutateAndOpen((namedSnapshot) => {
+      const proofs = (namedSnapshot.integrity as { layers: Array<Record<string, unknown>> }).layers;
+      proofs.push({ ...structuredClone(proofs[0]), layerId: 'unused-native-proof' });
+    })).rejects.toThrow(/identity|count|extra/i);
+    expect(decodeCalls).toBe(0);
+
+    const reordered = await mutateAndOpen((namedSnapshot) => {
+      (namedSnapshot.integrity as { layers: unknown[] }).layers.reverse();
+    });
+    expect(reordered.snapshots?.[0].pixelState).toBe('complete');
+    expect(decodeCalls).toBeGreaterThan(0);
+  });
+
+  it('rejects hostile native snapshot count, dimensions, and aggregate bytes before codec allocation', async () => {
+    const live = doc();
+    const snapshotLayers = [{ ...live.layers[0], id: 'bounded-native', bitmap: fakeBitmap(64, 48, 'BOUNDED'), mask: null }];
+    live.snapshots = [{
+      id: 'bounded-native', name: 'Bounded native', createdAt: 7, width: 64, height: 48,
+      layers: snapshotLayers, activeLayerId: 'bounded-native', hasSelection: false, selectionVersion: 0,
+      pixelState: 'complete', integrity: buildImageDocumentSnapshotIntegrity(snapshotLayers),
+    }];
+    const { unpackContainer, packContainer } = await import('../../shared/files/SignalLoomContainer');
+    const { manifest, assets } = unpackContainer(await serializeSlimg(live, codec));
+    let decodeCalls = 0;
+    const trackedCodec: SlimgCodec = {
+      encode: codec.encode,
+      decode: async (...args) => {
+        decodeCalls += 1;
+        return codec.decode(...args);
+      },
+    };
+    const rejectManifest = async (mutate: (document: { snapshots: Array<Record<string, unknown>> }) => void) => {
+      const cloned = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
+      const document = cloned.document as { snapshots: Array<Record<string, unknown>> };
+      mutate(document);
+      decodeCalls = 0;
+      await expect(deserializeSlimg(packContainer(cloned, assets), trackedCodec)).rejects.toThrow(/snapshot|16384|aggregate/i);
+      expect(decodeCalls).toBe(0);
+    };
+
+    await rejectManifest((document) => {
+      document.snapshots = Array.from({ length: 13 }, (_, index) => ({
+        ...structuredClone(document.snapshots[0]),
+        id: `native-count-${index}`,
+      }));
+    });
+    await rejectManifest((document) => {
+      const namedSnapshot = document.snapshots[0];
+      namedSnapshot.width = 16_385;
+    });
+    await rejectManifest((document) => {
+      const namedSnapshot = document.snapshots[0];
+      namedSnapshot.width = 12_000;
+      namedSnapshot.height = 12_000;
+      const layers = namedSnapshot.layers as Array<Record<string, unknown>>;
+      layers.push({ ...structuredClone(layers[0]), id: 'bounded-native-2' });
+      for (const layer of layers) {
+        const ref = layer.bitmap as { width: number; height: number };
+        ref.width = 12_000;
+        ref.height = 12_000;
+      }
+      (namedSnapshot.integrity as { layers: unknown[] }).layers = ['bounded-native', 'bounded-native-2'].map((layerId) => ({
+        layerId,
+        bitmap: { present: true, width: 12_000, height: 12_000, contentDigest: `sha256:${'3'.repeat(64)}` },
+        mask: { present: false, width: 0, height: 0 },
+      }));
+    });
+  });
+
   it('disposes every partially decoded native resource exactly once on snapshot digest failure', async () => {
     const live = doc();
     const selectionMask = { width: 64, height: 48, data: new Uint8ClampedArray(64 * 48) };

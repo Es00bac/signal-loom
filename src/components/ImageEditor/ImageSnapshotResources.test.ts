@@ -116,7 +116,7 @@ describe('named snapshot resource ownership', () => {
 
     doc = deleteImageDocumentSnapshot(doc, first.id);
     expect(shared.width).toBe(4);
-    doc = deleteImageDocumentSnapshot(doc, second.id);
+    deleteImageDocumentSnapshot(doc, second.id);
     expect(shared.width).toBe(0);
 
     const liveShared = bitmap();

@@ -3,10 +3,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEmptyImageDocument, useImageEditorStore } from '../../store/imageEditorStore';
-import type { EditorOperation, ImageLayer } from '../../types/imageEditor';
+import type { EditorOperation, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import { buildImageHistoryActionWorkflowDescriptor } from './ImageEditorHistory';
 import { ImageEditorHistoryPanel } from './ImageEditorHistoryPanel';
-import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
+import {
+  buildImageDocumentSnapshotIntegrity,
+  markImageDocumentSnapshotVerifiedOwned,
+} from './ImageSnapshots';
 import { runPhotoshopQuickAction } from './PhotoshopQuickActionRunner';
 
 function makeLayer(patch: Partial<ImageLayer> = {}): ImageLayer {
@@ -25,6 +28,21 @@ function makeLayer(patch: Partial<ImageLayer> = {}): ImageLayer {
     mask: patch.mask ?? null,
     ...patch,
   };
+}
+
+class RenderCountingBitmap {
+  static reads = 0;
+  width = 1;
+  height = 1;
+
+  getContext() {
+    return {
+      getImageData: () => {
+        RenderCountingBitmap.reads += 1;
+        return { width: 1, height: 1, data: new Uint8ClampedArray([1, 2, 3, 255]) };
+      },
+    };
+  }
 }
 
 describe('ImageEditorHistoryPanel', () => {
@@ -529,6 +547,37 @@ describe('ImageEditorHistoryPanel', () => {
     const restoreButton = container.querySelector<HTMLButtonElement>('button[aria-label="Restore snapshot Digest mismatch"]');
     expect(restoreButton?.disabled).toBe(true);
     expect(container.textContent).toContain('Pixels unavailable');
+  });
+
+  it('does not reread or hash verified snapshot pixels during React rerenders', () => {
+    const bitmap = new RenderCountingBitmap() as unknown as LayerBitmap;
+    const layers = [makeLayer({ id: 'cached-layer', bitmap })];
+    const snapshot = markImageDocumentSnapshotVerifiedOwned({
+      id: 'cached-render-snapshot',
+      name: 'Cached render',
+      createdAt: 3,
+      width: 1,
+      height: 1,
+      layers,
+      activeLayerId: 'cached-layer',
+      hasSelection: false,
+      selectionVersion: 0,
+      pixelState: 'complete',
+      integrity: buildImageDocumentSnapshotIntegrity(layers),
+    });
+    const doc = {
+      ...createEmptyImageDocument({ id: 'cached-render-doc', title: 'Cached render', width: 1, height: 1 }),
+      snapshots: [snapshot],
+    };
+    useImageEditorStore.getState().openDocument(doc);
+    RenderCountingBitmap.reads = 0;
+
+    act(() => root.render(<ImageEditorHistoryPanel />));
+    act(() => root.render(<ImageEditorHistoryPanel />));
+
+    expect(RenderCountingBitmap.reads).toBe(0);
+    expect(container.querySelector<HTMLButtonElement>('button[aria-label="Restore snapshot Cached render"]')?.disabled)
+      .toBe(false);
   });
 
   it('creates and renames snapshots with custom names from the history panel', () => {

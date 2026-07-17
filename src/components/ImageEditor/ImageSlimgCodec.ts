@@ -1,5 +1,5 @@
 import type { ImageDocument, LayerBitmap } from '../../types/imageEditor';
-import { createBitmap } from './LayerBitmap';
+import { assertPngBytesMatchDimensions, createBitmap } from './LayerBitmap';
 import { deserializeSlimg, serializeSlimg, type SlimgCodec } from './ImageSlimgFormat';
 
 /**
@@ -15,12 +15,19 @@ async function encodeBitmapToPng(bitmap: LayerBitmap): Promise<Uint8Array> {
 }
 
 async function decodePngToBitmap(bytes: Uint8Array, width: number, height: number): Promise<LayerBitmap> {
+  assertPngBytesMatchDimensions(bytes, width, height);
   const blob = new Blob([bytes as BlobPart], { type: 'image/png' });
   const image = await createImageBitmap(blob);
-  const canvas = createBitmap(width, height);
-  canvas.getContext('2d')?.drawImage(image, 0, 0);
-  image.close?.();
-  return canvas;
+  try {
+    if (image.width !== width || image.height !== height) {
+      throw new Error('.slimg PNG decoded dimensions do not match its integrity proof.');
+    }
+    const canvas = createBitmap(width, height);
+    canvas.getContext('2d')?.drawImage(image, 0, 0);
+    return canvas;
+  } finally {
+    image.close?.();
+  }
 }
 
 export const slimgPixelCodec: SlimgCodec = {

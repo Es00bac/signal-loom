@@ -7,7 +7,10 @@ import type {
   SelectionMaskSnapshot,
 } from '../../types/imageEditor';
 import { cloneBitmap } from './LayerBitmap';
-import { markImageDocumentSnapshotOwned } from './ImageSnapshots';
+import {
+  markImageDocumentSnapshotOwned,
+  verifyImageDocumentSnapshotIntegrity,
+} from './ImageSnapshots';
 
 const retainedHistoryOperations = new WeakSet<EditorOperation>();
 
@@ -148,7 +151,10 @@ export function materializeHistoryLayers(layers: readonly ImageLayer[]): ImageLa
 /** Clone an immutable history document before exposing it to live tools. */
 export function materializeHistoryDocument(document: ImageDocument): ImageDocument {
   const materialized = cloneDocument(document, new Map());
-  materialized.snapshots?.forEach(markImageDocumentSnapshotOwned);
+  materialized.snapshots?.forEach((snapshot) => {
+    markImageDocumentSnapshotOwned(snapshot);
+    verifyImageDocumentSnapshotIntegrity(snapshot);
+  });
   return materialized;
 }
 

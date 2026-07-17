@@ -1,10 +1,11 @@
 import { packContainer, unpackContainer } from '../../shared/files/SignalLoomContainer';
 import type { ImageDocument, ImageDocumentSnapshot, ImageLayer, LayerBitmap, SelectionMaskSnapshot } from '../../types/imageEditor';
 import {
+  assertImageDocumentSnapshotDecodeBounds,
   buildImageDocumentSnapshotIntegrity,
   disposeImageDocumentSnapshotResources,
-  inspectImageDocumentSnapshotIntegrity,
-  markImageDocumentSnapshotOwned,
+  markImageDocumentSnapshotVerifiedOwned,
+  verifyImageDocumentSnapshotIntegrity,
 } from './ImageSnapshots';
 import { getSelection } from './selectionRegistry';
 
@@ -35,6 +36,7 @@ export const SLIMG_FORMAT_VERSION = 1;
 /** Serialize an ImageDocument to .slimg container bytes. Layer bitmaps/masks become PNG asset
  *  entries; the rest of the doc is stored structurally in the manifest. */
 export async function serializeSlimg(doc: ImageDocument, codec: SlimgCodec): Promise<Uint8Array> {
+  assertImageDocumentSnapshotDecodeBounds(doc.snapshots ?? [], { transport: 'runtime' });
   const assets = new Map<string, Uint8Array>();
   const encodedBitmaps = new Map<LayerBitmap, Promise<AssetRef>>();
   let counter = 0;
@@ -75,7 +77,7 @@ export async function serializeSlimg(doc: ImageDocument, codec: SlimgCodec): Pro
 
   const mappedLayers = await Promise.all(doc.layers.map((layer) => encodeLayer(layer, 'layer')));
   const mappedSnapshots = await Promise.all((doc.snapshots ?? []).map(async (snapshot) => {
-    const complete = inspectImageDocumentSnapshotIntegrity(snapshot).complete;
+    const complete = verifyImageDocumentSnapshotIntegrity(snapshot).complete;
     return {
       ...snapshot,
       layers: complete
@@ -128,6 +130,10 @@ export async function deserializeSlimg(bytes: Uint8Array, codec: SlimgCodec): Pr
     snapshots?: Array<Record<string, unknown>>;
     [k: string]: unknown;
   };
+  if (!rawDoc || !Array.isArray(rawDoc.layers) || (rawDoc.snapshots !== undefined && !Array.isArray(rawDoc.snapshots))) {
+    throw new Error('.slimg image document manifest is malformed');
+  }
+  assertImageDocumentSnapshotDecodeBounds(rawDoc.snapshots ?? [], { transport: 'native' });
 
   const decodeLayer = async (rawLayer: Record<string, unknown>): Promise<ImageLayer> => {
     let bitmap: LayerBitmap | null = null;
@@ -225,10 +231,10 @@ export async function deserializeSlimg(bytes: Uint8Array, codec: SlimgCodec): Pr
           selectionMaskData: undefined,
           pixelState: 'complete' as const,
         } as ImageDocumentSnapshot;
-        if (!inspectImageDocumentSnapshotIntegrity(decoded).complete) {
+        if (!verifyImageDocumentSnapshotIntegrity(decoded).complete) {
           throw new Error('.slimg snapshot integrity proof failed');
         }
-        restoredSnapshots.push(markImageDocumentSnapshotOwned(decoded));
+        restoredSnapshots.push(markImageDocumentSnapshotVerifiedOwned(decoded));
       } catch (error) {
         const unique = new Set<LayerBitmap>();
         for (const layer of decodedLayers) {

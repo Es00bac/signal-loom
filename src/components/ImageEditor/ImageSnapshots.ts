@@ -8,11 +8,21 @@ import type {
   SelectionMaskSnapshot,
 } from '../../types/imageEditor';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { cloneBitmap, getBitmapImageData } from './LayerBitmap';
-import { fromSnapshot, isMaskEmpty, toSnapshot, type SelectionMask } from './SelectionMask';
+import {
+  cloneBitmap,
+  getBitmapImageData,
+  isBitmapImmutable,
+  makeBitmapImmutable,
+  releaseImmutableBitmap,
+} from './LayerBitmap';
+import { fromSnapshot, toSnapshot, type SelectionMask } from './SelectionMask';
 import { clearSelection, getSelection, setSelection } from './selectionRegistry';
 
 export const IMAGE_DOCUMENT_MAX_SNAPSHOTS = 12;
+export const IMAGE_PROJECT_MAX_SNAPSHOTS = 96;
+export const IMAGE_SNAPSHOT_MAX_DIMENSION = 16_384;
+export const IMAGE_SNAPSHOT_MAX_LAYERS = 2_048;
+export const IMAGE_SNAPSHOT_MAX_AGGREGATE_BYTES = 768 * 1024 * 1024;
 
 export type ImageSnapshotReadinessIssueCode =
   | 'invalid-snapshot-dimensions'
@@ -104,8 +114,304 @@ export interface ImageSnapshotReadinessDescriptor {
 }
 
 const ownedNamedSnapshots = new WeakSet<ImageDocumentSnapshot>();
+const verifiedNamedSnapshots = new WeakMap<ImageDocumentSnapshot, VerifiedSnapshotBinding>();
+const immutableSelectionBytes = new WeakMap<SelectionMaskSnapshot, { bytes: Uint8ClampedArray }>();
+
+interface VerifiedSnapshotLayerBinding {
+  layer: ImageLayer;
+  id: string;
+  bitmap: LayerBitmap | null;
+  bitmapWidth: number;
+  bitmapHeight: number;
+  mask: LayerBitmap | null;
+  maskWidth: number;
+  maskHeight: number;
+  proof: ImageDocumentSnapshotIntegrity['layers'][number];
+  proofLayerId: string;
+  bitmapProof: ImageDocumentSnapshotAssetIntegrity;
+  bitmapProofSignature: string;
+  maskProof: ImageDocumentSnapshotAssetIntegrity;
+  maskProofSignature: string;
+}
+
+interface VerifiedSnapshotBinding {
+  layers: ImageDocumentSnapshot['layers'];
+  integrity: ImageDocumentSnapshotIntegrity;
+  proofLayers: ImageDocumentSnapshotIntegrity['layers'];
+  selectionProof: ImageDocumentSnapshotIntegrity['selection'];
+  selectionProofSignature: string;
+  selectionMask: SelectionMaskSnapshot | undefined;
+  selectionBytes: Uint8ClampedArray | undefined;
+  snapshotSignature: string;
+  layerBindings: VerifiedSnapshotLayerBinding[];
+  result: ImageDocumentSnapshotIntegrityResult;
+}
 
 type SnapshotAssetRole = 'bitmap-rgba8' | 'mask-rgba8' | 'selection-alpha8';
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null;
+}
+
+function nonemptyIdentity(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * Reject hostile project/native snapshot graphs before any bitmap decode,
+ * canvas allocation, selection allocation, or pixel hashing begins.
+ */
+export function assertImageDocumentSnapshotDecodeBounds(
+  snapshots: readonly unknown[],
+  options: {
+    transport?: 'project' | 'native' | 'runtime';
+    maxSnapshots?: number;
+    maxAggregateBytes?: number;
+  } = {},
+): void {
+  const maxSnapshots = options.maxSnapshots ?? IMAGE_DOCUMENT_MAX_SNAPSHOTS;
+  const maxAggregateBytes = options.maxAggregateBytes ?? IMAGE_SNAPSHOT_MAX_AGGREGATE_BYTES;
+  if (snapshots.length > maxSnapshots) {
+    throw new Error(`Image snapshot count exceeds ${maxSnapshots}.`);
+  }
+  let aggregateBytes = 0;
+  for (const [snapshotIndex, candidate] of snapshots.entries()) {
+    if (!isRecord(candidate) || candidate.pixelState !== 'complete') continue;
+    const integrity = candidate.integrity;
+    if (!isRecord(integrity) || integrity.version !== 2) continue;
+    const layers = Array.isArray(candidate.layers) ? candidate.layers : [];
+    if (layers.length > IMAGE_SNAPSHOT_MAX_LAYERS) {
+      throw new Error(`Image snapshot ${snapshotIndex} layer count exceeds ${IMAGE_SNAPSHOT_MAX_LAYERS}.`);
+    }
+    assertBoundedDimension(candidate.width, `snapshot ${snapshotIndex} width`);
+    assertBoundedDimension(candidate.height, `snapshot ${snapshotIndex} height`);
+    if (!Array.isArray(integrity.layers)) {
+      throw new Error(`Image snapshot ${snapshotIndex} has no current integrity manifest.`);
+    }
+    const identityReasons = inspectRawSnapshotLayerIdentity(layers, integrity.layers);
+    if (identityReasons.length > 0) {
+      throw new Error(`Image snapshot ${snapshotIndex} layer identity proof is invalid: ${identityReasons.join(', ')}.`);
+    }
+    const proofById = new Map(integrity.layers.flatMap((proof) => (
+      isRecord(proof) && typeof proof.layerId === 'string' ? [[proof.layerId, proof] as const] : []
+    )));
+    if (options.transport === 'native' || options.transport === 'project') {
+      for (const rawLayer of layers) {
+        const layer = rawLayer as UnknownRecord;
+        const proof = proofById.get(layer.id as string)!;
+        assertTransportAssetMatchesProof(layer, proof, 'bitmap', options.transport, snapshotIndex);
+        assertTransportAssetMatchesProof(layer, proof, 'mask', options.transport, snapshotIndex);
+      }
+    }
+    for (const [proofIndex, proof] of integrity.layers.entries()) {
+      if (!isRecord(proof)) throw new Error(`Image snapshot ${snapshotIndex} proof ${proofIndex} is malformed.`);
+      aggregateBytes = addBoundedAssetBytes(
+        aggregateBytes,
+        proof.bitmap,
+        4,
+        `snapshot ${snapshotIndex} bitmap proof ${proofIndex}`,
+        maxAggregateBytes,
+      );
+      aggregateBytes = addBoundedAssetBytes(
+        aggregateBytes,
+        proof.mask,
+        4,
+        `snapshot ${snapshotIndex} mask proof ${proofIndex}`,
+        maxAggregateBytes,
+      );
+    }
+    if (!isRecord(integrity.selection) || typeof integrity.selection.present !== 'boolean') {
+      throw new Error(`Image snapshot ${snapshotIndex} selection proof is malformed.`);
+    }
+    if (integrity.selection.present) {
+      const width = assertBoundedDimension(integrity.selection.width, `snapshot ${snapshotIndex} selection width`);
+      const height = assertBoundedDimension(integrity.selection.height, `snapshot ${snapshotIndex} selection height`);
+      const bytes = safePixelByteLength(width, height, 1, `snapshot ${snapshotIndex} selection`);
+      if (integrity.selection.byteLength !== bytes) {
+        throw new Error(`Image snapshot ${snapshotIndex} selection byte length is inconsistent.`);
+      }
+      if (!/^sha256:[a-f0-9]{64}$/.test(String(integrity.selection.contentDigest ?? ''))) {
+        throw new Error(`Image snapshot ${snapshotIndex} has a malformed cryptographic content integrity selection digest.`);
+      }
+      if (options.transport === 'project' && typeof candidate.selectionMaskData !== 'string') {
+        throw new Error(`Image snapshot ${snapshotIndex} selection payload is missing from its integrity proof.`);
+      }
+      if (options.transport === 'native') {
+        assertNativeAssetRef(candidate.selectionMask, width, height, `snapshot ${snapshotIndex} selection`);
+      }
+      aggregateBytes = addAggregateBytes(aggregateBytes, bytes, maxAggregateBytes);
+    } else if (
+      integrity.selection.width !== 0
+      || integrity.selection.height !== 0
+      || integrity.selection.byteLength !== 0
+      || integrity.selection.contentDigest !== undefined
+    ) {
+      throw new Error(`Image snapshot ${snapshotIndex} absent selection proof is nonempty.`);
+    } else if (
+      (options.transport === 'project' && candidate.selectionMaskData !== undefined)
+      || (options.transport === 'native' && candidate.selectionMask !== null && candidate.selectionMask !== undefined)
+    ) {
+      throw new Error(`Image snapshot ${snapshotIndex} has an unexpected selection payload outside its integrity proof.`);
+    }
+  }
+}
+
+function assertTransportAssetMatchesProof(
+  layer: UnknownRecord,
+  proof: UnknownRecord,
+  role: 'bitmap' | 'mask',
+  transport: 'project' | 'native',
+  snapshotIndex: number,
+): void {
+  const assetProof = proof[role];
+  if (!isRecord(assetProof) || typeof assetProof.present !== 'boolean') {
+    throw new Error(`Image snapshot ${snapshotIndex} ${role} proof is malformed.`);
+  }
+  if (transport === 'project') {
+    const payload = layer[`${role}Data`];
+    if (assetProof.present !== (typeof payload === 'string')) {
+      throw new Error(`Image snapshot ${snapshotIndex} ${role} payload presence is inconsistent with its integrity proof.`);
+    }
+    return;
+  }
+  if (!assetProof.present) {
+    if (layer[role] !== null && layer[role] !== undefined) {
+      throw new Error(`Image snapshot ${snapshotIndex} has an unexpected native ${role} payload.`);
+    }
+    return;
+  }
+  assertNativeAssetRef(
+    layer[role],
+    assetProof.width as number,
+    assetProof.height as number,
+    `snapshot ${snapshotIndex} ${role}`,
+  );
+}
+
+function assertNativeAssetRef(value: unknown, width: number, height: number, label: string): void {
+  if (
+    !isRecord(value)
+    || typeof value.asset !== 'string'
+    || value.asset.length === 0
+    || value.width !== width
+    || value.height !== height
+  ) {
+    throw new Error(`${label} native asset reference does not match its integrity proof.`);
+  }
+}
+
+function inspectRawSnapshotLayerIdentity(layers: readonly unknown[], proofs: readonly unknown[]): string[] {
+  const reasons: string[] = [];
+  const layerIds: string[] = [];
+  for (const layer of layers) {
+    if (!isRecord(layer) || !nonemptyIdentity(layer.id)) {
+      reasons.push('empty-snapshot-layer-id');
+    } else {
+      layerIds.push(layer.id);
+    }
+  }
+  const proofIds: string[] = [];
+  for (const proof of proofs) {
+    if (!isRecord(proof) || !nonemptyIdentity(proof.layerId)) {
+      reasons.push('empty-layer-proof-id');
+    } else {
+      proofIds.push(proof.layerId);
+    }
+  }
+  if (new Set(layerIds).size !== layerIds.length) reasons.push('duplicate-snapshot-layer-id');
+  if (new Set(proofIds).size !== proofIds.length) reasons.push('duplicate-layer-proof');
+  if (layers.length !== proofs.length) reasons.push('layer-count-mismatch');
+  const layerIdSet = new Set(layerIds);
+  const proofIdSet = new Set(proofIds);
+  for (const layerId of layerIdSet) {
+    if (!proofIdSet.has(layerId)) reasons.push(`missing-layer-proof:${layerId}`);
+  }
+  for (const proofId of proofIdSet) {
+    if (!layerIdSet.has(proofId)) reasons.push(`extra-layer-proof:${proofId}`);
+  }
+  return [...new Set(reasons)];
+}
+
+function assertBoundedDimension(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > IMAGE_SNAPSHOT_MAX_DIMENSION) {
+    throw new Error(`${label} must be an integer between 1 and ${IMAGE_SNAPSHOT_MAX_DIMENSION}.`);
+  }
+  return value as number;
+}
+
+function addBoundedAssetBytes(
+  total: number,
+  candidate: unknown,
+  channels: number,
+  label: string,
+  maxAggregateBytes: number,
+): number {
+  if (!isRecord(candidate) || typeof candidate.present !== 'boolean') {
+    throw new Error(`${label} is malformed.`);
+  }
+  if (!candidate.present) {
+    if (candidate.width !== 0 || candidate.height !== 0 || candidate.contentDigest !== undefined) {
+      throw new Error(`${label} absent proof is nonempty.`);
+    }
+    return total;
+  }
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(candidate.contentDigest ?? ''))) {
+    throw new Error(`${label} has a malformed cryptographic content integrity digest.`);
+  }
+  const width = assertBoundedDimension(candidate.width, `${label} width`);
+  const height = assertBoundedDimension(candidate.height, `${label} height`);
+  return addAggregateBytes(total, safePixelByteLength(width, height, channels, label), maxAggregateBytes);
+}
+
+function safePixelByteLength(width: number, height: number, channels: number, label: string): number {
+  const bytes = width * height * channels;
+  if (!Number.isSafeInteger(bytes)) throw new Error(`${label} byte length is unsafe.`);
+  return bytes;
+}
+
+function addAggregateBytes(total: number, bytes: number, maxAggregateBytes: number): number {
+  const next = total + bytes;
+  if (!Number.isSafeInteger(next) || next > maxAggregateBytes) {
+    throw new Error(`Image snapshot aggregate pixels exceed ${maxAggregateBytes} bytes.`);
+  }
+  return next;
+}
+
+function assertImageSnapshotSourceBounds(
+  layers: readonly ImageLayer[],
+  selection?: SelectionMask | SelectionMaskSnapshot,
+): void {
+  if (layers.length > IMAGE_SNAPSHOT_MAX_LAYERS) {
+    throw new Error(`Image snapshot layer count exceeds ${IMAGE_SNAPSHOT_MAX_LAYERS}.`);
+  }
+  const layerIds = layers.map((layer) => layer.id);
+  if (layerIds.some((id) => !nonemptyIdentity(id)) || new Set(layerIds).size !== layerIds.length) {
+    throw new Error('Image snapshot source layers require unique, nonempty ids.');
+  }
+  let aggregateBytes = 0;
+  for (const layer of layers) {
+    for (const [role, bitmap] of [['bitmap', layer.bitmap], ['mask', layer.mask]] as const) {
+      if (!bitmap) continue;
+      const width = assertBoundedDimension(bitmap.width, `${layer.id} ${role} width`);
+      const height = assertBoundedDimension(bitmap.height, `${layer.id} ${role} height`);
+      aggregateBytes = addAggregateBytes(
+        aggregateBytes,
+        safePixelByteLength(width, height, 4, `${layer.id} ${role}`),
+        IMAGE_SNAPSHOT_MAX_AGGREGATE_BYTES,
+      );
+    }
+  }
+  if (selection) {
+    const width = assertBoundedDimension(selection.width, 'snapshot selection width');
+    const height = assertBoundedDimension(selection.height, 'snapshot selection height');
+    const bytes = getSnapshotSelectionBytes(selection);
+    const expectedBytes = safePixelByteLength(width, height, 1, 'snapshot selection');
+    if (bytes.byteLength !== expectedBytes) throw new Error('Image snapshot selection byte length is inconsistent.');
+    addAggregateBytes(aggregateBytes, expectedBytes, IMAGE_SNAPSHOT_MAX_AGGREGATE_BYTES);
+  }
+}
 
 function snapshotContentDigest(input: {
   role: SnapshotAssetRole;
@@ -154,18 +460,19 @@ function snapshotAssetIntegrity(
 }
 
 function selectionAssetIntegrity(selection: SelectionMaskSnapshot | undefined): ImageDocumentSnapshotIntegrity['selection'] {
+  const bytes = selection ? getSnapshotSelectionBytes(selection) : undefined;
   return selection
     ? {
         present: true,
         width: selection.width,
         height: selection.height,
-        byteLength: selection.data.byteLength,
+        byteLength: bytes!.byteLength,
         contentDigest: snapshotContentDigest({
           role: 'selection-alpha8',
           layerId: '',
           width: selection.width,
           height: selection.height,
-          bytes: selection.data,
+          bytes: bytes!,
         }),
       }
     : { present: false, width: 0, height: 0, byteLength: 0 };
@@ -175,6 +482,7 @@ export function buildImageDocumentSnapshotIntegrity(
   layers: readonly ImageLayer[],
   selectionMask?: SelectionMaskSnapshot,
 ): ImageDocumentSnapshotIntegrity {
+  assertImageSnapshotSourceBounds(layers, selectionMask);
   return {
     version: 2,
     layers: layers.map((layer) => ({
@@ -191,13 +499,14 @@ function validSelectionForDocument(
   width: number,
   height: number,
 ): selection is SelectionMask | SelectionMaskSnapshot {
+  const bytes = selection ? getSnapshotSelectionBytes(selection) : undefined;
   return Boolean(
     selection
     && selection.width === width
     && selection.height === height
-    && selection.data instanceof Uint8ClampedArray
-    && selection.data.byteLength === width * height
-    && !isMaskEmpty(selection),
+    && bytes instanceof Uint8ClampedArray
+    && bytes.byteLength === width * height
+    && bytes.some((value) => value !== 0),
   );
 }
 
@@ -237,8 +546,7 @@ export interface ImageDocumentSnapshotIntegrityResult {
   reasons: string[];
 }
 
-/** Runtime proof used by Restore, readiness, project encoding, and native encoding. */
-export function inspectImageDocumentSnapshotIntegrity(
+function inspectSnapshotStructure(
   snapshot: ImageDocumentSnapshot,
 ): ImageDocumentSnapshotIntegrityResult {
   const reasons: string[] = [];
@@ -248,15 +556,76 @@ export function inspectImageDocumentSnapshotIntegrity(
     reasons.push('missing-integrity-manifest');
     return { complete: false, selectionComplete: !snapshot.hasSelection, reasons };
   }
-  if (integrity.layers.length !== snapshot.layers.length) reasons.push('layer-count-mismatch');
-  const layerProofById = new Map(integrity.layers.map((layer) => [layer.layerId, layer] as const));
-  if (layerProofById.size !== integrity.layers.length) reasons.push('duplicate-layer-proof');
-  for (const layer of snapshot.layers) {
-    const proof = layerProofById.get(layer.id);
-    if (!proof) {
-      reasons.push(`missing-layer-proof:${layer.id}`);
+  reasons.push(...inspectRawSnapshotLayerIdentity(snapshot.layers, integrity.layers));
+  for (const proof of integrity.layers as unknown[]) {
+    if (!isRecord(proof)) {
+      reasons.push('malformed-layer-proof');
       continue;
     }
+    if (!validAssetProofShape(proof.bitmap)) reasons.push(`malformed-bitmap-proof:${String(proof.layerId ?? '')}`);
+    if (!validAssetProofShape(proof.mask)) reasons.push(`malformed-mask-proof:${String(proof.layerId ?? '')}`);
+  }
+  let selectionComplete = true;
+  const selectionProof = integrity.selection;
+  if (
+    !validAssetProofShape(selectionProof)
+    || !Number.isSafeInteger(selectionProof.byteLength)
+    || selectionProof.byteLength < 0
+    || (selectionProof.present && selectionProof.byteLength !== selectionProof.width * selectionProof.height)
+    || (!selectionProof.present && selectionProof.byteLength !== 0)
+  ) {
+    reasons.push('malformed-selection-proof');
+    selectionComplete = false;
+  }
+  if (selectionProof.present !== snapshot.hasSelection) {
+    reasons.push('selection-claim-mismatch');
+    selectionComplete = false;
+  } else if (!selectionProof.present && (
+    snapshot.selectionMask
+    || selectionProof.width !== 0
+    || selectionProof.height !== 0
+    || selectionProof.byteLength !== 0
+    || selectionProof.contentDigest !== undefined
+  )) {
+    reasons.push('unexpected-selection-payload');
+    selectionComplete = false;
+  }
+  return { complete: reasons.length === 0, selectionComplete, reasons: [...new Set(reasons)] };
+}
+
+function validAssetProofShape(proof: unknown): proof is ImageDocumentSnapshotAssetIntegrity {
+  if (!isRecord(proof) || typeof proof.present !== 'boolean') return false;
+  if (proof.present) {
+    return typeof proof.width === 'number'
+      && typeof proof.height === 'number'
+      && Number.isSafeInteger(proof.width)
+      && Number.isSafeInteger(proof.height)
+      && proof.width > 0
+      && proof.height > 0
+      && typeof proof.contentDigest === 'string'
+      && /^sha256:[a-f0-9]{64}$/.test(proof.contentDigest);
+  }
+  return proof.width === 0
+    && proof.height === 0
+    && proof.contentDigest === undefined;
+}
+
+/** Explicit O(pixel) verification boundary used by create/decode/save/Restore. */
+export function verifyImageDocumentSnapshotIntegrity(
+  snapshot: ImageDocumentSnapshot,
+): ImageDocumentSnapshotIntegrityResult {
+  const structure = inspectSnapshotStructure(snapshot);
+  if (!structure.complete) return structure;
+  try {
+    assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
+  } catch {
+    return { complete: false, selectionComplete: structure.selectionComplete, reasons: ['snapshot-bounds-invalid'] };
+  }
+  const integrity = snapshot.integrity!;
+  const reasons: string[] = [];
+  const layerProofById = new Map(integrity.layers.map((layer) => [layer.layerId, layer] as const));
+  for (const layer of snapshot.layers) {
+    const proof = layerProofById.get(layer.id)!;
     if (!assetMatchesIntegrity(layer.bitmap, proof.bitmap, layer.id, 'bitmap-rgba8')) {
       reasons.push(`bitmap-content-digest-mismatch:${layer.id}`);
     }
@@ -267,42 +636,198 @@ export function inspectImageDocumentSnapshotIntegrity(
 
   const selectionProof = integrity.selection;
   let selectionComplete = true;
-  if (selectionProof.present !== snapshot.hasSelection) {
-    reasons.push('selection-claim-mismatch');
-    selectionComplete = false;
-  } else if (selectionProof.present) {
+  if (selectionProof.present) {
     const selection = snapshot.selectionMask;
+    const selectionBytes = selection ? getSnapshotSelectionBytes(selection) : undefined;
     selectionComplete = Boolean(
       validSelectionForDocument(selection, snapshot.width, snapshot.height)
       && selectionProof.width === selection.width
       && selectionProof.height === selection.height
-      && selectionProof.byteLength === selection.data.byteLength
+      && selectionBytes
+      && selectionProof.byteLength === selectionBytes.byteLength
       && typeof selectionProof.contentDigest === 'string'
       && selectionProof.contentDigest === snapshotContentDigest({
         role: 'selection-alpha8',
         layerId: '',
         width: selection.width,
         height: selection.height,
-        bytes: selection.data,
+        bytes: selectionBytes,
       }),
     );
     if (!selectionComplete) reasons.push('selection-payload-mismatch');
-  } else if (
-    snapshot.selectionMask
-    || selectionProof.width !== 0
-    || selectionProof.height !== 0
-    || selectionProof.byteLength !== 0
-    || selectionProof.contentDigest !== undefined
-  ) {
-    reasons.push('unexpected-selection-payload');
-    selectionComplete = false;
   }
-  return { complete: reasons.length === 0, selectionComplete, reasons };
+  const result = { complete: reasons.length === 0, selectionComplete, reasons };
+  if (result.complete && ownedNamedSnapshots.has(snapshot)) cacheVerifiedOwnedSnapshot(snapshot, result);
+  return result;
+}
+
+/**
+ * Cheap runtime readiness query. Production-owned snapshots enter this cache
+ * only after an explicit deep verification boundary and are bound to the exact
+ * snapshot/layer/resource/manifest graph.
+ */
+export function inspectImageDocumentSnapshotIntegrity(
+  snapshot: ImageDocumentSnapshot,
+): ImageDocumentSnapshotIntegrityResult {
+  const structure = inspectSnapshotStructure(snapshot);
+  if (!structure.complete) return structure;
+  const cached = verifiedNamedSnapshots.get(snapshot);
+  if (cached) {
+    return verifiedBindingMatches(snapshot, cached)
+      ? cached.result
+      : {
+          complete: false,
+          selectionComplete: false,
+          reasons: ['verified-snapshot-binding-changed'],
+        };
+  }
+  const result = verifyImageDocumentSnapshotIntegrity(snapshot);
+  if (result.complete && ownedNamedSnapshots.has(snapshot)) cacheVerifiedOwnedSnapshot(snapshot, result);
+  return result;
 }
 
 export function markImageDocumentSnapshotOwned(snapshot: ImageDocumentSnapshot): ImageDocumentSnapshot {
   ownedNamedSnapshots.add(snapshot);
   return snapshot;
+}
+
+/** Register a freshly built manifest whose exact bytes were hashed by the builder. */
+export function markImageDocumentSnapshotVerifiedOwned(snapshot: ImageDocumentSnapshot): ImageDocumentSnapshot {
+  markImageDocumentSnapshotOwned(snapshot);
+  const structure = inspectSnapshotStructure(snapshot);
+  if (!structure.complete) {
+    throw new Error(`Image snapshot cannot enter verified state: ${structure.reasons.join(', ')}.`);
+  }
+  assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
+  cacheVerifiedOwnedSnapshot(snapshot, { complete: true, selectionComplete: true, reasons: [] });
+  return snapshot;
+}
+
+function cacheVerifiedOwnedSnapshot(
+  snapshot: ImageDocumentSnapshot,
+  result: ImageDocumentSnapshotIntegrityResult,
+): void {
+  const newlyImmutable: LayerBitmap[] = [];
+  try {
+    for (const layer of snapshot.layers) {
+      for (const bitmap of [layer.bitmap, layer.mask]) {
+        if (!bitmap || isBitmapImmutable(bitmap)) continue;
+        makeBitmapImmutable(bitmap);
+        newlyImmutable.push(bitmap);
+      }
+    }
+    if (snapshot.selectionMask) makeSelectionSnapshotImmutable(snapshot.selectionMask);
+    verifiedNamedSnapshots.set(snapshot, captureVerifiedBinding(snapshot, result));
+  } catch (error) {
+    for (const bitmap of newlyImmutable.reverse()) releaseImmutableBitmap(bitmap);
+    throw error;
+  }
+}
+
+function makeSelectionSnapshotImmutable(selection: SelectionMaskSnapshot): void {
+  if (immutableSelectionBytes.has(selection)) return;
+  const record = { bytes: new Uint8ClampedArray(selection.data) };
+  Object.defineProperties(selection, {
+    width: { configurable: false, enumerable: true, writable: false, value: selection.width },
+    height: { configurable: false, enumerable: true, writable: false, value: selection.height },
+    data: {
+      configurable: false,
+      enumerable: true,
+      get: () => new Uint8ClampedArray(record.bytes),
+      set: () => {
+        throw new Error('Verified Image snapshot selections are immutable.');
+      },
+    },
+  });
+  immutableSelectionBytes.set(selection, record);
+  Object.freeze(selection);
+}
+
+function getSnapshotSelectionBytes(selection: SelectionMask | SelectionMaskSnapshot): Uint8ClampedArray {
+  return immutableSelectionBytes.get(selection as SelectionMaskSnapshot)?.bytes ?? selection.data;
+}
+
+function assetProofSignature(proof: ImageDocumentSnapshotAssetIntegrity): string {
+  return `${proof.present}:${proof.width}:${proof.height}:${proof.contentDigest ?? ''}`;
+}
+
+function snapshotBindingSignature(snapshot: ImageDocumentSnapshot): string {
+  return `${snapshot.pixelState}:${snapshot.width}:${snapshot.height}:${snapshot.hasSelection}:${snapshot.layers.length}`;
+}
+
+function selectionProofSignature(proof: ImageDocumentSnapshotIntegrity['selection']): string {
+  return `${assetProofSignature(proof)}:${proof.byteLength}`;
+}
+
+function captureVerifiedBinding(
+  snapshot: ImageDocumentSnapshot,
+  result: ImageDocumentSnapshotIntegrityResult,
+): VerifiedSnapshotBinding {
+  const integrity = snapshot.integrity!;
+  const proofById = new Map(integrity.layers.map((proof) => [proof.layerId, proof] as const));
+  return {
+    layers: snapshot.layers,
+    integrity,
+    proofLayers: integrity.layers,
+    selectionProof: integrity.selection,
+    selectionProofSignature: selectionProofSignature(integrity.selection),
+    selectionMask: snapshot.selectionMask,
+    selectionBytes: snapshot.selectionMask ? getSnapshotSelectionBytes(snapshot.selectionMask) : undefined,
+    snapshotSignature: snapshotBindingSignature(snapshot),
+    layerBindings: snapshot.layers.map((layer) => {
+      const proof = proofById.get(layer.id)!;
+      return {
+        layer,
+        id: layer.id,
+        bitmap: layer.bitmap,
+        bitmapWidth: layer.bitmap?.width ?? 0,
+        bitmapHeight: layer.bitmap?.height ?? 0,
+        mask: layer.mask,
+        maskWidth: layer.mask?.width ?? 0,
+        maskHeight: layer.mask?.height ?? 0,
+        proof,
+        proofLayerId: proof.layerId,
+        bitmapProof: proof.bitmap,
+        bitmapProofSignature: assetProofSignature(proof.bitmap),
+        maskProof: proof.mask,
+        maskProofSignature: assetProofSignature(proof.mask),
+      };
+    }),
+    result,
+  };
+}
+
+function verifiedBindingMatches(snapshot: ImageDocumentSnapshot, binding: VerifiedSnapshotBinding): boolean {
+  if (
+    snapshot.layers !== binding.layers
+    || snapshot.integrity !== binding.integrity
+    || snapshot.integrity.layers !== binding.proofLayers
+    || snapshot.integrity.selection !== binding.selectionProof
+    || snapshot.selectionMask !== binding.selectionMask
+    || snapshotBindingSignature(snapshot) !== binding.snapshotSignature
+    || selectionProofSignature(snapshot.integrity.selection) !== binding.selectionProofSignature
+    || (snapshot.selectionMask ? getSnapshotSelectionBytes(snapshot.selectionMask) : undefined) !== binding.selectionBytes
+    || snapshot.layers.length !== binding.layerBindings.length
+  ) return false;
+  const proofById = new Map(snapshot.integrity.layers.map((proof) => [proof.layerId, proof] as const));
+  return binding.layerBindings.every((expected, index) => {
+    const layer = snapshot.layers[index];
+    const proof = proofById.get(layer.id);
+    return layer === expected.layer
+      && layer.id === expected.id
+      && layer.bitmap === expected.bitmap
+      && (layer.bitmap?.width ?? 0) === expected.bitmapWidth
+      && (layer.bitmap?.height ?? 0) === expected.bitmapHeight
+      && layer.mask === expected.mask
+      && (layer.mask?.width ?? 0) === expected.maskWidth
+      && (layer.mask?.height ?? 0) === expected.maskHeight
+      && proof === expected.proof
+      && proof.layerId === expected.proofLayerId
+      && proof.bitmap === expected.bitmapProof
+      && assetProofSignature(proof.bitmap) === expected.bitmapProofSignature
+      && proof.mask === expected.maskProof
+      && assetProofSignature(proof.mask) === expected.maskProofSignature;
+  });
 }
 
 function collectSnapshotBitmaps(snapshot: ImageDocumentSnapshot, target: Set<LayerBitmap>): void {
@@ -325,11 +850,20 @@ export function disposeImageDocumentSnapshotResources(
   protectedBitmaps: ReadonlySet<LayerBitmap> = new Set(),
 ): void {
   if (!ownedNamedSnapshots.has(snapshot)) return;
+  verifiedNamedSnapshots.delete(snapshot);
+  if (snapshot.selectionMask) {
+    const selectionRecord = immutableSelectionBytes.get(snapshot.selectionMask);
+    if (selectionRecord) {
+      selectionRecord.bytes = new Uint8ClampedArray(0);
+      immutableSelectionBytes.delete(snapshot.selectionMask);
+    }
+  }
   const bitmaps = new Set<LayerBitmap>();
   collectSnapshotBitmaps(snapshot, bitmaps);
   for (const bitmap of bitmaps) {
     if (protectedBitmaps.has(bitmap)) continue;
     if (bitmap.width !== 0 || bitmap.height !== 0) {
+      releaseImmutableBitmap(bitmap);
       bitmap.width = 0;
       bitmap.height = 0;
     }
@@ -392,11 +926,14 @@ export function createImageDocumentSnapshot(
 ): ImageDocumentSnapshot {
   const createdAt = Date.now();
   const liveSelection = doc.hasSelection ? getSelection(doc.id) : undefined;
+  assertBoundedDimension(doc.width, 'snapshot document width');
+  assertBoundedDimension(doc.height, 'snapshot document height');
+  assertImageSnapshotSourceBounds(doc.layers, liveSelection);
   const selectionMask = validSelectionForDocument(liveSelection, doc.width, doc.height)
     ? toSnapshot(liveSelection)
     : undefined;
   const layers = cloneSnapshotLayers(doc.layers);
-  return markImageDocumentSnapshotOwned({
+  return markImageDocumentSnapshotVerifiedOwned({
     id: `snapshot-${createdAt}-${Math.floor(Math.random() * 1000)}`,
     name: normalizeSnapshotName(name, doc),
     createdAt,
@@ -431,7 +968,7 @@ export function restoreImageDocumentSnapshot(
   snapshotId: string,
 ): ImageDocument {
   const snapshot = doc.snapshots?.find((candidate) => candidate.id === snapshotId);
-  if (!snapshot || !hasValidSnapshotDimensions(snapshot) || !inspectImageDocumentSnapshotIntegrity(snapshot).complete) return doc;
+  if (!snapshot || !hasValidSnapshotDimensions(snapshot) || !verifyImageDocumentSnapshotIntegrity(snapshot).complete) return doc;
   const selectionMask = snapshot.hasSelection && snapshot.selectionMask
     ? toSnapshot(snapshot.selectionMask)
     : undefined;
@@ -499,8 +1036,9 @@ function compactSnapshotName(name: string): string {
 function buildNamedSnapshotReadiness(snapshot: ImageDocumentSnapshot): ImageNamedSnapshotReadiness {
   const blockers: ImageSnapshotReadinessIssue[] = [];
   const warnings: ImageSnapshotReadinessIssue[] = [];
+  const validDimensions = hasValidSnapshotDimensions(snapshot);
 
-  if (!hasValidSnapshotDimensions(snapshot)) {
+  if (!validDimensions) {
     blockers.push({
       code: 'invalid-snapshot-dimensions',
       severity: 'error',
@@ -526,7 +1064,7 @@ function buildNamedSnapshotReadiness(snapshot: ImageDocumentSnapshot): ImageName
       snapshotId: snapshot.id,
       message: `Snapshot ${snapshot.id} has no cryptographic pixel manifest and cannot be restored safely.`,
     });
-  } else if (snapshot.pixelState === 'complete' && !integrity.complete) {
+  } else if (snapshot.pixelState === 'complete' && validDimensions && !integrity.complete) {
     blockers.push({
       code: integrity.selectionComplete ? 'snapshot-integrity-unproven' : 'snapshot-selection-unavailable',
       severity: 'error',
@@ -764,11 +1302,17 @@ export function renameImageDocumentSnapshot(
   const snapshots = (doc.snapshots ?? []).map((snapshot) => {
     if (snapshot.id !== snapshotId || snapshot.name === normalizedName) return snapshot;
     changed = true;
-    return {
+    const renamed = {
       ...snapshot,
       name: normalizedName,
       updatedAt,
     };
+    if (ownedNamedSnapshots.has(snapshot)) ownedNamedSnapshots.add(renamed);
+    const verified = verifiedNamedSnapshots.get(snapshot);
+    if (verified && verifiedBindingMatches(snapshot, verified)) {
+      verifiedNamedSnapshots.set(renamed, captureVerifiedBinding(renamed, verified.result));
+    }
+    return renamed;
   });
   return changed ? { ...doc, snapshots, dirty: true } : doc;
 }

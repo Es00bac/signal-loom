@@ -1,5 +1,17 @@
 import type { LayerBitmap } from '../../types/imageEditor';
 
+interface ImmutableBitmapRecord {
+  context: OffscreenCanvasRenderingContext2D;
+  width: number;
+  height: number;
+  getContextDescriptor?: PropertyDescriptor;
+  widthDescriptor?: PropertyDescriptor;
+  heightDescriptor?: PropertyDescriptor;
+  transferDescriptor?: PropertyDescriptor;
+}
+
+const immutableBitmaps = new WeakMap<LayerBitmap, ImmutableBitmapRecord>();
+
 /**
  * Thin wrappers over OffscreenCanvas for use as raster layer buffers.
  * These delegate directly to the native API; they exist to give the rest of
@@ -19,12 +31,12 @@ export function cloneBitmap(src: LayerBitmap): LayerBitmap {
 }
 
 export function clearBitmap(bitmap: LayerBitmap): void {
-  const ctx = getCtx(bitmap);
+  const ctx = getWritableCtx(bitmap);
   ctx.clearRect(0, 0, bitmap.width, bitmap.height);
 }
 
 export function fillBitmap(bitmap: LayerBitmap, color: string): void {
-  const ctx = getCtx(bitmap);
+  const ctx = getWritableCtx(bitmap);
   ctx.save();
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, bitmap.width, bitmap.height);
@@ -49,7 +61,7 @@ export function putBitmapImageData(
   const real = typeof ImageData !== 'undefined' && !(imageData instanceof ImageData)
     ? new ImageData(new Uint8ClampedArray(like.data), like.width, like.height)
     : imageData;
-  getCtx(bitmap).putImageData(real, dx, dy);
+  getWritableCtx(bitmap).putImageData(real, dx, dy);
 }
 
 export function blitInto(
@@ -58,7 +70,73 @@ export function blitInto(
   dx = 0,
   dy = 0,
 ): void {
-  getCtx(dest).drawImage(src, dx, dy);
+  getWritableCtx(dest).drawImage(src, dx, dy);
+}
+
+/**
+ * Named snapshots expose their canvases for read/encode/clone operations, but
+ * never expose a writable 2D context. This makes a successfully verified
+ * snapshot resource immutable for the lifetime of its verification cache.
+ */
+export function makeBitmapImmutable(bitmap: LayerBitmap): void {
+  if (immutableBitmaps.has(bitmap)) return;
+  const context = getCtx(bitmap);
+  const record: ImmutableBitmapRecord = {
+    context,
+    width: bitmap.width,
+    height: bitmap.height,
+    getContextDescriptor: Object.getOwnPropertyDescriptor(bitmap, 'getContext'),
+    widthDescriptor: Object.getOwnPropertyDescriptor(bitmap, 'width'),
+    heightDescriptor: Object.getOwnPropertyDescriptor(bitmap, 'height'),
+    transferDescriptor: Object.getOwnPropertyDescriptor(bitmap, 'transferToImageBitmap'),
+  };
+  immutableBitmaps.set(bitmap, record);
+  try {
+    Object.defineProperties(bitmap, {
+      getContext: {
+        configurable: true,
+        value: () => null,
+      },
+      width: {
+        configurable: true,
+        get: () => record.width,
+        set: () => {
+          throw new Error('Verified Image snapshot bitmaps are immutable.');
+        },
+      },
+      height: {
+        configurable: true,
+        get: () => record.height,
+        set: () => {
+          throw new Error('Verified Image snapshot bitmaps are immutable.');
+        },
+      },
+      transferToImageBitmap: {
+        configurable: true,
+        value: () => {
+          throw new Error('Verified Image snapshot bitmaps cannot be transferred.');
+        },
+      },
+    });
+  } catch (error) {
+    immutableBitmaps.delete(bitmap);
+    throw new Error('Image snapshot bitmap could not be made immutable.', { cause: error });
+  }
+}
+
+export function isBitmapImmutable(bitmap: LayerBitmap): boolean {
+  return immutableBitmaps.has(bitmap);
+}
+
+/** Remove the read-only facade immediately before the owning snapshot releases the canvas. */
+export function releaseImmutableBitmap(bitmap: LayerBitmap): void {
+  const record = immutableBitmaps.get(bitmap);
+  if (!record) return;
+  restoreOwnDescriptor(bitmap, 'getContext', record.getContextDescriptor);
+  restoreOwnDescriptor(bitmap, 'width', record.widthDescriptor);
+  restoreOwnDescriptor(bitmap, 'height', record.heightDescriptor);
+  restoreOwnDescriptor(bitmap, 'transferToImageBitmap', record.transferDescriptor);
+  immutableBitmaps.delete(bitmap);
 }
 
 export async function bitmapToBlob(
@@ -92,7 +170,11 @@ export async function bitmapFromImageSource(image: CanvasImageSource): Promise<L
   return bitmap;
 }
 
-export async function bitmapFromUrl(url: string): Promise<LayerBitmap> {
+export async function bitmapFromUrl(
+  url: string,
+  expected?: { width: number; height: number },
+): Promise<LayerBitmap> {
+  if (expected) assertBoundedPngDataUrl(url, expected.width, expected.height);
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
@@ -100,16 +182,82 @@ export async function bitmapFromUrl(url: string): Promise<LayerBitmap> {
   const blob = await response.blob();
   const imageBitmap = await createImageBitmap(blob);
   try {
+    if (expected && (imageBitmap.width !== expected.width || imageBitmap.height !== expected.height)) {
+      throw new Error('Image snapshot PNG decoded dimensions do not match its integrity proof.');
+    }
     return await bitmapFromImageSource(imageBitmap);
   } finally {
     imageBitmap.close();
   }
 }
 
+export function assertPngBytesMatchDimensions(bytes: Uint8Array, width: number, height: number): void {
+  if (bytes.byteLength < 24) throw new Error('Image snapshot PNG is missing its IHDR dimensions.');
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (!signature.every((value, index) => bytes[index] === value)) {
+    throw new Error('Image snapshot payload is not a PNG.');
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (
+    String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]) !== 'IHDR'
+    || view.getUint32(16, false) !== width
+    || view.getUint32(20, false) !== height
+  ) {
+    throw new Error('Image snapshot PNG dimensions do not match its integrity proof.');
+  }
+  const rawBytes = width * height * 4;
+  const maxPngBytes = rawBytes + Math.max(1024 * 1024, Math.ceil(rawBytes / 8));
+  if (!Number.isSafeInteger(rawBytes) || bytes.byteLength > maxPngBytes) {
+    throw new Error('Image snapshot PNG exceeds its proven pixel allocation budget.');
+  }
+}
+
+function assertBoundedPngDataUrl(url: string, width: number, height: number): void {
+  const prefix = 'data:image/png;base64,';
+  if (!url.startsWith(prefix)) throw new Error('Image snapshot project payload is not a PNG data URL.');
+  const payload = url.slice(prefix.length);
+  const decodedByteLength = Math.floor(payload.length * 3 / 4)
+    - (payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0);
+  const rawBytes = width * height * 4;
+  const maxPngBytes = rawBytes + Math.max(1024 * 1024, Math.ceil(rawBytes / 8));
+  if (!Number.isSafeInteger(decodedByteLength) || decodedByteLength > maxPngBytes) {
+    throw new Error('Image snapshot project PNG exceeds its proven pixel allocation budget.');
+  }
+  const headerPayload = payload.slice(0, 32);
+  let header: Uint8Array;
+  try {
+    header = Uint8Array.from(atob(headerPayload), (character) => character.charCodeAt(0));
+  } catch (error) {
+    throw new Error('Image snapshot project PNG header is malformed.', { cause: error });
+  }
+  assertPngBytesMatchDimensions(header, width, height);
+}
+
 function getCtx(bitmap: LayerBitmap): OffscreenCanvasRenderingContext2D {
+  const immutable = immutableBitmaps.get(bitmap);
+  if (immutable) return immutable.context;
   const ctx = bitmap.getContext('2d');
   if (!ctx) {
     throw new Error('Failed to acquire 2D context for layer bitmap');
   }
   return ctx;
+}
+
+function getWritableCtx(bitmap: LayerBitmap): OffscreenCanvasRenderingContext2D {
+  if (immutableBitmaps.has(bitmap)) {
+    throw new Error('Verified Image snapshot bitmaps are immutable.');
+  }
+  return getCtx(bitmap);
+}
+
+function restoreOwnDescriptor(
+  bitmap: LayerBitmap,
+  property: 'getContext' | 'width' | 'height' | 'transferToImageBitmap',
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  if (descriptor) {
+    Object.defineProperty(bitmap, property, descriptor);
+  } else {
+    delete (bitmap as unknown as Record<string, unknown>)[property];
+  }
 }

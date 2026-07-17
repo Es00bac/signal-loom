@@ -52,8 +52,10 @@ import {
   encodeImageLayerProjectPixels,
 } from '../components/ImageEditor/ImageLayerProjectPixels';
 import {
+  assertImageDocumentSnapshotDecodeBounds,
   disposeImageDocumentNamedSnapshots,
   disposeImageDocumentSnapshotResources,
+  IMAGE_PROJECT_MAX_SNAPSHOTS,
 } from '../components/ImageEditor/ImageSnapshots';
 import {
   clearAllSelections,
@@ -1153,7 +1155,12 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
     // survives a save, instead of being stripped to null and lost. See ImageLayerProjectPixels.
     exportProjectSnapshotWithPixels: async () => {
       const state = get();
+      assertImageDocumentSnapshotDecodeBounds(
+        state.documents.flatMap((document) => document.snapshots ?? []),
+        { transport: 'runtime', maxSnapshots: IMAGE_PROJECT_MAX_SNAPSHOTS },
+      );
       const documents = await Promise.all(state.documents.map(async (document) => {
+        assertImageDocumentSnapshotDecodeBounds(document.snapshots ?? [], { transport: 'runtime' });
         const selection = document.hasSelection ? getSelection(document.id) : undefined;
         const persistSelection = Boolean(
           selection
