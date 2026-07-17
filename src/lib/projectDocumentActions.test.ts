@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { useFlowStore } from '../store/flowStore';
+import { useEditorStore } from '../store/editorStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
 import { useSourceBinStore } from '../store/sourceBinStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
-import { buildCurrentProjectDocument, resetProjectDocument, restoreProjectDocument } from './projectDocumentActions';
+import {
+  buildCurrentProjectDocument,
+  prepareProjectDocumentTransaction,
+  resetProjectDocument,
+  restoreProjectDocument,
+} from './projectDocumentActions';
 import { CURRENT_PROJECT_SCHEMA_VERSION } from './projectSchema';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import type { ImageDocument } from '../types/imageEditor';
@@ -15,11 +21,18 @@ import { createMask } from '../components/ImageEditor/SelectionMask';
 import { getSelection, setSelection } from '../components/ImageEditor/selectionRegistry';
 
 const originalRestoreSourceBinSnapshot = useSourceBinStore.getState().restoreProjectSnapshot;
+const originalPrepareSourceBinSnapshot = useSourceBinStore.getState().prepareProjectSnapshot;
+const originalCommitSourceBinSnapshot = useSourceBinStore.getState().commitPreparedProjectSnapshot;
 const originalReplaceFlowSnapshot = useFlowStore.getState().replaceFlowSnapshot;
 const originalRestoreImportedAssets = useFlowStore.getState().restoreImportedAssets;
+const originalPrepareImageSnapshot = useImageEditorStore.getState().prepareProjectSnapshotWithPixels;
 
 afterEach(() => {
-  useSourceBinStore.setState({ restoreProjectSnapshot: originalRestoreSourceBinSnapshot });
+  useSourceBinStore.setState({
+    restoreProjectSnapshot: originalRestoreSourceBinSnapshot,
+    prepareProjectSnapshot: originalPrepareSourceBinSnapshot,
+    commitPreparedProjectSnapshot: originalCommitSourceBinSnapshot,
+  });
   useFlowStore.setState({
     replaceFlowSnapshot: originalReplaceFlowSnapshot,
     restoreImportedAssets: originalRestoreImportedAssets,
@@ -28,6 +41,7 @@ afterEach(() => {
   useFlowWorkspaceStore.getState().reset();
   useProjectUsageStore.getState().restoreSnapshot(undefined);
   useImageEditorStore.getState().restoreProjectSnapshot(undefined);
+  useImageEditorStore.setState({ prepareProjectSnapshotWithPixels: originalPrepareImageSnapshot });
   usePaperStore.getState().restoreSnapshot(undefined);
 });
 
@@ -222,20 +236,18 @@ describe('restoreProjectDocument', () => {
     expect(saved.flowWorkspaces?.find((workspace) => workspace.id === 'alt')?.flow.nodes.map((node) => node.id)).toEqual(['runtime-alt-node']);
   });
 
-  it('restores source-bin media before the flow snapshot so reopened nodes can hydrate saved assets', async () => {
+  it('prepares source-bin media before synchronously committing the Flow snapshot', async () => {
     const calls: string[] = [];
     useSourceBinStore.setState({
-      restoreProjectSnapshot: async () => {
+      prepareProjectSnapshot: async () => {
         calls.push('sourceBin');
+        return { bins: [], dismissedSourceKeys: [] };
       },
     });
     useFlowStore.setState({
       replaceFlowSnapshot: (snapshot) => {
         calls.push('flow');
         originalReplaceFlowSnapshot(snapshot);
-      },
-      restoreImportedAssets: async () => {
-        calls.push('flowAssets');
       },
     });
 
@@ -252,7 +264,7 @@ describe('restoreProjectDocument', () => {
       sourceBin: { dismissedSourceKeys: [] },
     });
 
-    expect(calls).toEqual(['sourceBin', 'flow', 'flowAssets']);
+    expect(calls).toEqual(['sourceBin', 'flow']);
   });
 
   it('migrates legacy inline Paper assets before restoring the Paper workspace', async () => {
@@ -435,7 +447,7 @@ describe('restoreProjectDocument', () => {
   it('does not republish a restored project snapshot back to the native Source Library bridge', async () => {
     const calls: unknown[][] = [];
     useSourceBinStore.setState({
-      restoreProjectSnapshot: async (...args: unknown[]) => {
+      commitPreparedProjectSnapshot: (...args: unknown[]) => {
         calls.push(args);
       },
     });
@@ -461,13 +473,13 @@ describe('restoreProjectDocument', () => {
     expect(calls[0]?.[1]).toEqual({ publishNative: false });
   });
 
-  it('rolls back flow mutations when a later store restore fails', async () => {
+  it('leaves every live store untouched when Source preparation fails', async () => {
     useFlowStore.getState().replaceFlowSnapshot({
       nodes: [{ id: 'existing', type: 'textNode', position: { x: 5, y: 6 }, data: { prompt: 'keep' } }],
       edges: [],
     });
     useSourceBinStore.setState({
-      restoreProjectSnapshot: async () => {
+      prepareProjectSnapshot: async () => {
         throw new Error('source bin failed');
       },
     });
@@ -483,18 +495,18 @@ describe('restoreProjectDocument', () => {
         edges: [],
       },
       sourceBin: { dismissedSourceKeys: [] },
-    })).rejects.toThrow('could not be restored safely');
+    })).rejects.toThrow('source bin failed');
 
     expect(useFlowStore.getState().nodes.map((node) => node.id)).toEqual(['existing']);
   });
 
-  it('preserves a concurrent Flow edit when a late Source reset failure rolls back only its own reset', async () => {
+  it('preserves a concurrent Flow edit when Source reset preparation fails', async () => {
     useFlowStore.getState().replaceFlowSnapshot({
       nodes: [{ id: 'before-reset', type: 'textNode', position: { x: 1, y: 1 }, data: {} }],
       edges: [],
     });
     useSourceBinStore.setState({
-      restoreProjectSnapshot: async () => {
+      prepareProjectSnapshot: async () => {
         useFlowStore.getState().replaceFlowSnapshot({
           nodes: [{ id: 'concurrent-edit', type: 'textNode', position: { x: 9, y: 9 }, data: { prompt: 'keep me' } }],
           edges: [],
@@ -511,7 +523,7 @@ describe('restoreProjectDocument', () => {
     expect(useFlowStore.getState().exportProjectFlowSnapshot().nodes.map((node) => node.id)).toEqual(['concurrent-edit']);
   });
 
-  it('keeps live Image bitmaps when a restore fails after the image section (lossless rollback)', async () => {
+  it('keeps live Image bitmaps when Image decoding fails during preparation', async () => {
     // A failed restore must put back the EXACT live document objects — a
     // pixel-stripped snapshot rollback would blank every open Image canvas.
     const liveBitmap = { __live: 'pixels' } as unknown as NonNullable<ImageDocument['layers'][number]['bitmap']>;
@@ -528,32 +540,26 @@ describe('restoreProjectDocument', () => {
       snapshots: [],
     } as unknown as ImageDocument;
     useImageEditorStore.setState({ documents: [liveDocument], activeDocId: 'doc-live' });
-    const originalReconcile = useSourceBinStore.getState().reconcileWithNativeSourceLibrarySnapshot;
-    useSourceBinStore.setState({
-      reconcileWithNativeSourceLibrarySnapshot: async () => {
-        throw new Error('reconcile failed');
+    useImageEditorStore.setState({
+      prepareProjectSnapshotWithPixels: async () => {
+        throw new Error('image decode failed');
       },
     });
 
-    try {
-      await expect(restoreProjectDocument({
+    await expect(restoreProjectDocument({
         schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
         id: 'p2',
         name: 'Image Rollback',
         savedAt: 1,
         flow: { version: 3, nodes: [], edges: [] },
         sourceBin: { dismissedSourceKeys: [] },
-      })).rejects.toThrow('could not be restored safely');
+      })).rejects.toThrow('image decode failed');
 
-      const documents = useImageEditorStore.getState().documents;
-      expect(documents).toHaveLength(1);
-      expect(documents[0].id).toBe('doc-live');
-      expect(documents[0].layers[0].bitmap).toBe(liveBitmap);
-      expect(useImageEditorStore.getState().activeDocId).toBe('doc-live');
-    } finally {
-      useSourceBinStore.setState({ reconcileWithNativeSourceLibrarySnapshot: originalReconcile });
-      useImageEditorStore.getState().restoreProjectSnapshot(undefined);
-    }
+    const documents = useImageEditorStore.getState().documents;
+    expect(documents).toHaveLength(1);
+    expect(documents[0].id).toBe('doc-live');
+    expect(documents[0].layers[0].bitmap).toBe(liveBitmap);
+    expect(useImageEditorStore.getState().activeDocId).toBe('doc-live');
   });
 
   it('rejects corrupt live Image layer payloads before replacement and preserves pixels, history, and selection', async () => {
@@ -664,6 +670,243 @@ describe('restoreProjectDocument', () => {
     expect(useFlowStore.getState().nodes.map((node) => node.id)).toEqual(['alt-node']);
     expect(useFlowWorkspaceStore.getState().activeWorkspaceId).toBe('alt');
     expect(useFlowWorkspaceStore.getState().workspaces.map((workspace) => workspace.id)).toEqual(['main', 'alt']);
+  });
+
+  it.each(['flow', 'workspaces', 'editor', 'source', 'usage', 'paper', 'image'] as const)(
+    'rolls back only transaction-owned %s state while preserving that store\'s concurrent edit',
+    async (concurrentStore) => {
+      const flowA = { version: 3 as const, nodes: [{ id: 'flow-a', type: 'textNode' as const, position: { x: 1, y: 1 }, data: {} }], edges: [] };
+      useFlowStore.getState().replaceFlowSnapshot(flowA);
+      useFlowWorkspaceStore.getState().hydrateProjectSnapshot({
+        activeWorkspaceId: 'workspace-a',
+        workspaces: [{ id: 'workspace-a', name: 'Workspace A', createdAt: 1, updatedAt: 1, flow: flowA }],
+      });
+      useEditorStore.getState().restoreWorkspaceSnapshot(undefined);
+      const editorA = useEditorStore.getState().exportWorkspaceSnapshot();
+      useSourceBinStore.setState({
+        bins: [{ id: 'default', name: 'Source Library', collapsed: false, createdAt: 1, items: [{ id: 'source-a', label: 'A', kind: 'text', text: 'A', createdAt: 1 }] }],
+        dismissedSourceKeys: [],
+      });
+      useProjectUsageStore.getState().restoreSnapshot(undefined);
+      useProjectUsageStore.getState().recordUsage({
+        nodeId: 'usage-a', workspace: 'flow', createdAt: 1,
+        usage: { source: 'actual', confidence: 'measured', provider: 'test', modelId: 'a', costUsd: 1 },
+      });
+      usePaperStore.getState().restoreSnapshot({ document: createDefaultPaperDocument({ title: 'Paper A' }) });
+      const imageA = {
+        id: 'image-a', title: 'Image A', width: 10, height: 10, layers: [], activeLayerId: null,
+        hasSelection: false, selectionVersion: 0, viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+      } satisfies ImageDocument;
+      useImageEditorStore.setState({ documents: [imageA], activeDocId: imageA.id, quickActionMacros: [] });
+
+      const flowB = { version: 3 as const, nodes: [{ id: 'flow-b', type: 'textNode' as const, position: { x: 2, y: 2 }, data: {} }], edges: [] };
+      const imageB = { ...imageA, id: 'image-b', title: 'Image B' };
+      const transaction = await prepareProjectDocumentTransaction({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'project-b',
+        name: 'Project B',
+        savedAt: 2,
+        flow: flowB,
+        activeFlowWorkspaceId: 'workspace-b',
+        flowWorkspaces: [{ id: 'workspace-b', name: 'Workspace B', createdAt: 2, updatedAt: 2, flow: flowB }],
+        editor: { ...editorA, sourceMonitorVisible: !editorA.sourceMonitorVisible },
+        sourceBin: {
+          bins: [{ id: 'default', name: 'Source Library', collapsed: false, createdAt: 2, items: [{ id: 'source-b', label: 'B', kind: 'text', text: 'B', createdAt: 2 }] }],
+          dismissedSourceKeys: [],
+        },
+        paper: { document: createDefaultPaperDocument({ title: 'Paper B' }) },
+        imageEditor: { documents: [imageB], activeDocId: imageB.id },
+      });
+      transaction.commit();
+
+      switch (concurrentStore) {
+        case 'flow':
+          useFlowStore.getState().replaceFlowSnapshot({ version: 3, nodes: [{ id: 'flow-concurrent', type: 'textNode', position: { x: 9, y: 9 }, data: {} }], edges: [] });
+          break;
+        case 'workspaces':
+          useFlowWorkspaceStore.getState().createWorkspace('Concurrent Workspace');
+          break;
+        case 'editor':
+          useEditorStore.getState().restoreWorkspaceSnapshot({
+            ...useEditorStore.getState().exportWorkspaceSnapshot(),
+            programMonitorVisible: !useEditorStore.getState().programMonitorVisible,
+          });
+          break;
+        case 'source':
+          useSourceBinStore.setState({
+            bins: [{ id: 'default', name: 'Source Library', collapsed: false, createdAt: 3, items: [{ id: 'source-concurrent', label: 'Concurrent', kind: 'text', text: 'C', createdAt: 3 }] }],
+          });
+          break;
+        case 'usage':
+          useProjectUsageStore.getState().recordUsage({
+            nodeId: 'usage-concurrent', workspace: 'flow', createdAt: 3,
+            usage: { source: 'actual', confidence: 'measured', provider: 'test', modelId: 'c', costUsd: 2 },
+          });
+          break;
+        case 'paper':
+          usePaperStore.getState().addPage();
+          break;
+        case 'image':
+          useImageEditorStore.getState().setDocumentTitle('image-b', 'Image Concurrent');
+          break;
+      }
+      transaction.rollback();
+
+      expect(useFlowStore.getState().nodes[0]?.id).toBe(concurrentStore === 'flow' ? 'flow-concurrent' : 'flow-a');
+      expect(useFlowWorkspaceStore.getState().workspaces.some((workspace) => workspace.name === 'Concurrent Workspace')).toBe(concurrentStore === 'workspaces');
+      expect(useEditorStore.getState().programMonitorVisible).toBe(
+        concurrentStore === 'editor' ? !editorA.programMonitorVisible : editorA.programMonitorVisible,
+      );
+      expect(useSourceBinStore.getState().bins[0]?.items[0]?.id).toBe(concurrentStore === 'source' ? 'source-concurrent' : 'source-a');
+      expect(useProjectUsageStore.getState().ledger.entries[0]?.nodeId).toBe(concurrentStore === 'usage' ? 'usage-concurrent' : 'usage-a');
+      expect(usePaperStore.getState().document.title).toBe(concurrentStore === 'paper' ? 'Paper B' : 'Paper A');
+      expect(useImageEditorStore.getState().documents[0]?.title).toBe(concurrentStore === 'image' ? 'Image Concurrent' : 'Image A');
+    },
+  );
+
+  it.each(['source', 'workspaces', 'flow', 'editor', 'usage', 'paper', 'image'] as const)(
+    'unwinds earlier renderer stages when the %s store fails before mutation',
+    async (failingStore) => {
+      const flowA = { version: 3 as const, nodes: [{ id: 'stage-flow-a', type: 'textNode' as const, position: { x: 1, y: 1 }, data: {} }], edges: [] };
+      useFlowStore.getState().replaceFlowSnapshot(flowA);
+      useFlowWorkspaceStore.getState().hydrateProjectSnapshot({
+        activeWorkspaceId: 'stage-workspace-a',
+        workspaces: [{ id: 'stage-workspace-a', name: 'Stage Workspace A', createdAt: 1, updatedAt: 1, flow: flowA }],
+      });
+      const editorA = useEditorStore.getState().exportWorkspaceSnapshot();
+      useSourceBinStore.setState({
+        bins: [{ id: 'default', name: 'Source Library', collapsed: false, createdAt: 1, items: [{ id: 'stage-source-a', label: 'A', kind: 'text', text: 'A', createdAt: 1 }] }],
+        dismissedSourceKeys: [],
+      });
+      useProjectUsageStore.getState().restoreSnapshot(undefined);
+      useProjectUsageStore.getState().recordUsage({
+        nodeId: 'stage-usage-a', workspace: 'flow', createdAt: 1,
+        usage: { source: 'actual', confidence: 'measured', provider: 'test', modelId: 'a', costUsd: 1 },
+      });
+      usePaperStore.getState().restoreSnapshot({ document: createDefaultPaperDocument({ title: 'Stage Paper A' }) });
+      const imageA = {
+        id: 'stage-image-a', title: 'Stage Image A', width: 10, height: 10, layers: [], activeLayerId: null,
+        hasSelection: false, selectionVersion: 0, viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+      } satisfies ImageDocument;
+      useImageEditorStore.setState({ documents: [imageA], activeDocId: imageA.id, quickActionMacros: [] });
+
+      const flowB = { version: 3 as const, nodes: [{ id: 'stage-flow-b', type: 'textNode' as const, position: { x: 2, y: 2 }, data: {} }], edges: [] };
+      const transaction = await prepareProjectDocumentTransaction({
+        schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+        id: 'stage-project-b',
+        name: 'Stage Project B',
+        savedAt: 2,
+        flow: flowB,
+        activeFlowWorkspaceId: 'stage-workspace-b',
+        flowWorkspaces: [{ id: 'stage-workspace-b', name: 'Stage Workspace B', createdAt: 2, updatedAt: 2, flow: flowB }],
+        editor: { ...editorA, sourceMonitorVisible: !editorA.sourceMonitorVisible },
+        sourceBin: {
+          bins: [{ id: 'default', name: 'Source Library', collapsed: false, createdAt: 2, items: [{ id: 'stage-source-b', label: 'B', kind: 'text', text: 'B', createdAt: 2 }] }],
+          dismissedSourceKeys: [],
+        },
+        paper: { document: createDefaultPaperDocument({ title: 'Stage Paper B' }) },
+        imageEditor: { documents: [{ ...imageA, id: 'stage-image-b', title: 'Stage Image B' }], activeDocId: 'stage-image-b' },
+      });
+
+      const injectedFailure = () => {
+        // Simulate an unrelated edit arriving from another workspace while this exact stage
+        // fails. For the first (Source) stage use Image; after Source has committed, edit Source
+        // itself so its transaction inverse must decline to overwrite the concurrent value.
+        if (failingStore === 'source') {
+          useImageEditorStore.getState().setDocumentTitle('stage-image-a', 'Concurrent Image Edit');
+        } else {
+          useSourceBinStore.setState({
+            bins: [{ id: 'default', name: 'Source Library', collapsed: false, createdAt: 3, items: [{ id: 'stage-source-concurrent', label: 'Concurrent', kind: 'text', text: 'C', createdAt: 3 }] }],
+          });
+        }
+        throw new Error(`${failingStore} stage failed`);
+      };
+      let restoreInjectedMethod: () => void;
+      switch (failingStore) {
+        case 'source': {
+          const state = useSourceBinStore.getState();
+          const original = state.commitPreparedProjectSnapshot;
+          state.commitPreparedProjectSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.commitPreparedProjectSnapshot = original; };
+          break;
+        }
+        case 'workspaces': {
+          const state = useFlowWorkspaceStore.getState();
+          const original = state.hydrateProjectSnapshot;
+          state.hydrateProjectSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.hydrateProjectSnapshot = original; };
+          break;
+        }
+        case 'flow': {
+          const state = useFlowStore.getState();
+          const original = state.replaceFlowSnapshot;
+          state.replaceFlowSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.replaceFlowSnapshot = original; };
+          break;
+        }
+        case 'editor': {
+          const state = useEditorStore.getState();
+          const original = state.restoreWorkspaceSnapshot;
+          state.restoreWorkspaceSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.restoreWorkspaceSnapshot = original; };
+          break;
+        }
+        case 'usage': {
+          const state = useProjectUsageStore.getState();
+          const original = state.restoreSnapshot;
+          state.restoreSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.restoreSnapshot = original; };
+          break;
+        }
+        case 'paper': {
+          const state = usePaperStore.getState();
+          const original = state.restoreSnapshot;
+          state.restoreSnapshot = injectedFailure;
+          restoreInjectedMethod = () => { state.restoreSnapshot = original; };
+          break;
+        }
+        case 'image': {
+          const state = useImageEditorStore.getState();
+          const original = state.commitPreparedProjectSnapshotWithPixels;
+          state.commitPreparedProjectSnapshotWithPixels = injectedFailure;
+          restoreInjectedMethod = () => { state.commitPreparedProjectSnapshotWithPixels = original; };
+          break;
+        }
+      }
+
+      expect(() => transaction.commit()).toThrow(`${failingStore} stage failed`);
+      restoreInjectedMethod();
+      expect(useFlowStore.getState().nodes[0]?.id).toBe('stage-flow-a');
+      expect(useFlowWorkspaceStore.getState().activeWorkspaceId).toBe('stage-workspace-a');
+      expect(useEditorStore.getState().sourceMonitorVisible).toBe(editorA.sourceMonitorVisible);
+      expect(useSourceBinStore.getState().bins[0]?.items[0]?.id).toBe(
+        failingStore === 'source' ? 'stage-source-a' : 'stage-source-concurrent',
+      );
+      expect(useProjectUsageStore.getState().ledger.entries[0]?.nodeId).toBe('stage-usage-a');
+      expect(usePaperStore.getState().document.title).toBe('Stage Paper A');
+      expect(useImageEditorStore.getState().documents[0]?.title).toBe(
+        failingStore === 'source' ? 'Concurrent Image Edit' : 'Stage Image A',
+      );
+    },
+  );
+
+  it('continues every prepared store commit when a Source observer throws', async () => {
+    const transaction = await prepareProjectDocumentTransaction({
+      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      id: 'observer-b',
+      name: 'Observer B',
+      savedAt: 2,
+      flow: { version: 3, nodes: [{ id: 'observer-flow-b', type: 'textNode', position: { x: 1, y: 1 }, data: {} }], edges: [] },
+      sourceBin: { dismissedSourceKeys: ['observer-b'] },
+      paper: { document: createDefaultPaperDocument({ title: 'Observer Paper B' }) },
+    }, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
+    const unsubscribe = useSourceBinStore.subscribe(() => {
+      throw new Error('throwing Source observer');
+    });
+    expect(() => transaction.commit()).not.toThrow();
+    unsubscribe();
+    expect(useFlowStore.getState().nodes[0]?.id).toBe('observer-flow-b');
+    expect(usePaperStore.getState().document.title).toBe('Observer Paper B');
   });
 
   it('saves and restores the project-level usage ledger', async () => {

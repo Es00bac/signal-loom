@@ -36,6 +36,9 @@ vi.mock('../lib/workspaceWindowCommands', () => ({
 }));
 
 import { useSourceBinStore } from './sourceBinStore';
+import { setCurrentProjectAuthorityClaim } from '../lib/nativeApp';
+
+const TEST_AUTHORITY = { authorityId: 'source-test-authority', version: 3 };
 
 describe('source bin live workspace sync', () => {
   beforeEach(() => {
@@ -68,6 +71,7 @@ describe('source bin live workspace sync', () => {
       nativeScratchDirectoryPath: undefined,
       nativeSyncStatus: { state: 'idle' },
     });
+    setCurrentProjectAuthorityClaim(TEST_AUTHORITY);
   });
 
   it('reconciles a freshly-restored window with the authoritative native snapshot (recovers cross-window generated assets)', async () => {
@@ -84,6 +88,7 @@ describe('source bin live workspace sync', () => {
     // The native main process holds the live snapshot: the saved asset + the generated one.
     const getSourceLibrarySnapshot = vi.fn().mockResolvedValue({
       version: 7,
+      authority: TEST_AUTHORITY,
       snapshot: {
         bins: [{
           id: 'default', name: 'Source Library', collapsed: false, createdAt: 1,
@@ -200,9 +205,92 @@ describe('source bin live workspace sync', () => {
     });
   });
 
+  it('does not publish or repair a Source delta without exact authority, and drops old completions after a switch', async () => {
+    let resolveApply!: (value: { ok: false; error: string }) => void;
+    const applySourceLibraryChange = vi.fn(() => new Promise<{ ok: false; error: string }>((resolve) => {
+      resolveApply = resolve;
+    }));
+    const syncSourceLibrarySnapshot = vi.fn().mockResolvedValue({ ok: true, version: 99 });
+    vi.stubGlobal('window', { signalLoomNative: { applySourceLibraryChange, syncSourceLibrarySnapshot } });
+
+    await useSourceBinStore.getState().addAssetItem({
+      id: 'old-project-item', label: 'Old.png', kind: 'image', mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,OLD',
+    });
+    expect(applySourceLibraryChange).toHaveBeenCalledWith(expect.objectContaining({ claim: TEST_AUTHORITY }));
+    setCurrentProjectAuthorityClaim({ authorityId: 'project-b', version: 1 });
+    resolveApply({ ok: false, error: 'old project rejected' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(syncSourceLibrarySnapshot).not.toHaveBeenCalled();
+
+    applySourceLibraryChange.mockClear();
+    setCurrentProjectAuthorityClaim(undefined);
+    await useSourceBinStore.getState().addAssetItem({
+      id: 'claimless-item', label: 'Claimless.png', kind: 'image', mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,NONE',
+    });
+    expect(applySourceLibraryChange).not.toHaveBeenCalled();
+  });
+
+  it('drops an asset hydration completion when the project authority changes mid-await', async () => {
+    let resolveStoredAsset!: (value: { dataUrl: string; mimeType: string; name: string }) => void;
+    mocks.loadImportedAsset.mockImplementation(() => new Promise((resolve) => {
+      resolveStoredAsset = resolve;
+    }));
+    vi.stubGlobal('window', { signalLoomNative: {} });
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 1,
+        items: [{
+          id: 'shared-id',
+          label: 'Project A.png',
+          kind: 'image',
+          mimeType: 'image/png',
+          assetId: 'asset-a',
+          assetUrl: 'signal-loom-asset://asset/asset-a',
+          createdAt: 1,
+        }],
+      }],
+    });
+
+    const hydration = useSourceBinStore.getState().hydrateAssets();
+    await vi.waitFor(() => expect(mocks.loadImportedAsset).toHaveBeenCalledWith('asset-a'));
+    setCurrentProjectAuthorityClaim({ authorityId: 'project-b', version: 1 });
+    useSourceBinStore.setState({
+      bins: [{
+        id: 'default',
+        name: 'Source Library',
+        collapsed: false,
+        createdAt: 2,
+        items: [{
+          id: 'shared-id',
+          label: 'Project B.png',
+          kind: 'image',
+          mimeType: 'image/png',
+          assetId: 'asset-b',
+          assetUrl: 'signal-loom-asset://asset/asset-b',
+          createdAt: 2,
+        }],
+      }],
+    });
+    resolveStoredAsset({ dataUrl: 'data:image/png;base64,PROJECT_A', mimeType: 'image/png', name: 'Project A.png' });
+    await hydration;
+
+    expect(useSourceBinStore.getState().bins[0].items[0]).toMatchObject({
+      label: 'Project B.png',
+      assetId: 'asset-b',
+      assetUrl: 'signal-loom-asset://asset/asset-b',
+    });
+  });
+
   it('retries version-gap repairs by pulling the native snapshot instead of pushing stale renderer state', async () => {
     const getSourceLibrarySnapshot = vi.fn().mockResolvedValue({
       version: 7,
+      authority: TEST_AUTHORITY,
       snapshot: {
         bins: [{
           id: 'default',
@@ -270,6 +358,7 @@ describe('source bin live workspace sync', () => {
       signalLoomNative: {
         getSourceLibrarySnapshot: vi.fn().mockResolvedValue({
           version: 6,
+          authority: TEST_AUTHORITY,
           snapshot: {
             bins: [{
               id: 'default',

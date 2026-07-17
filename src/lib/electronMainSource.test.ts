@@ -107,9 +107,10 @@ describe('Electron main process source guards', () => {
     expect(source).toContain('collectNativeAssetCapabilitiesFromSourceBin');
     expect(source).toMatch(/async function registerNativeAssetCapability\(filePath, \{ allowExternal = false, assetId } = {}\)/);
     expect(source).toMatch(/nativeAssetCapabilityAssetIds\.set\(assetId\.trim\(\), registeredPath\)/);
-    expect(source).toMatch(/for \(const capability of collectNativeAssetCapabilitiesFromSourceBin\(sourceBin\)\)[\s\S]*registerNativeAssetCapability\(capability\.filePath[\s\S]*assetId: capability\.assetId/);
-    expect(source).toMatch(/registerNativeAssetCapability\(targetPath, \{ assetId: item\.id }\)/);
-    expect(source).toMatch(/registerNativeAssetCapability\(storedPath, \{ allowExternal: true, assetId: id }\)/);
+    expect(source).toMatch(/async function prepareNativeAssetCapabilitiesFromSourceBin[\s\S]*for \(const capability of collectNativeAssetCapabilitiesFromSourceBin\(sourceBin\)\)[\s\S]*assetIds\.push\(\[capability\.assetId\.trim\(\), normalizedPath\]\)/);
+    expect(source).toMatch(/function commitNativeAssetCapabilities[\s\S]*nativeAssetCapabilityAssetIds\.set\(assetId, filePath\)/);
+    expect(source).toMatch(/'signal-loom:source-asset-materialize'[\s\S]{0,1000}projectAuthority\.runAuthorizedMutation\([\s\S]{0,1000}commitNativeAssetCapabilities\(preparedCapabilities, \{ replace: false }\)/);
+    expect(source).toMatch(/'signal-loom:import-media-files'[\s\S]{0,2400}projectAuthority\.runAuthorizedMutation\([\s\S]{0,2400}prepareNativeAssetCapabilitiesFromSourceBin\(\{ items }, \{ allowExternal: true }\)/);
   });
 
   it('materializes renderer-provided binary asset payloads directly into the active scratch folder', () => {
@@ -119,6 +120,16 @@ describe('Electron main process source guards', () => {
     expect(source).toMatch(/if \(binaryData\)[\s\S]*buildNativeScratchFileName\(item\)/);
     expect(source).toMatch(/if \(binaryData\)[\s\S]*writeFile\(targetPath, Buffer\.from\(binaryData\)\)/);
     expect(source).toMatch(/if \(binaryData\)[\s\S]*assetUrl: buildNativeAssetUrl\(targetPath, item\.id\)/);
+  });
+
+  it('journals Source materialization bytes and rolls them back when exact authority is lost', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+    const handler = source.match(/ipcMain\.handle\('signal-loom:source-asset-materialize'[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
+
+    expect(source).toMatch(/async function materializeSourceAsset\(request, scratchJournal\)[\s\S]*scratchJournal\?\.beforeWrite\(targetPath\)[\s\S]*writeFile\(targetPath/);
+    expect(handler).toContain('createScratchPreparationJournal(currentScratchDirectoryPath)');
+    expect(handler).toContain('rollback: ({ scratchJournal }) => scratchJournal?.rollback()');
+    expect(handler.indexOf('prepareNativeAssetCapabilitiesFromSourceBin')).toBeLessThan(handler.indexOf('commitNativeAssetCapabilities'));
   });
 
   it('keeps a manually selected scratch directory in the active capability roots', () => {
@@ -198,10 +209,12 @@ describe('project authority arbitration wiring (AUD-001)', () => {
 
   it('binds startup, open, save, save-as, and clear to authority commits instead of a bare path', () => {
     expect(source).toMatch(/function commitStartupProjectAuthority\(\)[\s\S]*?projectAuthority\.commitStartup\(\{[\s\S]*?filePath: currentProjectPath/);
-    expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-open', async \(event\) => \{[\s\S]{0,700}?projectAuthority\.openProject\(\{[\s\S]{0,200}?senderId: event\.sender\.id/);
+    expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-open', async \(event, request\) => \{[\s\S]{0,900}?projectAuthority\.prepareOpenProject\(\{[\s\S]{0,220}?senderId: event\.sender\.id/);
     expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-save', async \(event, payload\) => \{[\s\S]{0,900}?projectAuthority\.saveProject\(\{[\s\S]{0,300}?senderId: event\.sender\.id[\s\S]{0,300}?claim/);
     expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-save-as', async \(event, payload\) => \{[\s\S]{0,900}?projectAuthority\.saveProject\(\{[\s\S]{0,300}?senderId: event\.sender\.id[\s\S]{0,300}?claim/);
-    expect(source).toMatch(/ipcMain\.handle\('signal-loom:clear-project-path', async \(event\) => \{[\s\S]{0,500}?projectAuthority\.clearProject\(\{[\s\S]{0,200}?senderId: event\.sender\.id/);
+    expect(source).toMatch(/ipcMain\.handle\('signal-loom:clear-project-path', async \(event, request\) => \{[\s\S]{0,600}?projectAuthority\.prepareClearProject\(\{[\s\S]{0,220}?senderId: event\.sender\.id/);
+    expect(source).toContain("ipcMain.handle('signal-loom:project-switch-commit'");
+    expect(source).toContain("ipcMain.handle('signal-loom:project-switch-cancel'");
     expect(source).toContain('normalizeProjectSavePayload');
   });
 
@@ -238,8 +251,32 @@ describe('project authority arbitration wiring (AUD-001)', () => {
   });
 
   it('requires the current adopted authority for Source Library snapshot and delta mutations', () => {
-    expect(source).toMatch(/'signal-loom:source-library-sync-snapshot'[\s\S]{0,520}projectAuthority\.authorizeSave\([\s\S]{0,180}request\?\.claim/);
-    expect(source).toMatch(/'signal-loom:source-library-apply-change'[\s\S]{0,520}projectAuthority\.authorizeSave\([\s\S]{0,180}request\?\.claim/);
-    expect(source).toMatch(/getSourceLibrarySnapshot\(\)[\s\S]{0,120}authority: projectAuthority\.getCurrent\(\)/);
+    expect(source).toMatch(/'signal-loom:source-library-get-snapshot'[\s\S]{0,700}projectAuthority\.authorizeSave\([\s\S]{0,220}request\?\.claim/);
+    expect(source).toMatch(/'signal-loom:source-library-sync-snapshot'[\s\S]{0,650}projectAuthority\.runAuthorizedMutation\(\{[\s\S]{0,260}claim: request\?\.claim/);
+    expect(source).toMatch(/'signal-loom:source-library-apply-change'[\s\S]{0,650}projectAuthority\.runAuthorizedMutation\(\{[\s\S]{0,260}claim: request\?\.claim/);
+    expect(source).toMatch(/snapshot: getSourceLibrarySnapshot\(\)[\s\S]{0,120}authority: projectAuthority\.getCurrent\(\)/);
+  });
+
+  it('prepares Source capability replacement off-state and advances its version only at the exact commit', () => {
+    const prepareBody = source.slice(
+      source.indexOf('async function prepareSourceLibraryChange('),
+      source.indexOf('function commitPreparedSourceLibraryChange('),
+    );
+    const commitBody = source.slice(
+      source.indexOf('function commitSourceLibrarySnapshot('),
+      source.indexOf('async function setSourceLibrarySnapshot('),
+    );
+    expect(prepareBody).not.toContain('sourceLibraryVersion += 1');
+    expect(prepareBody).not.toContain('nativeAssetCapabilityRegistry.clear()');
+    expect(commitBody.match(/sourceLibraryVersion \+= 1/g)).toHaveLength(1);
+    expect(source).toMatch(/function restoreCommittedProjectSnapshot[\s\S]{0,420}void snapshot/);
+    expect(source).not.toMatch(/function restoreCommittedProjectSnapshot[\s\S]{0,420}publishCommittedProjectSnapshot\(snapshot\)/);
+  });
+
+  it('returns the exact committed Source version with Save and Save As', () => {
+    const saveHandler = source.match(/ipcMain\.handle\('signal-loom:project-save',[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
+    const saveAsHandler = source.match(/ipcMain\.handle\('signal-loom:project-save-as',[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
+    expect(saveHandler).toContain('{ ...result, sourceLibraryVersion }');
+    expect(saveAsHandler).toContain('{ ...result, sourceLibraryVersion }');
   });
 });

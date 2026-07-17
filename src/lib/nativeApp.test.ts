@@ -1,17 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   NATIVE_WORKSPACE_STANDALONE_ENTRY_POINTS,
+  beginProjectAuthorityTransition,
   buildNativeStandaloneEntryReadiness,
+  captureProjectAuthorityMutationScope,
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
   isNativeMenuCommand,
+  isCurrentProjectAuthorityMutationScope,
   NATIVE_RENDERER_COMMAND_EVENT,
   onNativeRendererCommand,
+  setCurrentProjectAuthorityClaim,
 } from './nativeApp';
 
 describe('native app bridge helpers', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    setCurrentProjectAuthorityClaim(undefined);
   });
 
   it('returns undefined in the browser when Electron preload is absent', () => {
@@ -28,6 +33,24 @@ describe('native app bridge helpers', () => {
     vi.stubGlobal('window', { signalLoomNative: bridge });
 
     expect(getSignalLoomNativeBridge()).toBe(bridge);
+  });
+
+  it('epoch-guards async project mutations and withholds claims during a renderer switch barrier', () => {
+    setCurrentProjectAuthorityClaim({ authorityId: 'project-a', version: 4 });
+    const projectAJob = captureProjectAuthorityMutationScope();
+    expect(projectAJob?.claim).toEqual({ authorityId: 'project-a', version: 4 });
+    expect(isCurrentProjectAuthorityMutationScope(projectAJob)).toBe(true);
+
+    const endTransition = beginProjectAuthorityTransition();
+    expect(captureProjectAuthorityMutationScope()).toBeUndefined();
+    expect(isCurrentProjectAuthorityMutationScope(projectAJob)).toBe(false);
+    setCurrentProjectAuthorityClaim({ authorityId: 'project-b', version: 1 });
+    endTransition();
+
+    const projectBJob = captureProjectAuthorityMutationScope();
+    expect(projectBJob?.claim).toEqual({ authorityId: 'project-b', version: 1 });
+    expect(isCurrentProjectAuthorityMutationScope(projectAJob)).toBe(false);
+    expect(isCurrentProjectAuthorityMutationScope(projectBJob)).toBe(true);
   });
 
   it('dispatches renderer commands through a typed custom event', () => {

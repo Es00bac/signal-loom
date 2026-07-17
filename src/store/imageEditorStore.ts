@@ -251,6 +251,8 @@ interface ImageEditorActions {
   exportProjectSnapshot: () => ImageEditorProjectSnapshot;
   restoreProjectSnapshot: (snapshot?: ImageEditorProjectSnapshot) => void;
   exportProjectSnapshotWithPixels: () => Promise<ImageEditorProjectSnapshot>;
+  prepareProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<ImageEditorProjectSnapshot>;
+  commitPreparedProjectSnapshotWithPixels: (snapshot: ImageEditorProjectSnapshot) => void;
   restoreProjectSnapshotWithPixels: (snapshot?: ImageEditorProjectSnapshot) => Promise<void>;
   /**
    * Lossless rollback for a failed project restore: puts back the exact live
@@ -1201,7 +1203,7 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       };
     },
 
-    restoreProjectSnapshotWithPixels: async (snapshot) => {
+    prepareProjectSnapshotWithPixels: async (snapshot) => {
       const safeSnapshot = sanitizeImageEditorSnapshot(snapshot);
       const rawDocuments = safeSnapshot?.documents ?? [];
       const documents: ImageDocument[] = [];
@@ -1256,26 +1258,27 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       const activeDocId = safeSnapshot?.activeDocId && documents.some((document) => document.id === safeSnapshot.activeDocId)
         ? safeSnapshot.activeDocId
         : documents[0]?.id ?? null;
-      const previous = get();
-      disposeAllImageHistory(previous);
-      for (const document of previous.documents) {
-        disposeImageDocumentNamedSnapshots(document);
-      }
-      clearAllSelections();
-      for (const document of documents) {
-        if (document.hasSelection && document.selectionMask) {
-          setSelection(document.id, fromSnapshot(document.selectionMask));
-        }
-      }
-      set({
-        documents: documents.map((document) => ({ ...document, selectionMask: undefined })),
+      return {
+        documents,
         activeDocId,
+        quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+      };
+    },
+
+    commitPreparedProjectSnapshotWithPixels: (snapshot) => {
+      set({
+        documents: snapshot.documents,
+        activeDocId: snapshot.activeDocId,
         undoStacks: {},
         redoStacks: {},
-        quickActionMacros: safeSnapshot?.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
+        quickActionMacros: snapshot.quickActionMacros?.map(cloneImageQuickActionMacro) ?? [],
         activeQuickActionRecording: null,
         generativeFillDismissedByDocId: {},
       });
+    },
+
+    restoreProjectSnapshotWithPixels: async (snapshot) => {
+      get().commitPreparedProjectSnapshotWithPixels(await get().prepareProjectSnapshotWithPixels(snapshot));
     },
 
     restoreLiveProjectRollback: (rollback) => {

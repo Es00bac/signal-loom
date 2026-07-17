@@ -1,5 +1,5 @@
 import type { SourceBin, SourceBinLibraryItem, SourceBinProjectSnapshot } from '../store/sourceBinStore';
-import type { NativeProjectAuthorityDescriptor } from './nativeApp';
+import type { NativeProjectAuthorityDescriptor, NativeProjectSaveRejection } from './nativeApp';
 import {
   mergeSourceBinItemsIntoBins,
   removeSourceBinItemFromBins,
@@ -33,14 +33,22 @@ export type SourceLibraryNativeChange =
 export interface SourceLibraryNativeEvent {
   version: number;
   change: SourceLibraryNativeChange;
-  authority?: NativeProjectAuthorityDescriptor;
+  authority: NativeProjectAuthorityDescriptor;
 }
 
 export interface SourceLibraryNativeSnapshotResult {
   version: number;
   snapshot: SourceBinProjectSnapshot;
-  authority?: NativeProjectAuthorityDescriptor;
+  authority: NativeProjectAuthorityDescriptor;
 }
+
+export type SourceLibraryNativeSnapshotResponse = SourceLibraryNativeSnapshotResult | {
+  version?: undefined;
+  snapshot?: undefined;
+  authority?: undefined;
+  rejected: NativeProjectSaveRejection;
+  error: string;
+};
 
 export type SourceLibraryNativeSyncState = 'idle' | 'syncing' | 'repairing' | 'synced' | 'degraded';
 export type SourceLibraryNativeRepairDirection = 'push-renderer-snapshot' | 'pull-native-snapshot';

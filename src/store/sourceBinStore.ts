@@ -19,7 +19,12 @@ import {
 } from '../lib/androidSourceAssetStorage';
 import { buildMediaAssetSignaturePart } from '../lib/mediaAssetSignature';
 import { parseSignalLoomAssetId } from '../lib/signalLoomAssetUrl';
-import { getCurrentProjectAuthorityClaim, getSignalLoomNativeBridge } from '../lib/nativeApp';
+import {
+  captureProjectAuthorityMutationScope,
+  getSignalLoomNativeBridge,
+  isCurrentProjectAuthorityMutationScope,
+  type ProjectAuthorityMutationScope,
+} from '../lib/nativeApp';
 import { initializeLanServerProxy, notifyLanSourceLibraryChange } from '../lib/androidLanServer';
 import { getHostSourceLibraryVersion } from '../lib/lanHostService';
 import {
@@ -184,6 +189,8 @@ export interface SourceBinState {
   hydrateAssets: () => Promise<void>;
   reconcileWithNativeSourceLibrarySnapshot: () => Promise<void>;
   exportProjectSnapshot: (options?: { includeAssetData?: boolean }) => Promise<SourceBinProjectSnapshot>;
+  prepareProjectSnapshot: (snapshot?: SourceBinProjectSnapshot) => Promise<PreparedSourceBinProjectSnapshot>;
+  commitPreparedProjectSnapshot: (snapshot: PreparedSourceBinProjectSnapshot, options?: { publishNative?: boolean }) => void;
   restoreProjectSnapshot: (snapshot?: SourceBinProjectSnapshot, options?: { publishNative?: boolean }) => Promise<void>;
   getAllItems: () => SourceBinLibraryItem[];
   createBin: (name?: string) => string;
@@ -227,6 +234,11 @@ export interface SourceBinState {
     pixelWidth?: number;
     pixelHeight?: number;
   }) => Promise<SourceBinLibraryItem>;
+}
+
+export interface PreparedSourceBinProjectSnapshot {
+  bins: SourceBin[];
+  dismissedSourceKeys: string[];
 }
 
 const STORAGE_KEY = 'flow-global-source-bin';
@@ -419,7 +431,8 @@ function broadcastSourceBinItemRemoved(item: SourceBinLibraryItem): void {
 
 function syncNativeSourceLibrarySnapshot(snapshot: SourceBinProjectSnapshot): void {
   const bridge = getSignalLoomNativeBridge();
-  if (!bridge?.syncSourceLibrarySnapshot) {
+  const scope = captureProjectAuthorityMutationScope();
+  if (!bridge?.syncSourceLibrarySnapshot || !scope) {
     return;
   }
 
@@ -427,8 +440,9 @@ function syncNativeSourceLibrarySnapshot(snapshot: SourceBinProjectSnapshot): vo
     message: 'Syncing Source Library snapshot with native windows.',
   }));
 
-  void bridge.syncSourceLibrarySnapshot({ snapshot, claim: getCurrentProjectAuthorityClaim() })
+  void bridge.syncSourceLibrarySnapshot({ snapshot, claim: scope.claim })
     .then((result) => {
+      if (!isCurrentProjectAuthorityMutationScope(scope)) return;
       if (sourceLibraryNativeAckNeedsRepair(result)) {
         setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
           message: describeNativeSourceLibraryAckFailure(result, 'Native Source Library snapshot sync was rejected.'),
@@ -443,13 +457,15 @@ function syncNativeSourceLibrarySnapshot(snapshot: SourceBinProjectSnapshot): vo
       }));
     })
     .catch((error) => {
+      if (!isCurrentProjectAuthorityMutationScope(scope)) return;
       setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', { error }));
     });
 }
 
 function publishNativeSourceLibraryChange(change: SourceLibraryNativeChange): void {
   const bridge = getSignalLoomNativeBridge();
-  if (!bridge?.applySourceLibraryChange) {
+  const scope = captureProjectAuthorityMutationScope();
+  if (!bridge?.applySourceLibraryChange || !scope) {
     return;
   }
 
@@ -457,13 +473,14 @@ function publishNativeSourceLibraryChange(change: SourceLibraryNativeChange): vo
     message: 'Sending Source Library change to native windows.',
   }));
 
-  void bridge.applySourceLibraryChange({ change, claim: getCurrentProjectAuthorityClaim() })
+  void bridge.applySourceLibraryChange({ change, claim: scope.claim })
     .then((result) => {
+      if (!isCurrentProjectAuthorityMutationScope(scope)) return undefined;
       if (sourceLibraryNativeAckNeedsRepair(result)) {
         return repairNativeSourceLibrarySnapshot(describeNativeSourceLibraryAckFailure(
           result,
           'Native Source Library change was not acknowledged.',
-        ));
+        ), scope);
       }
 
       setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('synced', {
@@ -472,7 +489,11 @@ function publishNativeSourceLibraryChange(change: SourceLibraryNativeChange): vo
       }));
       return undefined;
     })
-    .catch((error) => repairNativeSourceLibrarySnapshot(error));
+    .catch((error) => (
+      isCurrentProjectAuthorityMutationScope(scope)
+        ? repairNativeSourceLibrarySnapshot(error, scope)
+        : undefined
+    ));
 }
 
 function describeNativeSourceLibraryAckFailure(
@@ -486,7 +507,10 @@ function setNativeSourceLibrarySyncStatus(status: SourceLibraryNativeSyncStatus)
   useSourceBinStore.setState({ nativeSyncStatus: status });
 }
 
-async function repairNativeSourceLibrarySnapshot(reason: unknown): Promise<void> {
+async function repairNativeSourceLibrarySnapshot(
+  reason: unknown,
+  requestedScope: ProjectAuthorityMutationScope | undefined = captureProjectAuthorityMutationScope(),
+): Promise<void> {
   const bridge = getSignalLoomNativeBridge();
   if (!bridge?.syncSourceLibrarySnapshot) {
     setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
@@ -495,6 +519,7 @@ async function repairNativeSourceLibrarySnapshot(reason: unknown): Promise<void>
     }));
     return;
   }
+  if (!isCurrentProjectAuthorityMutationScope(requestedScope) || !requestedScope) return;
 
   setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('repairing', {
     error: reason,
@@ -504,7 +529,9 @@ async function repairNativeSourceLibrarySnapshot(reason: unknown): Promise<void>
 
   try {
     const snapshot = await useSourceBinStore.getState().exportProjectSnapshot();
-    const result = await bridge.syncSourceLibrarySnapshot({ snapshot, claim: getCurrentProjectAuthorityClaim() });
+    if (!isCurrentProjectAuthorityMutationScope(requestedScope)) return;
+    const result = await bridge.syncSourceLibrarySnapshot({ snapshot, claim: requestedScope.claim });
+    if (!isCurrentProjectAuthorityMutationScope(requestedScope)) return;
     if (sourceLibraryNativeAckNeedsRepair(result)) {
       setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
         message: describeNativeSourceLibraryAckFailure(result, 'Native Source Library snapshot repair was rejected.'),
@@ -518,8 +545,54 @@ async function repairNativeSourceLibrarySnapshot(reason: unknown): Promise<void>
       message: 'Source Library sync repaired from the current project snapshot.',
     }));
   } catch (error) {
+    if (!isCurrentProjectAuthorityMutationScope(requestedScope)) return;
     setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', { error }));
   }
+}
+
+async function prepareSourceBinProjectSnapshot(
+  snapshot: SourceBinProjectSnapshot | undefined,
+  scratchDirectoryHandle?: FileSystemDirectoryHandle,
+): Promise<PreparedSourceBinProjectSnapshot> {
+  if (!snapshot) {
+    return { bins: [createDefaultBin()], dismissedSourceKeys: [] };
+  }
+  const safeSnapshot = sanitizePersistedSourceBinState(snapshot);
+  const snapshotBins = Array.isArray(safeSnapshot.bins) && safeSnapshot.bins.length > 0
+    ? safeSnapshot.bins
+    : Array.isArray(safeSnapshot.items)
+      ? [{ ...createDefaultBin(), items: safeSnapshot.items }]
+      : [createDefaultBin()];
+  const bins = await Promise.all(snapshotBins.map(async (bin) => ({
+    id: bin.id ?? globalThis.crypto?.randomUUID?.() ?? `bin-${Date.now()}`,
+    name: bin.name || 'Source Library',
+    collapsed: Boolean(bin.collapsed),
+    createdAt: bin.createdAt ?? Date.now(),
+    items: (await Promise.all(bin.items.map(async (item): Promise<SourceBinLibraryItem | undefined> => {
+      if (item.kind === 'text') return { ...item, assetUrl: undefined };
+      if (item.scratchFileName && scratchDirectoryHandle) {
+        const file = await loadScratchAssetBlob(scratchDirectoryHandle, item.scratchFileName).catch(() => undefined);
+        if (file) return { ...item, mimeType: file.type || item.mimeType, assetUrl: URL.createObjectURL(file) };
+      }
+      const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
+      if (lookupId) {
+        const storedAsset = await loadImportedAsset(lookupId).catch(() => undefined);
+        if (storedAsset) {
+          return {
+            ...item,
+            assetId: item.assetId ?? lookupId,
+            mimeType: storedAsset.mimeType,
+            assetUrl: storedAsset.dataUrl,
+          };
+        }
+      }
+      if (item.nativeFilePath || item.scratchFileName || item.assetUrl) {
+        return { ...item, mimeType: item.mimeType ?? getDefaultMimeType(item.kind) };
+      }
+      return undefined;
+    }))).filter((item): item is SourceBinLibraryItem => Boolean(item)),
+  })));
+  return { bins, dismissedSourceKeys: safeSnapshot.dismissedSourceKeys ?? [] };
 }
 
 export const useSourceBinStore = create<SourceBinState>()(
@@ -538,7 +611,8 @@ export const useSourceBinStore = create<SourceBinState>()(
         const currentStatus = get().nativeSyncStatus;
         if (currentStatus.repairDirection === 'pull-native-snapshot') {
           const bridge = getSignalLoomNativeBridge();
-          if (!bridge?.getSourceLibrarySnapshot) {
+          const scope = captureProjectAuthorityMutationScope();
+          if (!bridge?.getSourceLibrarySnapshot || !scope) {
             setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
               expectedNativeVersion: currentStatus.expectedNativeVersion,
               message: 'Native Source Library snapshot retry is unavailable.',
@@ -547,10 +621,13 @@ export const useSourceBinStore = create<SourceBinState>()(
             return;
           }
 
-          void bridge.getSourceLibrarySnapshot()
+          void bridge.getSourceLibrarySnapshot({ claim: scope.claim })
             .then((result) => {
               if (
                 !result?.snapshot
+                || !isCurrentProjectAuthorityMutationScope(scope)
+                || result.authority.authorityId !== scope.claim.authorityId
+                || result.authority.version !== scope.claim.version
                 || (typeof currentStatus.expectedNativeVersion === 'number' && result.version < currentStatus.expectedNativeVersion)
               ) {
                 throw new Error('Native Source Library snapshot retry returned a stale or empty snapshot.');
@@ -581,6 +658,7 @@ export const useSourceBinStore = create<SourceBinState>()(
               }
             })
             .catch((error) => {
+              if (!isCurrentProjectAuthorityMutationScope(scope)) return;
               setNativeSourceLibrarySyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
                 error,
                 expectedNativeVersion: currentStatus.expectedNativeVersion,
@@ -682,6 +760,11 @@ export const useSourceBinStore = create<SourceBinState>()(
         return migratedCount;
       },
       hydrateAssets: async () => {
+        const nativeBridge = getSignalLoomNativeBridge();
+        const authorityScope = captureProjectAuthorityMutationScope();
+        if (nativeBridge && !authorityScope) {
+          return;
+        }
         const scratchDirectoryHandle = get().scratchDirectoryHandle;
         const startingBins = get().bins;
 
@@ -790,6 +873,10 @@ export const useSourceBinStore = create<SourceBinState>()(
         });
 
         if (resolutions.size === 0) {
+          return;
+        }
+
+        if (nativeBridge && !isCurrentProjectAuthorityMutationScope(authorityScope)) {
           return;
         }
 
@@ -906,6 +993,13 @@ export const useSourceBinStore = create<SourceBinState>()(
           bins: exportedBins,
           dismissedSourceKeys: [...get().dismissedSourceKeys],
         };
+      },
+      prepareProjectSnapshot: (snapshot) => prepareSourceBinProjectSnapshot(snapshot, get().scratchDirectoryHandle),
+      commitPreparedProjectSnapshot: (snapshot, options = {}) => {
+        const previousBins = get().bins;
+        set({ bins: snapshot.bins, dismissedSourceKeys: snapshot.dismissedSourceKeys });
+        syncRevocableObjectUrls(previousBins, snapshot.bins);
+        if (options.publishNative ?? true) syncNativeSourceLibrarySnapshot(snapshot);
       },
       restoreProjectSnapshot: async (snapshot, options = {}) => {
         const publishNative = options.publishNative ?? true;
@@ -1103,12 +1197,19 @@ export const useSourceBinStore = create<SourceBinState>()(
         // live cross-window assets. Re-apply the authoritative native snapshot so they survive.
         // No-op without the native bridge (web / mobile single-window — nothing to reconcile).
         const bridge = getSignalLoomNativeBridge();
-        if (!bridge?.getSourceLibrarySnapshot) {
+        const scope = captureProjectAuthorityMutationScope();
+        if (!bridge?.getSourceLibrarySnapshot || !scope) {
           return;
         }
 
-        const result = await bridge.getSourceLibrarySnapshot().catch(() => undefined);
-        if (!result?.snapshot || !(result.version > 0)) {
+        const result = await bridge.getSourceLibrarySnapshot({ claim: scope.claim }).catch(() => undefined);
+        if (
+          !result?.snapshot
+          || !(result.version > 0)
+          || !isCurrentProjectAuthorityMutationScope(scope)
+          || result.authority.authorityId !== scope.claim.authorityId
+          || result.authority.version !== scope.claim.version
+        ) {
           return;
         }
 
@@ -2285,7 +2386,8 @@ async function materializeLibraryAssetItemWithNativeBridge(item: {
   envelopeCollapsed?: boolean;
 }): Promise<SourceBinLibraryItem | undefined> {
   const bridge = getSignalLoomNativeBridge();
-  if (!bridge?.materializeSourceAsset) {
+  const scope = captureProjectAuthorityMutationScope();
+  if (!bridge?.materializeSourceAsset || !scope) {
     return undefined;
   }
 
@@ -2298,6 +2400,7 @@ async function materializeLibraryAssetItemWithNativeBridge(item: {
 
   const id = item.id ?? globalThis.crypto?.randomUUID?.() ?? `source-bin-${Date.now()}`;
   const result = await bridge.materializeSourceAsset({
+    claim: scope.claim,
     id,
     label: item.label,
     kind: item.kind,
@@ -2316,7 +2419,7 @@ async function materializeLibraryAssetItemWithNativeBridge(item: {
     envelopeCollapsed: item.envelopeCollapsed,
   });
 
-  if (!result.item || result.error) {
+  if (!isCurrentProjectAuthorityMutationScope(scope) || !result.item || result.error) {
     return undefined;
   }
 

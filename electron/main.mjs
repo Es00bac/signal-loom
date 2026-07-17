@@ -698,20 +698,48 @@ async function registerNativeAssetCapability(filePath, { allowExternal = false, 
 }
 
 async function registerNativeAssetCapabilitiesFromSourceBin(sourceBin, { replace = false } = {}) {
-  const previouslyRegisteredPaths = new Set(nativeAssetCapabilityRegistry.list());
+  const prepared = await prepareNativeAssetCapabilitiesFromSourceBin(sourceBin);
+  commitNativeAssetCapabilities(prepared, { replace });
+}
 
+async function prepareNativeAssetCapabilitiesFromSourceBin(sourceBin, options = {}) {
+  const capabilityRootPaths = Array.isArray(options.capabilityRootPaths)
+    ? [...options.capabilityRootPaths]
+    : currentAssetCapabilityRootPaths.length > 0
+      ? [...currentAssetCapabilityRootPaths]
+      : [currentScratchDirectoryPath];
+  const previouslyRegisteredPaths = new Set(nativeAssetCapabilityRegistry.list());
+  const paths = [];
+  const assetIds = [];
+  const realPaths = [];
+
+  for (const capability of collectNativeAssetCapabilitiesFromSourceBin(sourceBin)) {
+    const normalizedPath = resolve(capability.filePath);
+    const isInsideCapabilityRoot = (
+      await Promise.all(capabilityRootPaths.map((directoryPath) => isPathInsideDirectory(capability.filePath, directoryPath)))
+    ).some(Boolean);
+    if (!options.allowExternal && !isInsideCapabilityRoot && !previouslyRegisteredPaths.has(normalizedPath)) continue;
+    const realFilePath = await realpath(capability.filePath).catch(() => undefined);
+    if (!realFilePath) continue;
+    paths.push(normalizedPath);
+    realPaths.push([normalizedPath, realFilePath]);
+    if (typeof capability.assetId === 'string' && capability.assetId.trim()) {
+      assetIds.push([capability.assetId.trim(), normalizedPath]);
+    }
+  }
+
+  return { paths, assetIds, realPaths };
+}
+
+function commitNativeAssetCapabilities(prepared, { replace = true } = {}) {
   if (replace) {
     nativeAssetCapabilityRegistry.clear();
     nativeAssetCapabilityAssetIds.clear();
     nativeAssetCapabilityRealPaths.clear();
   }
-
-  for (const capability of collectNativeAssetCapabilitiesFromSourceBin(sourceBin)) {
-    await registerNativeAssetCapability(capability.filePath, {
-      allowExternal: previouslyRegisteredPaths.has(resolve(capability.filePath)),
-      assetId: capability.assetId,
-    });
-  }
+  nativeAssetCapabilityRegistry.registerMany(prepared?.paths ?? []);
+  for (const [assetId, filePath] of prepared?.assetIds ?? []) nativeAssetCapabilityAssetIds.set(assetId, filePath);
+  for (const [filePath, realFilePath] of prepared?.realPaths ?? []) nativeAssetCapabilityRealPaths.set(filePath, realFilePath);
 }
 
 async function isNativeAssetCapabilityRegistered(filePath) {
@@ -739,19 +767,26 @@ function broadcastSourceLibraryChanged(change) {
   }
 }
 
-async function setSourceLibrarySnapshot(snapshot, { broadcast = false } = {}) {
+function commitSourceLibrarySnapshot(snapshot, preparedCapabilities, { broadcast = false, change } = {}) {
   sourceLibrarySnapshot = normalizeSourceLibrarySnapshot(snapshot);
-  await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
+  commitNativeAssetCapabilities(preparedCapabilities, { replace: true });
   sourceLibraryVersion += 1;
+  projectAuthority?.replaceCanonicalSourceSnapshot?.(getSourceLibrarySnapshot());
 
   if (broadcast) {
-    broadcastSourceLibraryChanged({
+    broadcastSourceLibraryChanged(change ?? {
       type: 'source-library-snapshot',
       snapshot: getSourceLibrarySnapshot(),
     });
   }
 
   return sourceLibraryVersion;
+}
+
+async function setSourceLibrarySnapshot(snapshot, { broadcast = false } = {}) {
+  const normalized = normalizeSourceLibrarySnapshot(snapshot);
+  const preparedCapabilities = await prepareNativeAssetCapabilitiesFromSourceBin(normalized);
+  return commitSourceLibrarySnapshot(normalized, preparedCapabilities, { broadcast });
 }
 
 async function resetSourceLibrarySnapshot({ broadcast = false } = {}) {
@@ -762,15 +797,18 @@ async function syncSourceLibraryFromDocument(document, options) {
   return setSourceLibrarySnapshot(document?.sourceBin, options);
 }
 
-async function applySourceLibraryChange(change) {
+async function prepareSourceLibraryChange(change) {
   if (!change || typeof change !== 'object' || typeof change.type !== 'string') {
-    return { error: 'Invalid Source Library change.' };
+    throw new Error('Invalid Source Library change.');
   }
 
   if (change.type === 'source-library-snapshot') {
+    const snapshot = normalizeSourceLibrarySnapshot(change.snapshot);
     return {
-      ok: true,
-      version: await setSourceLibrarySnapshot(change.snapshot, { broadcast: true }),
+      changed: true,
+      snapshot,
+      change: { type: 'source-library-snapshot', snapshot },
+      preparedCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin(snapshot),
     };
   }
 
@@ -782,7 +820,7 @@ async function applySourceLibraryChange(change) {
       : [];
 
     if (incomingItems.length === 0) {
-      return { ok: true, version: sourceLibraryVersion };
+      return { changed: false };
     }
 
     const normalizedSnapshot = normalizeSourceLibrarySnapshot(sourceLibrarySnapshot);
@@ -811,18 +849,20 @@ async function applySourceLibraryChange(change) {
       });
     }
 
-    sourceLibrarySnapshot = {
+    const snapshot = {
       ...normalizedSnapshot,
       bins: nextBins,
     };
-    await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
-    sourceLibraryVersion += 1;
-    broadcastSourceLibraryChanged({
-      type: 'source-bin-items-added',
-      items: incomingItems,
-      ...(targetBinId ? { targetBinId } : {}),
-    });
-    return { ok: true, version: sourceLibraryVersion };
+    return {
+      changed: true,
+      snapshot,
+      change: {
+        type: 'source-bin-items-added',
+        items: incomingItems,
+        ...(targetBinId ? { targetBinId } : {}),
+      },
+      preparedCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin(snapshot),
+    };
   }
 
   if (change.type === 'source-bin-item-renamed') {
@@ -830,12 +870,12 @@ async function applySourceLibraryChange(change) {
     const label = typeof change.label === 'string' ? change.label.trim() : '';
 
     if (!itemId || !label) {
-      return { ok: true, version: sourceLibraryVersion };
+      return { changed: false };
     }
 
     let didRename = false;
     const normalizedSnapshot = normalizeSourceLibrarySnapshot(sourceLibrarySnapshot);
-    sourceLibrarySnapshot = {
+    const snapshot = {
       ...normalizedSnapshot,
       bins: normalizedSnapshot.bins.map((bin) => ({
         ...bin,
@@ -851,25 +891,26 @@ async function applySourceLibraryChange(change) {
     };
 
     if (!didRename) {
-      return { ok: true, version: sourceLibraryVersion };
+      return { changed: false };
     }
-
-    await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
-    sourceLibraryVersion += 1;
-    broadcastSourceLibraryChanged({ type: 'source-bin-item-renamed', itemId, label });
-    return { ok: true, version: sourceLibraryVersion };
+    return {
+      changed: true,
+      snapshot,
+      change: { type: 'source-bin-item-renamed', itemId, label },
+      preparedCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin(snapshot),
+    };
   }
 
   if (change.type === 'source-bin-item-removed') {
     const itemId = typeof change.itemId === 'string' ? change.itemId.trim() : '';
     if (!itemId) {
-      return { ok: true, version: sourceLibraryVersion };
+      return { changed: false };
     }
 
     const normalizedSnapshot = normalizeSourceLibrarySnapshot(sourceLibrarySnapshot);
     let removedSourceKey = typeof change.sourceKey === 'string' ? change.sourceKey : undefined;
     let didRemove = false;
-    sourceLibrarySnapshot = {
+    const snapshot = {
       ...normalizedSnapshot,
       bins: normalizedSnapshot.bins.map((bin) => {
         const nextItems = bin.items.filter((item) => {
@@ -889,20 +930,32 @@ async function applySourceLibraryChange(change) {
     };
 
     if (!didRemove) {
-      return { ok: true, version: sourceLibraryVersion };
+      return { changed: false };
     }
-
-    await registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true });
-    sourceLibraryVersion += 1;
-    broadcastSourceLibraryChanged({
-      type: 'source-bin-item-removed',
-      itemId,
-      ...(removedSourceKey ? { sourceKey: removedSourceKey } : {}),
-    });
-    return { ok: true, version: sourceLibraryVersion };
+    return {
+      changed: true,
+      snapshot,
+      change: {
+        type: 'source-bin-item-removed',
+        itemId,
+        ...(removedSourceKey ? { sourceKey: removedSourceKey } : {}),
+      },
+      preparedCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin(snapshot),
+    };
   }
 
-  return { error: 'Unsupported Source Library change.' };
+  throw new Error('Unsupported Source Library change.');
+}
+
+function commitPreparedSourceLibraryChange(prepared) {
+  if (!prepared?.changed) return { ok: true, version: sourceLibraryVersion };
+  return {
+    ok: true,
+    version: commitSourceLibrarySnapshot(prepared.snapshot, prepared.preparedCapabilities, {
+      broadcast: true,
+      change: prepared.change,
+    }),
+  };
 }
 
 function getStartupProjectStatePath() {
@@ -1343,8 +1396,16 @@ async function stageProjectStartupRecord(filePath) {
 
 async function stageBlankProjectReset() {
   const startupRecord = await stageProjectStartupRecord(undefined);
+  const preparedPublication = {
+    sourceLibrarySnapshot: normalizeSourceLibrarySnapshot(undefined),
+    sourceCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin(undefined, { capabilityRootPaths: [] }),
+  };
   return {
-    commit: () => startupRecord.commit(),
+    result: { canceled: false, document: undefined, preparedPublication },
+    commit: () => {
+      startupRecord.commit();
+      return { canceled: false, document: undefined, preparedPublication };
+    },
     rollback: () => startupRecord.rollback(),
   };
 }
@@ -1368,7 +1429,13 @@ async function writeProjectDocument(filePath, document, isSenderLive = () => tru
     assertSenderLive();
     const startupRecord = await stageProjectStartupRecord(filePath);
     assertSenderLive();
-    return stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarget, startupRecord);
+    const preparedPublication = await prepareProjectPublication(
+      filePath,
+      prepared.document,
+      prepared.scratchDirectoryPath,
+    );
+    assertSenderLive();
+    return stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarget, startupRecord, preparedPublication);
   } catch (error) {
     if (stagedTarget) await rm(stagedTarget, { force: true }).catch(() => undefined);
     await prepared?.rollbackPreparationEffects?.().catch(() => undefined);
@@ -1376,7 +1443,7 @@ async function writeProjectDocument(filePath, document, isSenderLive = () => tru
   }
 }
 
-function stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarget, startupRecord) {
+function stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarget, startupRecord, preparedPublication) {
   const backupPath = previousTarget && shouldWriteProjectSaveDirectly(filePath)
     ? buildProjectOverwriteBackupPath(filePath)
     : undefined;
@@ -1384,6 +1451,13 @@ function stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarg
   let createdBackupPath;
 
   return {
+    result: {
+      canceled: false,
+      filePath,
+      scratchDirectoryPath: prepared.scratchDirectoryPath,
+      document: prepared.document,
+      preparedPublication,
+    },
     commit() {
       // This is the closed commit: no await, liveness callback, renderer callback, or observer
       // runs between replacing the target and advancing the authority gateway.
@@ -1404,7 +1478,13 @@ function stagePreparedProjectSave(filePath, prepared, previousTarget, stagedTarg
       startupRecord.rollback();
       throw error;
       }
-      return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
+      return {
+        canceled: false,
+        filePath,
+        scratchDirectoryPath: prepared.scratchDirectoryPath,
+        document: prepared.document,
+        preparedPublication,
+      };
     },
     async rollback() {
       if (committed) {
@@ -1432,10 +1512,29 @@ async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) 
     assertSenderLive();
     const startupRecord = await stageProjectStartupRecord(filePath);
     assertSenderLive();
+    const preparedPublication = await prepareProjectPublication(
+      filePath,
+      prepared.document,
+      prepared.scratchDirectoryPath,
+    );
+    assertSenderLive();
     return {
+      result: {
+        canceled: false,
+        filePath,
+        scratchDirectoryPath: prepared.scratchDirectoryPath,
+        document: prepared.document,
+        preparedPublication,
+      },
       commit() {
         startupRecord.commit();
-        return { canceled: false, filePath, scratchDirectoryPath: prepared.scratchDirectoryPath, document: prepared.document };
+        return {
+          canceled: false,
+          filePath,
+          scratchDirectoryPath: prepared.scratchDirectoryPath,
+          document: prepared.document,
+          preparedPublication,
+        };
       },
       async rollback() {
         startupRecord.rollback();
@@ -1448,30 +1547,72 @@ async function openProjectDocumentFromPath(filePath, isSenderLive = () => true) 
   }
 }
 
+async function prepareProjectPublication(filePath, document, scratchDirectoryPath) {
+  const capabilityRootPaths = [
+    ...(typeof filePath === 'string' ? buildProjectScratchDirectoryCandidates(filePath, document) : []),
+    scratchDirectoryPath,
+  ].filter((directoryPath) => typeof directoryPath === 'string' && directoryPath.length > 0);
+  const sourceSnapshot = normalizeSourceLibrarySnapshot(document?.sourceBin);
+  return {
+    sourceLibrarySnapshot: sourceSnapshot,
+    sourceCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin(sourceSnapshot, { capabilityRootPaths }),
+  };
+}
+
 /** Synchronous half of the authority commit: never call this during preparation/I/O. */
 function publishCommittedProjectSnapshot(snapshot) {
-  setCurrentProjectAssetRoots(snapshot.filePath, snapshot.document, snapshot.scratchDirectoryPath);
-  startupProject = snapshot.document
-    ? {
-      canceled: false,
-      filePath: snapshot.filePath,
-      scratchDirectoryPath: snapshot.scratchDirectoryPath,
-      document: snapshot.document,
-    }
-    : undefined;
-  // Source state is part of the same canonical project snapshot. Capability registration is
-  // derived/cache work and deliberately isolated from the commit; it cannot reject publication.
-  sourceLibrarySnapshot = normalizeSourceLibrarySnapshot(snapshot.document?.sourceBin);
-  sourceLibraryVersion += 1;
-  void registerNativeAssetCapabilitiesFromSourceBin(sourceLibrarySnapshot, { replace: true }).catch(() => undefined);
-  broadcastSourceLibraryChanged({ type: 'source-library-snapshot', snapshot: getSourceLibrarySnapshot() });
+  const previous = {
+    currentProjectPath,
+    currentScratchDirectoryPath,
+    currentAssetCapabilityRootPaths: [...currentAssetCapabilityRootPaths],
+    startupProject,
+    sourceLibrarySnapshot,
+    sourceLibraryVersion,
+    capabilityPaths: nativeAssetCapabilityRegistry.list(),
+    capabilityAssetIds: [...nativeAssetCapabilityAssetIds.entries()],
+    capabilityRealPaths: [...nativeAssetCapabilityRealPaths.entries()],
+  };
+  try {
+    setCurrentProjectAssetRoots(snapshot.filePath, snapshot.document, snapshot.scratchDirectoryPath);
+    startupProject = snapshot.document
+      ? {
+        canceled: false,
+        filePath: snapshot.filePath,
+        scratchDirectoryPath: snapshot.scratchDirectoryPath,
+        document: snapshot.document,
+      }
+      : undefined;
+    const preparedPublication = snapshot.preparedPublication;
+    sourceLibrarySnapshot = normalizeSourceLibrarySnapshot(
+      preparedPublication?.sourceLibrarySnapshot ?? snapshot.document?.sourceBin,
+    );
+    commitNativeAssetCapabilities(preparedPublication?.sourceCapabilities, { replace: true });
+    sourceLibraryVersion += 1;
+    broadcastSourceLibraryChanged({ type: 'source-library-snapshot', snapshot: getSourceLibrarySnapshot() });
+  } catch (error) {
+    currentProjectPath = previous.currentProjectPath;
+    currentScratchDirectoryPath = previous.currentScratchDirectoryPath;
+    currentAssetCapabilityRootPaths = previous.currentAssetCapabilityRootPaths;
+    startupProject = previous.startupProject;
+    sourceLibrarySnapshot = previous.sourceLibrarySnapshot;
+    sourceLibraryVersion = previous.sourceLibraryVersion;
+    commitNativeAssetCapabilities({
+      paths: previous.capabilityPaths,
+      assetIds: previous.capabilityAssetIds,
+      realPaths: previous.capabilityRealPaths,
+    }, { replace: true });
+    throw error;
+  }
 }
 
 // The gateway invokes this only if synchronous publication itself throws. It restores every
 // main-process mirror from the previous *canonical* snapshot before the staged disk rollback,
 // so a rejected request cannot leave globals/adoption/source state on different projects.
 function restoreCommittedProjectSnapshot(snapshot) {
-  publishCommittedProjectSnapshot(snapshot);
+  // publishCommittedProjectSnapshot restores its own exact globals, Source version, and
+  // capability maps before rethrowing. Replaying the old document here would incorrectly
+  // increment Source and republish an already-restored version.
+  void snapshot;
 }
 
 async function getNativeFilePathFromAssetUrl(assetUrl) {
@@ -1700,8 +1841,6 @@ async function materializeProjectSourceBinItem(
     return removeBrokenNativeAssetReference(item, targetPath);
   }
 
-  await registerNativeAssetCapability(targetPath, { assetId: item.id });
-
   return {
     ...item,
     mimeType: item.mimeType ?? dataUrlAsset?.mimeType,
@@ -1845,17 +1984,18 @@ async function materializeNativeImport(item, scratchDirectoryPath) {
     await copyFile(filePath, storedPath);
   }
 
-  await registerNativeAssetCapability(storedPath, { allowExternal: true, assetId: id });
-
   return {
-    id,
-    label: sourceName,
-    kind: item.kind,
-    mimeType: typeof item.mimeType === 'string' && item.mimeType.trim() ? item.mimeType.trim() : 'application/octet-stream',
-    assetUrl: buildNativeAssetUrl(storedPath, id),
-    nativeFilePath: storedPath,
-    scratchFileName,
-    createdAt: Date.now(),
+    item: {
+      id,
+      label: sourceName,
+      kind: item.kind,
+      mimeType: typeof item.mimeType === 'string' && item.mimeType.trim() ? item.mimeType.trim() : 'application/octet-stream',
+      assetUrl: buildNativeAssetUrl(storedPath, id),
+      nativeFilePath: storedPath,
+      scratchFileName,
+      createdAt: Date.now(),
+    },
+    createdPath: scratchFileName ? storedPath : undefined,
   };
 }
 
@@ -2644,7 +2784,7 @@ function vertexGcsUriToDownloadUrl(gcsUri) {
   return `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}?alt=media`;
 }
 
-async function materializeSourceAsset(request) {
+async function materializeSourceAsset(request, scratchJournal) {
   if (!currentScratchDirectoryPath) {
     return { error: 'No active Sloom Studio scratch directory is available.' };
   }
@@ -2694,13 +2834,12 @@ async function materializeSourceAsset(request) {
       const scratchFileName = buildNativeScratchFileName(item);
       const targetPath = join(currentScratchDirectoryPath, scratchFileName);
 
+      await scratchJournal?.beforeWrite(targetPath);
       await writeFile(targetPath, Buffer.from(binaryData));
 
       if (!(await hasUsableNativeAsset(targetPath))) {
         return { error: 'Could not write the source asset into the active scratch folder.' };
       }
-
-      await registerNativeAssetCapability(targetPath, { assetId: item.id });
 
       return {
         item: {
@@ -2712,7 +2851,13 @@ async function materializeSourceAsset(request) {
       };
     }
 
-    const materializedItem = await materializeProjectSourceBinItem(item, currentScratchDirectoryPath, [currentScratchDirectoryPath]);
+    const materializedItem = await materializeProjectSourceBinItem(
+      item,
+      currentScratchDirectoryPath,
+      [currentScratchDirectoryPath],
+      new Map(),
+      scratchJournal,
+    );
 
     if (
       typeof materializedItem?.nativeFilePath !== 'string'
@@ -2748,32 +2893,30 @@ function installIpcHandlers() {
     };
   });
 
-  ipcMain.handle('signal-loom:clear-project-path', async (event) => {
+  ipcMain.handle('signal-loom:clear-project-path', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
-    return projectAuthority.clearProject({
+    return projectAuthority.prepareClearProject({
       senderId: event.sender.id,
       rendererEpoch,
       isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
+      claim: request?.claim,
       // Do not clear Source/startup before the final authority commit. The staged reset can be
       // rolled back if the sender disappears or publication fails.
       reset: stageBlankProjectReset,
-      publish: publishCommittedProjectSnapshot,
-      restorePublish: restoreCommittedProjectSnapshot,
     });
   });
 
-  ipcMain.handle('signal-loom:project-open', async (event) => {
+  ipcMain.handle('signal-loom:project-open', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const isSenderLive = () => isLiveAuthoritySender(event.sender, rendererEpoch);
     const automationPath = getAutomationProjectOpenPath(process.env);
     if (automationPath) {
-      return projectAuthority.openProject({
+      return projectAuthority.prepareOpenProject({
         senderId: event.sender.id,
         rendererEpoch,
         isSenderLive,
+        claim: request?.claim,
         load: () => openProjectDocumentFromPath(automationPath, isSenderLive),
-        publish: publishCommittedProjectSnapshot,
-        restorePublish: restoreCommittedProjectSnapshot,
       });
     }
 
@@ -2790,13 +2933,32 @@ function installIpcHandlers() {
       return { canceled: false, rejected: { code: 'sender-gone', message: 'The requesting window is no longer live.', current: projectAuthority.getCurrent() } };
     }
 
-    return projectAuthority.openProject({
+    return projectAuthority.prepareOpenProject({
       senderId: event.sender.id,
       rendererEpoch,
       isSenderLive,
+      claim: request?.claim,
       load: () => openProjectDocumentFromPath(result.filePaths[0], isSenderLive),
+    });
+  });
+
+  ipcMain.handle('signal-loom:project-switch-commit', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    return projectAuthority.commitPreparedProject({
+      transactionId: request?.transactionId,
+      senderId: event.sender.id,
+      rendererEpoch,
       publish: publishCommittedProjectSnapshot,
       restorePublish: restoreCommittedProjectSnapshot,
+    });
+  });
+
+  ipcMain.handle('signal-loom:project-switch-cancel', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    return projectAuthority.cancelPreparedProject({
+      transactionId: request?.transactionId,
+      senderId: event.sender.id,
+      rendererEpoch,
     });
   });
 
@@ -2804,7 +2966,7 @@ function installIpcHandlers() {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const { document, claim } = normalizeProjectSavePayload(payload);
 
-    return projectAuthority.saveProject({
+    const result = await projectAuthority.saveProject({
       senderId: event.sender.id,
       rendererEpoch,
       isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
@@ -2822,13 +2984,16 @@ function installIpcHandlers() {
       publish: publishCommittedProjectSnapshot,
       restorePublish: restoreCommittedProjectSnapshot,
     });
+    return result.rejected || result.canceled
+      ? result
+      : { ...result, sourceLibraryVersion };
   });
 
   ipcMain.handle('signal-loom:project-save-as', async (event, payload) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const { document, claim } = normalizeProjectSavePayload(payload);
 
-    return projectAuthority.saveProject({
+    const result = await projectAuthority.saveProject({
       senderId: event.sender.id,
       rendererEpoch,
       isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
@@ -2838,6 +3003,9 @@ function installIpcHandlers() {
       publish: publishCommittedProjectSnapshot,
       restorePublish: restoreCommittedProjectSnapshot,
     });
+    return result.rejected || result.canceled
+      ? result
+      : { ...result, sourceLibraryVersion };
   });
 
   ipcMain.handle('signal-loom:project-adopt', async () => {
@@ -2973,6 +3141,10 @@ function installIpcHandlers() {
   });
 
   ipcMain.handle('signal-loom:import-media-files', async (event, options = {}) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    const isSenderLive = () => isLiveAuthoritySender(event.sender, rendererEpoch);
+    const precheck = projectAuthority.authorizeSave(event.sender.id, options?.claim, rendererEpoch, isSenderLive);
+    if (!precheck.ok) return { canceled: false, items: [], rejected: precheck.rejected, error: precheck.rejected.message };
     const automationPaths = getAutomationImportMediaPaths(process.env);
     let filePaths = automationPaths;
 
@@ -2990,17 +3162,33 @@ function installIpcHandlers() {
       filePaths = result.filePaths;
     }
 
-    const normalizedItems = await normalizeImportedMediaBatchInMain(
-      filePaths.map((filePath) => ({ filePath })),
-    );
-    const items = await Promise.all(
-      normalizedItems.map((item) => materializeNativeImport(item, options.scratchDirectoryPath)),
-    );
-
-    return {
-      canceled: false,
-      items: items.filter(Boolean),
-    };
+    return projectAuthority.runAuthorizedMutation({
+      senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive,
+      claim: options?.claim,
+      prepare: async () => {
+        const normalizedItems = await normalizeImportedMediaBatchInMain(
+          filePaths.map((filePath) => ({ filePath })),
+        );
+        const materialized = (await Promise.all(
+          normalizedItems.map((item) => materializeNativeImport(item, options.scratchDirectoryPath)),
+        )).filter(Boolean);
+        const items = materialized.map((entry) => entry.item);
+        return {
+          items,
+          createdPaths: materialized.map((entry) => entry.createdPath).filter(Boolean),
+          preparedCapabilities: await prepareNativeAssetCapabilitiesFromSourceBin({ items }, { allowExternal: true }),
+        };
+      },
+      commit: ({ items, preparedCapabilities }) => {
+        commitNativeAssetCapabilities(preparedCapabilities, { replace: false });
+        return { canceled: false, items };
+      },
+      rollback: async ({ createdPaths }) => {
+        await Promise.all(createdPaths.map((filePath) => rm(filePath, { force: true })));
+      },
+    });
   });
 
   ipcMain.handle('signal-loom:paper-choose-pdf-export-path', async (event, request) => {
@@ -3232,11 +3420,40 @@ function installIpcHandlers() {
     }
   });
 
-  ipcMain.handle('signal-loom:source-asset-materialize', async (_event, request) => {
-    return materializeSourceAsset(request);
+  ipcMain.handle('signal-loom:source-asset-materialize', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    return projectAuthority.runAuthorizedMutation({
+      senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
+      claim: request?.claim,
+      prepare: async () => {
+        const scratchJournal = currentScratchDirectoryPath
+          ? createScratchPreparationJournal(currentScratchDirectoryPath)
+          : undefined;
+        const result = await materializeSourceAsset(request, scratchJournal);
+        if (result?.error) {
+          await scratchJournal?.rollback();
+          return { result };
+        }
+        const preparedCapabilities = result?.item
+          ? await prepareNativeAssetCapabilitiesFromSourceBin({ items: [result.item] })
+          : undefined;
+        return { result, preparedCapabilities, scratchJournal };
+      },
+      commit: ({ result, preparedCapabilities }) => {
+        if (preparedCapabilities) commitNativeAssetCapabilities(preparedCapabilities, { replace: false });
+        return result;
+      },
+      rollback: ({ scratchJournal }) => scratchJournal?.rollback(),
+    });
   });
 
-  ipcMain.handle('signal-loom:choose-scratch-directory', async (event) => {
+  ipcMain.handle('signal-loom:choose-scratch-directory', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    const isSenderLive = () => isLiveAuthoritySender(event.sender, rendererEpoch);
+    const precheck = projectAuthority.authorizeSave(event.sender.id, request?.claim, rendererEpoch, isSenderLive);
+    if (!precheck.ok) return { canceled: false, rejected: precheck.rejected, error: precheck.rejected.message };
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
       title: 'Choose Sloom Studio Scratch Folder',
       properties: ['openDirectory', 'createDirectory'],
@@ -3246,12 +3463,17 @@ function installIpcHandlers() {
       return { canceled: true };
     }
 
-    setCurrentProjectAssetRoots(currentProjectPath, startupProject?.document, result.filePaths[0]);
-
-    return {
-      canceled: false,
-      directoryPath: currentScratchDirectoryPath,
-    };
+    return projectAuthority.runAuthorizedMutation({
+      senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive,
+      claim: request?.claim,
+      prepare: async () => result.filePaths[0],
+      commit: (directoryPath) => {
+        setCurrentProjectAssetRoots(currentProjectPath, startupProject?.document, directoryPath);
+        return { canceled: false, directoryPath: currentScratchDirectoryPath };
+      },
+    });
   });
 
   ipcMain.handle('signal-loom:open-workspace-window', async (_event, workspace) => {
@@ -3308,13 +3530,7 @@ function installIpcHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle('signal-loom:source-library-get-snapshot', async () => ({
-    version: sourceLibraryVersion,
-    snapshot: getSourceLibrarySnapshot(),
-    authority: projectAuthority.getCurrent(),
-  }));
-
-  ipcMain.handle('signal-loom:source-library-sync-snapshot', async (event, request) => {
+  ipcMain.handle('signal-loom:source-library-get-snapshot', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
     const authorization = projectAuthority.authorizeSave(
       event.sender.id,
@@ -3322,20 +3538,38 @@ function installIpcHandlers() {
       rendererEpoch,
       () => isLiveAuthoritySender(event.sender, rendererEpoch),
     );
-    if (!authorization.ok) return { ok: false, error: authorization.rejected.message, rejected: authorization.rejected };
-    return { ok: true, version: await setSourceLibrarySnapshot(request?.snapshot, { broadcast: true }) };
+    if (!authorization.ok) {
+      return { rejected: authorization.rejected, error: authorization.rejected.message };
+    }
+    return {
+      version: sourceLibraryVersion,
+      snapshot: getSourceLibrarySnapshot(),
+      authority: projectAuthority.getCurrent(),
+    };
+  });
+
+  ipcMain.handle('signal-loom:source-library-sync-snapshot', async (event, request) => {
+    const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+    return projectAuthority.runAuthorizedMutation({
+      senderId: event.sender.id,
+      rendererEpoch,
+      isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
+      claim: request?.claim,
+      prepare: () => prepareSourceLibraryChange({ type: 'source-library-snapshot', snapshot: request?.snapshot }),
+      commit: commitPreparedSourceLibraryChange,
+    });
   });
 
   ipcMain.handle('signal-loom:source-library-apply-change', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
-    const authorization = projectAuthority.authorizeSave(
-      event.sender.id,
-      request?.claim,
+    return projectAuthority.runAuthorizedMutation({
+      senderId: event.sender.id,
       rendererEpoch,
-      () => isLiveAuthoritySender(event.sender, rendererEpoch),
-    );
-    if (!authorization.ok) return { ok: false, error: authorization.rejected.message, rejected: authorization.rejected };
-    return applySourceLibraryChange(request?.change);
+      isSenderLive: () => isLiveAuthoritySender(event.sender, rendererEpoch),
+      claim: request?.claim,
+      prepare: () => prepareSourceLibraryChange(request?.change),
+      commit: commitPreparedSourceLibraryChange,
+    });
   });
 
   ipcMain.handle('signal-loom:show-about', async (event, options) => {

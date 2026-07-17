@@ -1,4 +1,4 @@
-import type { SourceLibraryNativeChange, SourceLibraryNativeEvent } from './sourceLibraryNativeSync';
+import type { SourceLibraryNativeChange } from './sourceLibraryNativeSync';
 import {
   getProjectSyncEventsSince,
   getProjectSyncVersion,
@@ -31,11 +31,16 @@ export const SOURCE_LIBRARY_SYNC_CHANNEL = 'source-library';
 
 export interface HostEventsResult {
   version: number;
-  events: SourceLibraryNativeEvent[];
+  events: HostSourceLibraryEvent[];
+}
+
+export interface HostSourceLibraryEvent {
+  version: number;
+  change: SourceLibraryNativeChange;
 }
 
 /** Project the shared channel-tagged event back to the source-library's channel-less wire shape. */
-function toSourceLibraryEvent(event: ProjectSyncEvent): SourceLibraryNativeEvent {
+function toSourceLibraryEvent(event: ProjectSyncEvent): HostSourceLibraryEvent {
   return { version: event.version, change: event.change as SourceLibraryNativeChange };
 }
 
@@ -48,12 +53,12 @@ export function getHostSourceLibraryVersion(): number {
  * Record a source-library change as the next authority version and wake any parked long-poll waiters.
  * Called on the phone from the source-bin broadcast hooks and from an applied client `mutate`.
  */
-export function recordHostSourceLibraryChange(change: SourceLibraryNativeChange): SourceLibraryNativeEvent {
+export function recordHostSourceLibraryChange(change: SourceLibraryNativeChange): HostSourceLibraryEvent {
   return toSourceLibraryEvent(recordProjectSyncChange(SOURCE_LIBRARY_SYNC_CHANNEL, change));
 }
 
 /** Source-library events strictly newer than `since` (a client's last-applied version). */
-export function getHostSourceLibraryEventsSince(since: number): SourceLibraryNativeEvent[] {
+export function getHostSourceLibraryEventsSince(since: number): HostSourceLibraryEvent[] {
   return getProjectSyncEventsSince(since, SOURCE_LIBRARY_SYNC_CHANNEL).map(toSourceLibraryEvent);
 }
 

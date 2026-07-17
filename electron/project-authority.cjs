@@ -54,11 +54,37 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
   const adoptions = new Map();
   /** Serializes every project mutation so validation and disk writes are atomic. */
   let mutationChain = Promise.resolve();
+  let preparedSwitchCounter = 0;
+  /**
+   * A prepared Open/New keeps the mutation lease until its initiating renderer either commits
+   * or cancels. Native authority therefore remains on A while the renderer performs every
+   * fallible decode/migration/hydration step for B. The token never grants authority by itself:
+   * it is bound to the sender id, renderer epoch, and exact pre-switch claim.
+   */
+  const preparedSwitches = new Map();
 
-  function runExclusive(task) {
-    const next = mutationChain.then(task, task);
-    mutationChain = next.then(() => undefined, () => undefined);
-    return next;
+  async function acquireMutationLease() {
+    const previous = mutationChain;
+    let release;
+    mutationChain = new Promise((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+    };
+  }
+
+  async function runExclusive(task) {
+    const release = await acquireMutationLease();
+    try {
+      return await task();
+    } finally {
+      release();
+    }
   }
 
   function getCurrent() {
@@ -159,9 +185,197 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
     }
   }
 
+  function publicPreparedResult(transactionId, staged, kind) {
+    const result = staged.result && typeof staged.result === 'object' ? staged.result : {};
+    const { preparedPublication: _preparedPublication, ...publicResult } = result;
+    return {
+      ...publicResult,
+      transactionId,
+      kind,
+      baseAuthority: getCurrent(),
+    };
+  }
+
+  async function rollbackPreparedSwitch(transactionId, prepared) {
+    preparedSwitches.delete(transactionId);
+    try {
+      await prepared.staged.rollback();
+    } catch {
+      // The reservation still has to release: rollback journals are best-effort after their
+      // own exact-byte restoration attempts, and may not strand every future project mutation.
+    } finally {
+      prepared.release();
+    }
+  }
+
+  async function prepareSwitch({
+    kind,
+    senderId,
+    rendererEpoch = 0,
+    isSenderLive,
+    claim,
+    prepare,
+  }) {
+    const release = await acquireMutationLease();
+    let staged;
+    try {
+      const authorization = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
+      if (!authorization.ok) {
+        release();
+        return { canceled: false, rejected: authorization.rejected };
+      }
+      staged = asStagedResult(await prepare());
+      const recheck = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
+      if (!recheck.ok) {
+        try { await staged.rollback(); } catch {}
+        release();
+        return { canceled: false, rejected: recheck.rejected };
+      }
+      const transactionId = `project-switch-${++preparedSwitchCounter}-${Math.random().toString(36).slice(2, 10)}`;
+      preparedSwitches.set(transactionId, {
+        kind,
+        senderId,
+        rendererEpoch,
+        isSenderLive,
+        claim: { ...claim },
+        staged,
+        release,
+      });
+      return publicPreparedResult(transactionId, staged, kind);
+    } catch (error) {
+      if (staged) {
+        try { await staged.rollback(); } catch {}
+      }
+      release();
+      return {
+        canceled: false,
+        rejected: buildRejection(
+          'prepare-failed',
+          error instanceof Error ? error.message : 'Project preparation failed.',
+        ).rejected,
+      };
+    }
+  }
+
+  async function commitPreparedSwitch({ transactionId, senderId, rendererEpoch = 0, publish, restorePublish }) {
+    const prepared = preparedSwitches.get(transactionId);
+    if (!prepared || prepared.senderId !== senderId || prepared.rendererEpoch !== rendererEpoch) {
+      return {
+        canceled: false,
+        rejected: buildRejection('invalid-transaction', 'This prepared project switch is missing, stale, or belongs to another window.').rejected,
+      };
+    }
+    const authorization = authorizeSave(
+      senderId,
+      prepared.claim,
+      rendererEpoch,
+      prepared.isSenderLive,
+    );
+    if (!authorization.ok) {
+      await rollbackPreparedSwitch(transactionId, prepared);
+      return { canceled: false, rejected: authorization.rejected };
+    }
+
+    const previous = { current, canonical };
+    try {
+      const committed = prepared.staged.commit();
+      if (prepared.kind === 'open') {
+        current = { authorityId: mint(), version: 1, filePath: committed.filePath };
+        canonical = {
+          filePath: committed.filePath,
+          scratchDirectoryPath: committed.scratchDirectoryPath,
+          document: committed.document,
+        };
+      } else {
+        current = { authorityId: mint(), version: 1, filePath: undefined };
+        canonical = { filePath: undefined, scratchDirectoryPath: undefined, document: undefined };
+      }
+      const snapshot = { ...canonical, authority: getCurrent(), preparedPublication: committed?.preparedPublication };
+      if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
+        throw new Error('Project publication failed.');
+      }
+      preparedSwitches.delete(transactionId);
+      prepared.release();
+      safelyEmit({
+        authority: getCurrent(),
+        reason: prepared.kind === 'open' ? 'open' : 'clear',
+        initiatorWebContentsId: senderId,
+      });
+      return {
+        canceled: false,
+        ...(committed && typeof committed === 'object'
+          ? Object.fromEntries(Object.entries(committed).filter(([key]) => key !== 'preparedPublication'))
+          : {}),
+        ok: true,
+        authority: getCurrent(),
+      };
+    } catch (error) {
+      current = previous.current;
+      canonical = previous.canonical;
+      await rollbackPreparedSwitch(transactionId, prepared);
+      return {
+        canceled: false,
+        ok: false,
+        rejected: buildRejection(
+          'commit-failed',
+          error instanceof Error ? error.message : 'Project commit failed.',
+        ).rejected,
+      };
+    }
+  }
+
   return {
     getCurrent,
     authorizeSave,
+
+    prepareOpenProject(request) {
+      return prepareSwitch({ ...request, kind: 'open', prepare: request.load });
+    },
+
+    prepareClearProject(request) {
+      return prepareSwitch({
+        ...request,
+        kind: 'clear',
+        prepare: request.reset ?? (() => undefined),
+      });
+    },
+
+    commitPreparedProject: commitPreparedSwitch,
+
+    async cancelPreparedProject({ transactionId, senderId, rendererEpoch = 0 }) {
+      const prepared = preparedSwitches.get(transactionId);
+      if (!prepared || prepared.senderId !== senderId || prepared.rendererEpoch !== rendererEpoch) {
+        return { ok: false };
+      }
+      await rollbackPreparedSwitch(transactionId, prepared);
+      return { ok: true };
+    },
+
+    runAuthorizedMutation({ senderId, rendererEpoch = 0, isSenderLive, claim, prepare, commit, rollback }) {
+      return runExclusive(async () => {
+        const authorization = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
+        if (!authorization.ok) return { ok: false, rejected: authorization.rejected, error: authorization.rejected.message };
+        let prepared;
+        try {
+          prepared = await prepare();
+          const recheck = authorizeSave(senderId, claim, rendererEpoch, isSenderLive);
+          if (!recheck.ok) {
+            try { if (rollback) await rollback(prepared); } catch {}
+            return { ok: false, rejected: recheck.rejected, error: recheck.rejected.message };
+          }
+          return commit(prepared);
+        } catch (error) {
+          try { if (rollback && prepared !== undefined) await rollback(prepared); } catch {}
+          return { ok: false, error: error instanceof Error ? error.message : 'Project mutation failed.' };
+        }
+      });
+    },
+
+    replaceCanonicalSourceSnapshot(sourceBin) {
+      if (canonical.document && typeof canonical.document === 'object') {
+        canonical = { ...canonical, document: { ...canonical.document, sourceBin } };
+      }
+    },
 
     /** Bind the remembered startup project before any window exists (no broadcast needed). */
     commitStartup(snapshot = {}) {
@@ -178,34 +392,11 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * same as every other window.
      */
     async openProject({ senderId, rendererEpoch = 0, isSenderLive, load, publish, restorePublish }) {
-      return runExclusive(async () => {
-        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        const staged = asStagedResult(await load());
-        if (!senderIsLive(isSenderLive)) {
-          // Preparation is allowed to create staging/scratch state.  It is not authority
-          // state, and it must be unwound even when the sender disappears in this gap.
-          try { await staged.rollback(); } catch {}
-          return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        }
-        const previous = { current, canonical };
-        let loaded;
-        try {
-          loaded = staged.commit();
-          current = { authorityId: mint(), version: 1, filePath: loaded.filePath };
-          canonical = { filePath: loaded.filePath, scratchDirectoryPath: loaded.scratchDirectoryPath, document: loaded.document };
-          const snapshot = { ...canonical, authority: getCurrent() };
-          if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
-            throw new Error('Project publication failed.');
-          }
-          safelyEmit({ authority: getCurrent(), reason: 'open', initiatorWebContentsId: senderId });
-          return { ...loaded, authority: getCurrent() };
-        } catch (error) {
-          current = previous.current;
-          canonical = previous.canonical;
-          try { await staged.rollback(); } catch {}
-          return { canceled: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
-        }
-      });
+      const claim = getCurrent();
+      recordAdoption(senderId, rendererEpoch);
+      const prepared = await prepareSwitch({ kind: 'open', senderId, rendererEpoch, isSenderLive, claim, prepare: load });
+      if (!prepared.transactionId) return prepared;
+      return commitPreparedSwitch({ transactionId: prepared.transactionId, senderId, rendererEpoch, publish, restorePublish });
     },
 
     /**
@@ -250,7 +441,11 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
           const rebinding = filePath !== current.filePath;
           current = rebinding ? { authorityId: mint(), version: 1, filePath } : { ...current, version: current.version + 1 };
           canonical = { filePath, scratchDirectoryPath: written.scratchDirectoryPath, document: written.document };
-          const snapshot = { ...canonical, authority: getCurrent() };
+          const snapshot = {
+            ...canonical,
+            authority: getCurrent(),
+            preparedPublication: written?.preparedPublication,
+          };
           if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
             throw new Error('Project publication failed.');
           }
@@ -272,32 +467,11 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
      * it is adopted directly.
      */
     async clearProject({ senderId, rendererEpoch = 0, isSenderLive, reset, publish, restorePublish }) {
-      return runExclusive(async () => {
-        if (!senderIsLive(isSenderLive)) return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        const staged = asStagedResult(reset ? await reset() : undefined);
-        if (!senderIsLive(isSenderLive)) {
-          try { await staged.rollback(); } catch {}
-          return buildRejection('sender-gone', 'The requesting window is no longer live.');
-        }
-        const previous = { current, canonical };
-        try {
-          staged.commit();
-          current = { authorityId: mint(), version: 1, filePath: undefined };
-          canonical = { filePath: undefined, scratchDirectoryPath: undefined, document: undefined };
-          const snapshot = { ...canonical, authority: getCurrent() };
-          if (!publishAtomically(snapshot, { ...previous.canonical, authority: { ...previous.current } }, publish, restorePublish)) {
-            throw new Error('Project publication failed.');
-          }
-          recordAdoption(senderId, rendererEpoch);
-          safelyEmit({ authority: getCurrent(), reason: 'clear', initiatorWebContentsId: senderId });
-          return { ok: true, authority: getCurrent() };
-        } catch (error) {
-          current = previous.current;
-          canonical = previous.canonical;
-          try { await staged.rollback(); } catch {}
-          return { ok: false, rejected: buildRejection('commit-failed', error instanceof Error ? error.message : 'Project commit failed.').rejected };
-        }
-      });
+      const claim = getCurrent();
+      recordAdoption(senderId, rendererEpoch);
+      const prepared = await prepareSwitch({ kind: 'clear', senderId, rendererEpoch, isSenderLive, claim, prepare: reset ?? (() => undefined) });
+      if (!prepared.transactionId) return prepared;
+      return commitPreparedSwitch({ transactionId: prepared.transactionId, senderId, rendererEpoch, publish, restorePublish });
     },
 
     /**
@@ -326,6 +500,11 @@ function createProjectAuthority({ mintAuthorityId, broadcast } = {}) {
     /** Reload/navigation/crash invalidates a claim even when Electron retains webContents.id. */
     invalidateRenderer(senderId) {
       adoptions.delete(senderId);
+      for (const [transactionId, prepared] of preparedSwitches) {
+        if (prepared.senderId === senderId) {
+          void rollbackPreparedSwitch(transactionId, prepared);
+        }
+      }
     },
   };
 }

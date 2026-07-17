@@ -1116,6 +1116,30 @@ export function getDirtyPaperWorkspaceDocumentTitles(): string[] {
     .map((document) => document.document.title);
 }
 
+/** Capture exactly the Paper content sent to a project save. */
+export function capturePaperWorkspaceDocumentSignatures(): ReadonlyMap<string, string> {
+  return new Map(
+    syncActivePaperDocument(usePaperStore.getState())
+      .map((document) => [document.id, paperWorkspaceDocumentSignature(document)]),
+  );
+}
+
+/**
+ * Establish a save baseline only for tabs whose authored content still equals the bytes that
+ * were submitted. A Paper edit made while the native save is in flight remains dirty.
+ */
+export function markPaperWorkspaceDocumentsCleanIfUnchanged(
+  savedSignatures: ReadonlyMap<string, string>,
+): void {
+  for (const document of syncActivePaperDocument(usePaperStore.getState())) {
+    const savedSignature = savedSignatures.get(document.id);
+    const currentSignature = paperWorkspaceDocumentSignature(document);
+    if (savedSignature === currentSignature) {
+      savedPaperDocumentSignatures.set(document.id, currentSignature);
+    }
+  }
+}
+
 function paperStatePatchFromWorkspaceSnapshot(
   workspaceDocument: PaperWorkspaceDocumentSnapshot,
 ): Pick<PaperState, 'document' | 'selectedPageId' | 'selectedFrameId' | 'selectedFrameIds' | 'tool' | 'zoom'> {

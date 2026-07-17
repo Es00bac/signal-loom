@@ -13,6 +13,7 @@ import type {
 import type {
   SourceLibraryNativeChange,
   SourceLibraryNativeEvent,
+  SourceLibraryNativeSnapshotResponse,
   SourceLibraryNativeSnapshotResult,
 } from './sourceLibraryNativeSync';
 
@@ -283,13 +284,51 @@ export interface NativeProjectAuthorityDescriptor {
 // obtain the claim from this renderer-local holder. App updates it only after adoption; stores
 // therefore cannot accidentally mint authority from a displayed file path.
 let currentProjectAuthorityClaim: NativeProjectAuthorityDescriptor | undefined;
+let currentProjectAuthorityEpoch = 0;
+let projectAuthorityTransitionDepth = 0;
 
 export function setCurrentProjectAuthorityClaim(claim: NativeProjectAuthorityDescriptor | undefined): void {
   currentProjectAuthorityClaim = claim ? { ...claim } : undefined;
+  currentProjectAuthorityEpoch += 1;
 }
 
 export function getCurrentProjectAuthorityClaim(): NativeProjectAuthorityDescriptor | undefined {
-  return currentProjectAuthorityClaim ? { ...currentProjectAuthorityClaim } : undefined;
+  return projectAuthorityTransitionDepth === 0 && currentProjectAuthorityClaim
+    ? { ...currentProjectAuthorityClaim }
+    : undefined;
+}
+
+export interface ProjectAuthorityMutationScope {
+  claim: NativeProjectAuthorityDescriptor;
+  epoch: number;
+}
+
+export function captureProjectAuthorityMutationScope(): ProjectAuthorityMutationScope | undefined {
+  const claim = getCurrentProjectAuthorityClaim();
+  return claim ? { claim, epoch: currentProjectAuthorityEpoch } : undefined;
+}
+
+export function isCurrentProjectAuthorityMutationScope(scope: ProjectAuthorityMutationScope | undefined): boolean {
+  const claim = getCurrentProjectAuthorityClaim();
+  return Boolean(
+    scope
+    && claim
+    && scope.epoch === currentProjectAuthorityEpoch
+    && scope.claim.authorityId === claim.authorityId
+    && scope.claim.version === claim.version,
+  );
+}
+
+export function beginProjectAuthorityTransition(): () => void {
+  projectAuthorityTransitionDepth += 1;
+  currentProjectAuthorityEpoch += 1;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    projectAuthorityTransitionDepth = Math.max(0, projectAuthorityTransitionDepth - 1);
+    currentProjectAuthorityEpoch += 1;
+  };
 }
 
 export type NativeProjectSaveRejectionCode =
@@ -303,6 +342,10 @@ export type NativeProjectSaveRejectionCode =
   | 'unauthorized'
   /** Staged target/startup publication could not commit and was rolled back. */
   | 'commit-failed'
+  /** Candidate disk/renderer preparation failed while the prior authority remained current. */
+  | 'prepare-failed'
+  /** A prepared Open/New token was replayed, stale, or belonged to another renderer epoch. */
+  | 'invalid-transaction'
   /** The renderer was destroyed/reloaded before the closed commit began. */
   | 'sender-gone';
 
@@ -317,10 +360,18 @@ export interface NativeProjectFileResult {
   filePath?: string;
   scratchDirectoryPath?: string;
   document?: FlowProjectDocument;
+  /** Exact native Source version published with this committed project result. */
+  sourceLibraryVersion?: number;
   /** The authority descriptor after a successful open/save commit. */
   authority?: NativeProjectAuthorityDescriptor;
   /** Present when the main process refused the save; nothing was written or advanced. */
   rejected?: NativeProjectSaveRejection;
+}
+
+export interface NativePreparedProjectSwitchResult extends NativeProjectFileResult {
+  transactionId?: string;
+  kind?: 'open' | 'clear';
+  baseAuthority?: NativeProjectAuthorityDescriptor;
 }
 
 export interface NativeProjectSavePayload {
@@ -353,6 +404,8 @@ export interface NativeProjectAdoptionConfirmation {
 export interface NativeScratchDirectoryResult {
   canceled: boolean;
   directoryPath?: string;
+  error?: string;
+  rejected?: NativeProjectSaveRejection;
 }
 
 export interface NativeImageOpenResult {
@@ -520,6 +573,7 @@ export interface NativeVertexProjectsResult {
 }
 
 export interface NativeMaterializeSourceAssetRequest {
+  claim: NativeProjectAuthorityDescriptor;
   id?: string;
   label: string;
   kind: Exclude<SourceBinLibraryItem['kind'], 'text'>;
@@ -550,6 +604,8 @@ export type NativeImportedMediaItem = SourceBinLibraryItem & {
 export interface NativeImportMediaResult {
   canceled: boolean;
   items: NativeImportedMediaItem[];
+  error?: string;
+  rejected?: NativeProjectSaveRejection;
 }
 
 export interface NativeWindowCaptureResult {
@@ -571,8 +627,10 @@ export interface LocalUpscalerStatus {
 
 export interface SignalLoomNativeBridge {
   getNativeState: () => Promise<NativeState>;
-  clearProjectPath: () => Promise<{ ok?: boolean; authority?: NativeProjectAuthorityDescriptor }>;
-  openProjectFile: () => Promise<NativeProjectFileResult>;
+  clearProjectPath: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativePreparedProjectSwitchResult>;
+  openProjectFile: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativePreparedProjectSwitchResult>;
+  commitProjectSwitch: (request: { transactionId: string }) => Promise<NativeProjectFileResult & { ok?: boolean }>;
+  cancelProjectSwitch: (request: { transactionId: string }) => Promise<{ ok?: boolean }>;
   saveProjectFile: (payload: NativeProjectSavePayload) => Promise<NativeProjectFileResult>;
   saveProjectFileAs: (payload: NativeProjectSavePayload) => Promise<NativeProjectFileResult>;
   /** Pull the canonical current-project snapshot for adoption after an authority change (AUD-001). */
@@ -592,7 +650,10 @@ export interface SignalLoomNativeBridge {
   writeImageDocumentFile?: (path: string, bytes: Uint8Array) => Promise<{ ok?: boolean; error?: string }>;
   openPaperDocumentFile: () => Promise<NativePaperOpenResult>;
   savePaperDocumentFileAs: (bytes: Uint8Array) => Promise<NativePaperSaveResult>;
-  importMediaFiles: (options?: { scratchDirectoryPath?: string }) => Promise<NativeImportMediaResult>;
+  importMediaFiles: (options: {
+    scratchDirectoryPath?: string;
+    claim?: NativeProjectAuthorityDescriptor;
+  }) => Promise<NativeImportMediaResult>;
   normalizeImportedMediaBatch: (
     items: ImportedMediaBatchNormalizationRequestItem[],
   ) => Promise<NormalizedImportedMediaBatchItem[]>;
@@ -615,15 +676,15 @@ export interface SignalLoomNativeBridge {
   detectVertexAdc: (request: NativeVertexAuthRequest) => Promise<NativeVertexDetectResult>;
   listVertexProjects: (request: NativeVertexAuthRequest) => Promise<NativeVertexProjectsResult>;
   materializeSourceAsset: (request: NativeMaterializeSourceAssetRequest) => Promise<NativeMaterializeSourceAssetResult>;
-  chooseScratchDirectory: () => Promise<NativeScratchDirectoryResult>;
+  chooseScratchDirectory: (request: { claim?: NativeProjectAuthorityDescriptor }) => Promise<NativeScratchDirectoryResult>;
   openWorkspaceWindow: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean; workspace?: WorkspaceWindowView; error?: string }>;
   setActiveWorkspace: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean }>;
   setKeyboardShortcuts: (shortcuts: Partial<Record<NativeMenuCommand, string>>) => Promise<{ ok?: boolean }>;
   // Push the interface language ('en' | 'ja') so the native + KDE menus translate their labels.
   setLocale?: (locale: string) => Promise<{ ok?: boolean }>;
-  getSourceLibrarySnapshot: () => Promise<SourceLibraryNativeSnapshotResult>;
-  syncSourceLibrarySnapshot: (request: { snapshot: SourceLibraryNativeSnapshotResult['snapshot']; claim?: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
-  applySourceLibraryChange: (request: { change: SourceLibraryNativeChange; claim?: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
+  getSourceLibrarySnapshot: (request: { claim: NativeProjectAuthorityDescriptor }) => Promise<SourceLibraryNativeSnapshotResponse>;
+  syncSourceLibrarySnapshot: (request: { snapshot: SourceLibraryNativeSnapshotResult['snapshot']; claim: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
+  applySourceLibraryChange: (request: { change: SourceLibraryNativeChange; claim: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
   showAbout: (options?: { edition?: string }) => Promise<void>;
   openPath: (filePath: string) => Promise<{ ok?: boolean; error?: string }>;
   // At-rest encryption via the OS keychain (safeStorage). Optional: only present on builds that
@@ -639,7 +700,7 @@ export interface SignalLoomNativeBridge {
 }
 
 export interface SignalLoomAutomationBridge {
-  applySourceLibraryChange?: (request: { change: SourceLibraryNativeChange; claim?: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
+  applySourceLibraryChange?: (request: { change: SourceLibraryNativeChange; claim: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
 }
 
 declare global {

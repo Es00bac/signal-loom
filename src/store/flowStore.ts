@@ -544,6 +544,50 @@ function combineNodeDataPatches(...patches: Array<Partial<NodeData> | undefined>
   return Object.keys(combined).length > 0 ? combined : undefined;
 }
 
+export async function prepareFlowSnapshotImportedAssets(
+  snapshot: FlowProjectFlowSnapshot,
+  sourceBinItems: import('./sourceBinStore').SourceBinLibraryItem[],
+): Promise<FlowProjectFlowSnapshot> {
+  const nodes = await Promise.all(snapshot.nodes.map(async (node) => {
+    const sourceBinPatch = buildFlowNodePatchForRestoredSourceBinItem(node.data, sourceBinItems);
+    const generatedResultPatch = buildFlowNodeGeneratedResultPatch(node.id, node.data, sourceBinItems, {
+      replaceExistingHistory: true,
+    });
+    const sourceBinAssetUrl = typeof sourceBinPatch?.sourceAssetUrl === 'string' && sourceBinPatch.sourceAssetUrl.trim()
+      ? sourceBinPatch.sourceAssetUrl
+      : undefined;
+    if (sourceBinPatch && sourceBinAssetUrl) {
+      const patch = combineNodeDataPatches(sourceBinPatch, generatedResultPatch);
+      return patch ? { ...node, data: { ...node.data, ...patch } } : node;
+    }
+    const assetId = (
+      typeof sourceBinPatch?.sourceAssetId === 'string' && sourceBinPatch.sourceAssetId.trim()
+        ? sourceBinPatch.sourceAssetId
+        : undefined
+    ) ?? node.data.sourceAssetId ?? parseSignalLoomAssetId(node.data.sourceAssetUrl);
+    if (!assetId) {
+      const patch = combineNodeDataPatches(sourceBinPatch, generatedResultPatch);
+      return patch ? { ...node, data: { ...node.data, ...patch } } : node;
+    }
+    const storedAsset = await loadImportedAsset(assetId).catch(() => undefined);
+    const patch = storedAsset
+      ? combineNodeDataPatches({
+          ...sourceBinPatch,
+          sourceAssetId: assetId,
+          sourceAssetUrl: storedAsset.dataUrl,
+          sourceAssetName: sourceBinPatch?.sourceAssetName ?? storedAsset.name,
+          sourceAssetMimeType: sourceBinPatch?.sourceAssetMimeType ?? storedAsset.mimeType,
+        }, generatedResultPatch)
+      : combineNodeDataPatches(
+          sourceBinPatch,
+          generatedResultPatch,
+          sourceBinPatch ? undefined : { sourceAssetUrl: undefined },
+        );
+    return patch ? { ...node, data: { ...node.data, ...patch } } : node;
+  }));
+  return { ...snapshot, nodes };
+}
+
 function normalizePersistedNode(node: AppNode): AppNode {
   const normalizedNode =
     (node.type as string) === 'input'

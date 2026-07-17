@@ -9,7 +9,7 @@ import {
   shouldRunFlowOwnedSourceBinIngest,
 } from './workspaceWindowCommands';
 import type { SourceBin, SourceBinLibraryItem } from '../store/sourceBinStore';
-import { setCurrentProjectAuthorityClaim } from './nativeApp';
+import { beginProjectAuthorityTransition, setCurrentProjectAuthorityClaim } from './nativeApp';
 
 function item(id: string): SourceBinLibraryItem {
   return {
@@ -44,6 +44,22 @@ describe('workspace window commands', () => {
     });
     setCurrentProjectAuthorityClaim({ authorityId: 'authority-new', version: 2 });
     expect(getWorkspaceWindowCommandForWorkspace(envelope, 'sender-image', 'image')).toBeUndefined();
+  });
+
+  it('cannot construct a Source-affecting workspace command without exact authority', () => {
+    setCurrentProjectAuthorityClaim(undefined);
+    expect(() => createWorkspaceWindowCommandEnvelope('sender-paper', {
+      type: 'source-bin-items-added',
+      items: [item('claimless-image')],
+    })).toThrow(/exact current project authority/);
+
+    setCurrentProjectAuthorityClaim({ authorityId: 'authority-test', version: 1 });
+    const endTransition = beginProjectAuthorityTransition();
+    expect(() => createWorkspaceWindowCommandEnvelope('sender-paper', {
+      type: 'source-bin-items-added',
+      items: [item('half-switched-image')],
+    })).toThrow(/exact current project authority/);
+    endTransition();
   });
 
   it('ignores commands from the same renderer and commands for another workspace', () => {

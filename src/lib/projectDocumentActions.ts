@@ -19,12 +19,12 @@ import {
 import { mergePaperSnapshotRecovery } from './paperSnapshotRecovery';
 import type { PaperDocument } from '../types/paper';
 import { useEditorStore } from '../store/editorStore';
-import { useFlowStore } from '../store/flowStore';
+import { prepareFlowSnapshotImportedAssets, useFlowStore } from '../store/flowStore';
 import { useFlowWorkspaceStore } from '../store/flowWorkspaceStore';
 import { useImageEditorStore } from '../store/imageEditorStore';
 import { getDirtyPaperWorkspaceDocumentTitles, usePaperStore } from '../store/paperStore';
 import { useProjectUsageStore } from '../store/projectUsageStore';
-import { useSourceBinStore } from '../store/sourceBinStore';
+import { useSourceBinStore, type PreparedSourceBinProjectSnapshot } from '../store/sourceBinStore';
 import { getEditorAssets } from './editorAssets';
 import { getEditorVisualClips } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
@@ -127,22 +127,101 @@ async function buildProjectPaperPortableAssets(
   return built.section;
 }
 
-export async function restoreProjectDocument(
+export interface PreparedProjectDocumentTransaction {
+  readonly document: FlowProjectDocument;
+  assertCanCommit: () => void;
+  commit: () => void;
+  rollback: () => void;
+}
+
+interface ProjectStoreIdentity {
+  flowNodes: unknown;
+  flowEdges: unknown;
+  workspaces: unknown;
+  activeWorkspaceId: string | null;
+  editor: unknown;
+  sourceBins: unknown;
+  sourceDismissals: unknown;
+  usageLedger: unknown;
+  paperDocuments: unknown;
+  paperDocument: unknown;
+  imageDocuments: unknown;
+  imageActiveDocId: string | null;
+  imageQuickActionMacros: unknown;
+}
+
+function captureProjectStoreIdentity(): ProjectStoreIdentity {
+  const flow = useFlowStore.getState();
+  const workspaces = useFlowWorkspaceStore.getState();
+  const editor = useEditorStore.getState();
+  const source = useSourceBinStore.getState();
+  const usage = useProjectUsageStore.getState();
+  const paper = usePaperStore.getState();
+  const image = useImageEditorStore.getState();
+  return {
+    flowNodes: flow.nodes,
+    flowEdges: flow.edges,
+    workspaces: workspaces.workspaces,
+    activeWorkspaceId: workspaces.activeWorkspaceId,
+    editor: editor,
+    sourceBins: source.bins,
+    sourceDismissals: source.dismissedSourceKeys,
+    usageLedger: usage.ledger,
+    paperDocuments: paper.documents,
+    paperDocument: paper.document,
+    imageDocuments: image.documents,
+    imageActiveDocId: image.activeDocId,
+    imageQuickActionMacros: image.quickActionMacros,
+  };
+}
+
+function sameProjectStoreIdentity(left: ProjectStoreIdentity, right: ProjectStoreIdentity): boolean {
+  return Object.keys(left).every((key) => (
+    left[key as keyof ProjectStoreIdentity] === right[key as keyof ProjectStoreIdentity]
+  ));
+}
+
+type ProjectStoreIdentityKey = keyof ProjectStoreIdentity;
+
+function sameProjectStoreIdentityFields(
+  left: ProjectStoreIdentity,
+  right: ProjectStoreIdentity,
+  keys: readonly ProjectStoreIdentityKey[],
+): boolean {
+  return keys.every((key) => left[key] === right[key]);
+}
+
+function commitWithoutObserverFailure(commit: () => void): void {
+  try {
+    commit();
+  } catch {
+    // Zustand observers run synchronously after a state replacement and may throw. Every store
+    // commit below is independently continued so one bad observer cannot expose a half-project.
+  }
+}
+
+export async function prepareProjectDocumentTransaction(
   document: unknown,
   options: ProjectDocumentReplacementOptions = {},
-): Promise<void> {
+): Promise<PreparedProjectDocumentTransaction> {
   assertDirtyImageReplacementAllowed(options);
   assertDirtyPaperReplacementAllowed(options);
+  const baseIdentity = captureProjectStoreIdentity();
   const fallbackName = typeof (document as { name?: unknown } | undefined)?.name === 'string'
     ? (document as { name: string }).name
     : DEFAULT_PROJECT_NAME;
-  const sanitizedDocument = sanitizeProjectDocument(document, fallbackName);
-  await upgradeLegacyBundledFontIssuesInProject(sanitizedDocument);
-  const imageFontReferences = collectImageBundledFontFaceReferences(sanitizedDocument.imageEditor?.documents ?? []);
-  const flowSnapshots = [
-    sanitizedDocument.flow,
-    ...(sanitizedDocument.flowWorkspaces ?? []).map((workspace) => workspace.flow),
-  ];
+  let preparedDocument = sanitizeProjectDocument(document ?? {
+    schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+    id: globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
+    name: DEFAULT_PROJECT_NAME,
+    savedAt: Date.now(),
+    flow: { version: 3, nodes: [], edges: [] },
+  }, fallbackName);
+  await upgradeLegacyBundledFontIssuesInProject(preparedDocument);
+  if (preparedDocument.paper?.document) preparedDocument = await migrateProjectPaperDocuments(preparedDocument);
+
+  const imageFontReferences = collectImageBundledFontFaceReferences(preparedDocument.imageEditor?.documents ?? []);
+  const flowSnapshots = [preparedDocument.flow, ...(preparedDocument.flowWorkspaces ?? []).map((workspace) => workspace.flow)];
   const videoFontReferences = flowSnapshots.flatMap((flow) => flow.nodes.flatMap((node) => (
     collectVideoBundledFontFaceReferences({
       assets: getEditorAssets(node.data),
@@ -151,90 +230,160 @@ export async function restoreProjectDocument(
     })
   )));
   await ensureBundledFontFaceReferencesRegistered([...imageFontReferences, ...videoFontReferences]);
-  const flowStore = useFlowStore.getState();
-  const editorStore = useEditorStore.getState();
-  const sourceBinStore = useSourceBinStore.getState();
-  const paperStore = usePaperStore.getState();
-  const imageEditorStore = useImageEditorStore.getState();
-  const projectUsageStore = useProjectUsageStore.getState();
-  const flowWorkspaceStore = useFlowWorkspaceStore.getState();
-  const previous = {
-    flow: flowStore.exportProjectFlowSnapshot(),
-    flowWorkspaces: flowWorkspaceStore.exportProjectSnapshot(flowStore.exportProjectFlowSnapshot()),
-    activeFlowWorkspaceId: flowWorkspaceStore.activeWorkspaceId,
-    editor: editorStore.exportWorkspaceSnapshot(),
-    sourceBin: await sourceBinStore.exportProjectSnapshot({ includeAssetData: false }),
-    usageLedger: projectUsageStore.exportSnapshot(),
-    paper: paperStore.exportSnapshot(),
+
+  const sourceStore = useSourceBinStore.getState();
+  const preparedSource = await sourceStore.prepareProjectSnapshot(preparedDocument.sourceBin);
+  const sourceItems = preparedSource.bins.flatMap((bin) => bin.items);
+  preparedDocument = resolveProjectMediaReferencesForRestore(preparedDocument, sourceItems);
+  const preparedWorkspaces = await Promise.all(
+    (preparedDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(preparedDocument.flow)])
+      .map(async (workspace) => ({
+        ...workspace,
+        flow: await prepareFlowSnapshotImportedAssets(workspace.flow, sourceItems),
+      })),
+  );
+  const activeWorkspace = preparedWorkspaces.find((workspace) => workspace.id === preparedDocument.activeFlowWorkspaceId)
+    ?? preparedWorkspaces[0];
+  const preparedFlow = activeWorkspace?.flow
+    ?? await prepareFlowSnapshotImportedAssets(preparedDocument.flow, sourceItems);
+  preparedDocument = {
+    ...preparedDocument,
+    flow: preparedFlow,
+    flowWorkspaces: preparedWorkspaces,
+    activeFlowWorkspaceId: activeWorkspace?.id,
   };
-  // Image rollback keeps the LIVE document objects (bitmaps included): a plain
-  // exportProjectSnapshot() strips pixels, so rolling back with it after a
-  // mid-restore failure would blank every open Image canvas — the exact data
-  // loss the "previous workspace left unchanged" promise forbids.
-  const previousImageEditorLive = {
-    documents: imageEditorStore.documents,
-    activeDocId: imageEditorStore.activeDocId,
-    quickActionMacros: imageEditorStore.quickActionMacros,
-    selectionMasks: Object.fromEntries(imageEditorStore.documents.flatMap((imageDocument) => {
-      const selection = getSelection(imageDocument.id);
-      return selection ? [[imageDocument.id, toSnapshot(selection)]] : [];
-    })),
+  const preparedImage = await useImageEditorStore.getState().prepareProjectSnapshotWithPixels(preparedDocument.imageEditor);
+
+  const previous = {
+    flow: useFlowStore.getState().exportProjectFlowSnapshot(),
+    flowWorkspaces: useFlowWorkspaceStore.getState().exportProjectSnapshot(useFlowStore.getState().exportProjectFlowSnapshot()),
+    activeFlowWorkspaceId: useFlowWorkspaceStore.getState().activeWorkspaceId,
+    editor: useEditorStore.getState().exportWorkspaceSnapshot(),
+    source: {
+      bins: useSourceBinStore.getState().bins,
+      dismissedSourceKeys: useSourceBinStore.getState().dismissedSourceKeys,
+    } satisfies PreparedSourceBinProjectSnapshot,
+    usage: useProjectUsageStore.getState().exportSnapshot(),
+    paper: usePaperStore.getState().exportSnapshot(),
+    image: {
+      documents: useImageEditorStore.getState().documents,
+      activeDocId: useImageEditorStore.getState().activeDocId,
+      quickActionMacros: useImageEditorStore.getState().quickActionMacros,
+    },
+  };
+  const appliedStores: Array<{
+    keys: readonly ProjectStoreIdentityKey[];
+    postIdentity: ProjectStoreIdentity;
+    restore: () => void;
+  }> = [];
+  let committed = false;
+
+  const rollbackAppliedStores = () => {
+    for (const applied of [...appliedStores].reverse()) {
+      if (sameProjectStoreIdentityFields(captureProjectStoreIdentity(), applied.postIdentity, applied.keys)) {
+        commitWithoutObserverFailure(applied.restore);
+      }
+    }
+    appliedStores.length = 0;
+    committed = false;
   };
 
-  let paperAssetsImport: PaperPortableAssetsImportResult | undefined;
-  try {
-    // Stage Paper's managed bytes FIRST: every entry is metadata- and digest-validated before the
-    // first repository write, and staged records roll back if any later restore step fails.
-    if (sanitizedDocument.paperAssets) {
-      paperAssetsImport = await importPaperPortableAssetsSection(
-        sanitizedDocument.paperAssets,
-        paperAssetRepository,
-      );
+  const applyStore = (
+    keys: readonly ProjectStoreIdentityKey[],
+    apply: () => void,
+    restore: () => void,
+  ) => {
+    const before = captureProjectStoreIdentity();
+    if (!sameProjectStoreIdentityFields(before, baseIdentity, keys)) {
+      throw new Error('A project store changed while the replacement was committing. Retry the project switch.');
     }
-    await sourceBinStore.restoreProjectSnapshot(sanitizedDocument.sourceBin, { publishNative: false });
-    const resolvedDocument = resolveProjectMediaReferencesForRestore(
-      sanitizedDocument,
-      sourceBinStore.getAllItems(),
-    );
-    const restoredDocument = resolvedDocument.paper?.document
-      ? await migrateProjectPaperDocuments(resolvedDocument)
-      : resolvedDocument;
-    flowWorkspaceStore.hydrateProjectSnapshot({
-      workspaces: restoredDocument.flowWorkspaces ?? [buildDefaultFlowWorkspace(restoredDocument.flow)],
-      activeWorkspaceId: restoredDocument.activeFlowWorkspaceId,
-    });
-    flowStore.replaceFlowSnapshot(restoredDocument.flow);
-    await flowStore.restoreImportedAssets();
-    editorStore.restoreWorkspaceSnapshot(restoredDocument.editor);
-    projectUsageStore.restoreSnapshot(restoredDocument.usageLedger);
-    paperStore.restoreSnapshot(await attachPaperMissingAssetDiagnostics(
-      restoredDocument.paper,
-      sanitizedDocument.paperAssets,
-    ));
-    // Multi-window desktop: the source-bin restore above replaced the Source Library with the
-    // saved project bin (resolved against flow media refs first). The native main process holds
-    // the authoritative live snapshot — which also contains assets generated in *other* windows
-    // since the last save — so reconcile to recover them instead of leaving them clobbered.
-    // No-op without the native bridge (web / mobile single-window).
-    await sourceBinStore.reconcileWithNativeSourceLibrarySnapshot();
-    // Image replacement is deliberately last: pixel decode is transactional and may throw on
-    // corruption, while successful replacement disposes the prior graph's owned snapshots.
-    await imageEditorStore.restoreProjectSnapshotWithPixels(restoredDocument.imageEditor);
-  } catch (error) {
-    await paperAssetsImport?.rollback().catch(() => undefined);
-    flowStore.replaceFlowSnapshot(previous.flow);
-    flowWorkspaceStore.hydrateProjectSnapshot({
-      workspaces: previous.flowWorkspaces,
-      activeWorkspaceId: previous.activeFlowWorkspaceId,
-    });
-    editorStore.restoreWorkspaceSnapshot(previous.editor);
-    await sourceBinStore.restoreProjectSnapshot(previous.sourceBin, { publishNative: false }).catch(() => undefined);
-    projectUsageStore.restoreSnapshot(previous.usageLedger);
-    paperStore.restoreSnapshot(previous.paper);
-    imageEditorStore.restoreLiveProjectRollback(previousImageEditorLive);
-    const message = error instanceof Error ? error.message : 'Unknown restore error';
-    throw new Error(`The selected project could not be restored safely. Previous workspace was left unchanged. ${message}`);
-  }
+    let observerError: unknown;
+    try {
+      apply();
+    } catch (error) {
+      observerError = error;
+    }
+    const postIdentity = captureProjectStoreIdentity();
+    if (observerError && sameProjectStoreIdentityFields(before, postIdentity, keys)) {
+      throw observerError;
+    }
+    appliedStores.push({ keys, postIdentity, restore });
+  };
+
+  const commit = () => {
+    if (committed) return;
+    if (!sameProjectStoreIdentity(baseIdentity, captureProjectStoreIdentity())) {
+      throw new Error('The current project changed while the replacement was being prepared. Retry the project switch.');
+    }
+    try {
+      applyStore(
+        ['sourceBins', 'sourceDismissals'],
+        () => useSourceBinStore.getState().commitPreparedProjectSnapshot(preparedSource, { publishNative: false }),
+        () => useSourceBinStore.getState().commitPreparedProjectSnapshot(previous.source, { publishNative: false }),
+      );
+      applyStore(
+        ['workspaces', 'activeWorkspaceId'],
+        () => useFlowWorkspaceStore.getState().hydrateProjectSnapshot({
+          workspaces: preparedWorkspaces,
+          activeWorkspaceId: preparedDocument.activeFlowWorkspaceId,
+        }),
+        () => useFlowWorkspaceStore.getState().hydrateProjectSnapshot({
+          workspaces: previous.flowWorkspaces,
+          activeWorkspaceId: previous.activeFlowWorkspaceId,
+        }),
+      );
+      applyStore(
+        ['flowNodes', 'flowEdges'],
+        () => useFlowStore.getState().replaceFlowSnapshot(preparedFlow),
+        () => useFlowStore.getState().replaceFlowSnapshot(previous.flow),
+      );
+      applyStore(
+        ['editor'],
+        () => useEditorStore.getState().restoreWorkspaceSnapshot(preparedDocument.editor),
+        () => useEditorStore.getState().restoreWorkspaceSnapshot(previous.editor),
+      );
+      applyStore(
+        ['usageLedger'],
+        () => useProjectUsageStore.getState().restoreSnapshot(preparedDocument.usageLedger),
+        () => useProjectUsageStore.getState().restoreSnapshot(previous.usage),
+      );
+      applyStore(
+        ['paperDocuments', 'paperDocument'],
+        () => usePaperStore.getState().restoreSnapshot(preparedDocument.paper),
+        () => usePaperStore.getState().restoreSnapshot(previous.paper),
+      );
+      applyStore(
+        ['imageDocuments', 'imageActiveDocId', 'imageQuickActionMacros'],
+        () => useImageEditorStore.getState().commitPreparedProjectSnapshotWithPixels(preparedImage),
+        () => useImageEditorStore.getState().restoreLiveProjectRollback(previous.image),
+      );
+      committed = true;
+    } catch (error) {
+      rollbackAppliedStores();
+      throw error;
+    }
+  };
+
+  return {
+    document: preparedDocument,
+    assertCanCommit: () => {
+      if (!sameProjectStoreIdentity(baseIdentity, captureProjectStoreIdentity())) {
+        throw new Error('The current project changed while the replacement was being prepared. Retry the project switch.');
+      }
+    },
+    commit,
+    rollback: () => {
+      if (committed) rollbackAppliedStores();
+    },
+  };
+}
+
+export async function restoreProjectDocument(
+  document: unknown,
+  options: ProjectDocumentReplacementOptions = {},
+): Promise<void> {
+  const transaction = await prepareProjectDocumentTransaction(document, options);
+  transaction.commit();
 }
 
 /**
@@ -282,51 +431,6 @@ async function migrateProjectPaperDocuments(
 export async function resetProjectDocument(
   options: ProjectDocumentReplacementOptions = {},
 ): Promise<void> {
-  assertDirtyImageReplacementAllowed(options);
-  assertDirtyPaperReplacementAllowed(options);
-  // Reset is a renderer transaction too. In particular Source restore can await native asset
-  // work after Flow/Paper/Image have already changed; retain an exact project snapshot and put
-  // every workspace back if any later phase fails.
-  const previous = await buildCurrentProjectDocument({ includeAssetData: true });
-  // Each reset phase has an observable post-state.  On a late failure, only restore a
-  // store that is still in that exact post-state: a concurrent edit belongs to the user,
-  // not to this transaction, and must never be overwritten by an old whole-project image.
-  let resetFlow: ReturnType<typeof useFlowStore.getState>['exportProjectFlowSnapshot'] extends () => infer T ? T : never;
-  let resetFlowWorkspaces: ReturnType<typeof useFlowWorkspaceStore.getState>['exportProjectSnapshot'] extends (flow: never) => infer T ? T : never;
-  let resetEditor: ReturnType<typeof useEditorStore.getState>['exportWorkspaceSnapshot'] extends () => infer T ? T : never;
-  let resetUsage: ReturnType<typeof useProjectUsageStore.getState>['exportSnapshot'] extends () => infer T ? T : never;
-  let resetPaper: ReturnType<typeof usePaperStore.getState>['exportSnapshot'] extends () => infer T ? T : never;
-  const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
-  try {
-    useFlowStore.getState().replaceFlowSnapshot({ nodes: [], edges: [] });
-    resetFlow = useFlowStore.getState().exportProjectFlowSnapshot();
-    useFlowWorkspaceStore.getState().reset();
-    resetFlowWorkspaces = useFlowWorkspaceStore.getState().exportProjectSnapshot(resetFlow);
-    useEditorStore.getState().restoreWorkspaceSnapshot(undefined);
-    resetEditor = useEditorStore.getState().exportWorkspaceSnapshot();
-    await useSourceBinStore.getState().restoreProjectSnapshot(undefined);
-    useProjectUsageStore.getState().restoreSnapshot(undefined);
-    resetUsage = useProjectUsageStore.getState().exportSnapshot();
-    usePaperStore.getState().restoreSnapshot(undefined);
-    resetPaper = usePaperStore.getState().exportSnapshot();
-    await useImageEditorStore.getState().restoreProjectSnapshot(undefined);
-  } catch (error) {
-    const flowStore = useFlowStore.getState();
-    const workspaceStore = useFlowWorkspaceStore.getState();
-    const editorStore = useEditorStore.getState();
-    const usageStore = useProjectUsageStore.getState();
-    const paperStore = usePaperStore.getState();
-    if (resetFlow && same(flowStore.exportProjectFlowSnapshot(), resetFlow)) {
-      flowStore.replaceFlowSnapshot(previous.flow);
-    }
-    if (resetFlowWorkspaces && same(workspaceStore.exportProjectSnapshot(flowStore.exportProjectFlowSnapshot()), resetFlowWorkspaces)) {
-      workspaceStore.hydrateProjectSnapshot({ workspaces: previous.flowWorkspaces ?? [], activeWorkspaceId: previous.activeFlowWorkspaceId });
-    }
-    if (resetEditor && same(editorStore.exportWorkspaceSnapshot(), resetEditor)) editorStore.restoreWorkspaceSnapshot(previous.editor);
-    if (resetUsage && same(usageStore.exportSnapshot(), resetUsage)) usageStore.restoreSnapshot(previous.usageLedger);
-    if (resetPaper && same(paperStore.exportSnapshot(), resetPaper)) paperStore.restoreSnapshot(previous.paper);
-    // Source/Image restoration can itself be asynchronous and may race remote work.  Their
-    // individual stores retain their own guarded rollback; avoid a blind whole-project replay.
-    throw error;
-  }
+  const transaction = await prepareProjectDocumentTransaction(undefined, options);
+  transaction.commit();
 }

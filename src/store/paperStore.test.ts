@@ -5,7 +5,12 @@ import { createBinaryAssetRecord, type BinaryAssetRef } from '../shared/assets/c
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import type { SourceBinLibraryItem } from './sourceBinStore';
 import type { PaperImportedFont } from '../types/paper';
-import { usePaperStore } from './paperStore';
+import {
+  capturePaperWorkspaceDocumentSignatures,
+  getDirtyPaperWorkspaceDocumentTitles,
+  markPaperWorkspaceDocumentsCleanIfUnchanged,
+  usePaperStore,
+} from './paperStore';
 
 function resetPaperStore() {
   const document = createDefaultPaperDocument({ title: 'Paper Store Test' });
@@ -118,6 +123,23 @@ function paperEditActions() {
 
 describe('paperStore interaction actions', () => {
   beforeEach(resetPaperStore);
+
+  it('marks only the exact Paper content submitted to a project save as clean', () => {
+    usePaperStore.getState().restoreSnapshot(usePaperStore.getState().exportSnapshot());
+    usePaperStore.setState((state) => ({
+      document: { ...state.document, title: 'Submitted title' },
+    }));
+    const submitted = capturePaperWorkspaceDocumentSignatures();
+    markPaperWorkspaceDocumentsCleanIfUnchanged(submitted);
+    expect(getDirtyPaperWorkspaceDocumentTitles()).toEqual([]);
+
+    const beforeConcurrentEdit = capturePaperWorkspaceDocumentSignatures();
+    usePaperStore.setState((state) => ({
+      document: { ...state.document, title: 'Edited while save was pending' },
+    }));
+    markPaperWorkspaceDocumentsCleanIfUnchanged(beforeConcurrentEdit);
+    expect(getDirtyPaperWorkspaceDocumentTitles()).toEqual(['Edited while save was pending']);
+  });
 
   it('adds and updates ruler-created guides on the selected page', () => {
     const pageId = usePaperStore.getState().selectedPageId;

@@ -36,7 +36,10 @@ interface ProjectAuthorityGateway {
     senderId: number;
     rendererEpoch?: number;
     isSenderLive?: () => boolean;
-    load: () => Promise<{ canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string }>;
+    load: () => Promise<
+      { canceled: false; filePath: string; document: unknown; scratchDirectoryPath?: string }
+      | { result?: unknown; commit: () => { filePath: string; document: unknown }; rollback?: () => void }
+    >;
     publish?: (snapshot: HarnessAdoptResult) => void;
   }) => Promise<HarnessProjectFileResult>;
   saveProject: (request: {
@@ -49,9 +52,38 @@ interface ProjectAuthorityGateway {
     publish?: (snapshot: HarnessAdoptResult) => void;
   }) => Promise<HarnessProjectFileResult>;
   clearProject: (request: { senderId: number; rendererEpoch?: number; isSenderLive?: () => boolean; reset?: () => Promise<void | { commit: () => void; rollback?: () => void }>; publish?: (snapshot: HarnessAdoptResult) => void }) => Promise<{ ok: boolean; authority?: NativeProjectAuthorityDescriptor; rejected?: NativeProjectSaveRejection }>;
+  prepareOpenProject: (request: {
+    senderId: number;
+    rendererEpoch?: number;
+    isSenderLive?: () => boolean;
+    claim?: NativeProjectAuthorityDescriptor;
+    load: () => Promise<unknown>;
+  }) => Promise<HarnessProjectFileResult & { transactionId?: string; baseAuthority?: NativeProjectAuthorityDescriptor }>;
+  prepareClearProject: (request: {
+    senderId: number;
+    rendererEpoch?: number;
+    isSenderLive?: () => boolean;
+    claim?: NativeProjectAuthorityDescriptor;
+    reset?: () => Promise<unknown>;
+  }) => Promise<HarnessProjectFileResult & { transactionId?: string; baseAuthority?: NativeProjectAuthorityDescriptor }>;
+  commitPreparedProject: (request: {
+    transactionId: string;
+    senderId: number;
+    rendererEpoch?: number;
+    publish?: (snapshot: HarnessAdoptResult) => void;
+  }) => Promise<HarnessProjectFileResult & { ok?: boolean }>;
+  cancelPreparedProject: (request: { transactionId: string; senderId: number; rendererEpoch?: number }) => Promise<{ ok: boolean }>;
+  runAuthorizedMutation: (request: {
+    senderId: number;
+    rendererEpoch?: number;
+    isSenderLive?: () => boolean;
+    claim?: NativeProjectAuthorityDescriptor;
+    prepare: () => Promise<unknown>;
+    commit: (prepared: unknown) => unknown;
+  }) => Promise<unknown>;
   confirmAdoption: (senderId: number, claim: unknown, rendererEpoch?: number, isSenderLive?: () => boolean) => { ok: boolean; stale?: boolean; current: NativeProjectAuthorityDescriptor };
   buildAdoptResponse: () => HarnessAdoptResult;
-  authorizeSave: (senderId: number, claim: unknown) => { ok: true } | { ok: false; rejected: NativeProjectSaveRejection };
+  authorizeSave: (senderId: number, claim: unknown, rendererEpoch?: number) => { ok: true } | { ok: false; rejected: NativeProjectSaveRejection };
   dropRenderer: (senderId: number) => void;
   invalidateRenderer: (senderId: number) => void;
 }
@@ -904,7 +936,8 @@ describe('desktop project authority arbitration (AUD-001, two independent render
     expect(gateway.confirmAdoption(5, claim, 0).ok).toBe(true);
     gateway.invalidateRenderer(5);
 
-    expect(gateway.authorizeSave(5, claim, 1).rejected?.code).toBe('unauthorized');
+    const rejected = gateway.authorizeSave(5, claim, 1);
+    expect(rejected.ok ? undefined : rejected.rejected.code).toBe('unauthorized');
     expect(gateway.confirmAdoption(5, claim, 1).ok).toBe(true);
   });
 
@@ -1051,6 +1084,187 @@ describe('desktop project authority arbitration (AUD-001, two independent render
   });
 });
 
+describe('desktop project authority prepared switch protocol (AUD-001)', () => {
+  it('keeps A authoritative until renderer preparation explicitly commits Open B', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority({ mintAuthorityId: (() => {
+      let id = 0;
+      return () => `prepared-auth-${++id}`;
+    })() });
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claimA = gateway.getCurrent();
+    gateway.confirmAdoption(1, claimA);
+    let nativeCommitCount = 0;
+    let nativeRollbackCount = 0;
+
+    const prepared = await gateway.prepareOpenProject({
+      senderId: 1,
+      claim: claimA,
+      load: async () => ({
+        result: { canceled: false, filePath: '/projects/B.sloom', document: DOC_B },
+        commit: () => {
+          nativeCommitCount += 1;
+          return { canceled: false, filePath: '/projects/B.sloom', document: DOC_B };
+        },
+        rollback: () => { nativeRollbackCount += 1; },
+      }),
+    });
+
+    expect(prepared.transactionId).toBeDefined();
+    expect(prepared.document).toEqual(DOC_B);
+    expect(gateway.getCurrent()).toEqual(claimA);
+    expect(gateway.buildAdoptResponse().document).toEqual(DOC_A);
+    expect(nativeCommitCount).toBe(0);
+
+    const committed = await gateway.commitPreparedProject({
+      transactionId: prepared.transactionId!,
+      senderId: 1,
+    });
+    expect(committed.authority?.filePath).toBe('/projects/B.sloom');
+    expect(gateway.buildAdoptResponse().document).toEqual(DOC_B);
+    expect(nativeCommitCount).toBe(1);
+    expect(nativeRollbackCount).toBe(0);
+
+    const replay = await gateway.commitPreparedProject({ transactionId: prepared.transactionId!, senderId: 1 });
+    expect(replay.rejected?.code).toBe('invalid-transaction');
+    expect(gateway.getCurrent()).toEqual(committed.authority);
+  });
+
+  it('cancels prepared New and sender-loss Open without changing authority or stranding the mutation lease', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claimA = gateway.getCurrent();
+    gateway.confirmAdoption(1, claimA);
+    gateway.confirmAdoption(2, claimA);
+    let newRollback = 0;
+    const preparedNew = await gateway.prepareClearProject({
+      senderId: 1,
+      claim: claimA,
+      reset: async () => ({ result: { canceled: false }, commit: () => undefined, rollback: () => { newRollback += 1; } }),
+    });
+    expect(await gateway.cancelPreparedProject({ transactionId: preparedNew.transactionId!, senderId: 1 })).toEqual({ ok: true });
+    expect(newRollback).toBe(1);
+    expect(gateway.getCurrent()).toEqual(claimA);
+
+    let openRollback = 0;
+    const preparedOpen = await gateway.prepareOpenProject({
+      senderId: 1,
+      claim: claimA,
+      load: async () => ({
+        result: { canceled: false, filePath: '/projects/B.sloom', document: DOC_B },
+        commit: () => ({ canceled: false, filePath: '/projects/B.sloom', document: DOC_B }),
+        rollback: () => { openRollback += 1; },
+      }),
+    });
+    gateway.invalidateRenderer(1);
+    await Promise.resolve();
+    const saveAfterOrphanCleanup = await gateway.saveProject({
+      senderId: 2,
+      claim: claimA,
+      resolveFilePath: () => '/projects/A.sloom',
+      write: async () => ({ canceled: false, filePath: '/projects/A.sloom', document: DOC_A }),
+    });
+    expect(openRollback).toBe(1);
+    expect(saveAfterOrphanCleanup.rejected).toBeUndefined();
+    expect(preparedOpen.transactionId).toBeDefined();
+  });
+
+  it('keeps an accepted external-open intent at commit-only retry without reloading or exposing half authority', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claimA = gateway.getCurrent();
+    gateway.confirmAdoption(1, claimA);
+    let loadCount = 0;
+    const prepared = await gateway.prepareOpenProject({
+      senderId: 1,
+      claim: claimA,
+      load: async () => {
+        loadCount += 1;
+        return {
+          filePath: '/projects/external-B.sloom',
+          document: DOC_B,
+          commit: () => ({ filePath: '/projects/external-B.sloom', document: DOC_B }),
+          rollback: () => undefined,
+        };
+      },
+    });
+
+    expect(gateway.getCurrent()).toEqual(claimA);
+    const unrelatedWindowAttempt = await gateway.commitPreparedProject({
+      transactionId: prepared.transactionId!,
+      senderId: 2,
+    });
+    expect(unrelatedWindowAttempt.rejected?.code).toBe('invalid-transaction');
+    expect(gateway.getCurrent()).toEqual(claimA);
+
+    const retriedCommit = await gateway.commitPreparedProject({
+      transactionId: prepared.transactionId!,
+      senderId: 1,
+    });
+    expect(retriedCommit.authority?.filePath).toBe('/projects/external-B.sloom');
+    expect(loadCount).toBe(1);
+  });
+
+  it('serializes Source preparation/publication with project switches and rejects an old delta after B commits', async () => {
+    const module = await loadProjectAuthorityModule();
+    const gateway = module.createProjectAuthority();
+    gateway.commitStartup({ filePath: '/projects/A.sloom', document: DOC_A });
+    const claimA = gateway.getCurrent();
+    gateway.confirmAdoption(1, claimA);
+    gateway.confirmAdoption(2, claimA);
+    const capability = createDeferred<string>();
+    let sourceCommitCount = 0;
+    const sourceMutation = gateway.runAuthorizedMutation({
+      senderId: 1,
+      claim: claimA,
+      prepare: () => capability.promise,
+      commit: () => {
+        sourceCommitCount += 1;
+        return { ok: true, version: 17 };
+      },
+    });
+    let openPrepared = false;
+    const openPreparation = gateway.prepareOpenProject({
+      senderId: 2,
+      claim: claimA,
+      load: async () => ({
+        result: { canceled: false, filePath: '/projects/B.sloom', document: DOC_B },
+        commit: () => ({ canceled: false, filePath: '/projects/B.sloom', document: DOC_B }),
+      }),
+    }).then((result) => {
+      openPrepared = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(openPrepared).toBe(false);
+    expect(gateway.getCurrent()).toEqual(claimA);
+    capability.resolve('prepared-capabilities');
+    await sourceMutation;
+    expect(sourceCommitCount).toBe(1);
+    const preparedOpen = await openPreparation;
+
+    const oldDelta = gateway.runAuthorizedMutation({
+      senderId: 1,
+      claim: claimA,
+      prepare: async () => 'old-delta',
+      commit: () => {
+        sourceCommitCount += 1;
+        return { ok: true, version: 18 };
+      },
+    }) as Promise<{ ok?: boolean; rejected?: NativeProjectSaveRejection }>;
+    const committedOpen = await gateway.commitPreparedProject({
+      transactionId: preparedOpen.transactionId!,
+      senderId: 2,
+    });
+    const rejectedOldDelta = await oldDelta;
+    expect(committedOpen.authority?.filePath).toBe('/projects/B.sloom');
+    expect(rejectedOldDelta.rejected?.code).toBe('switched');
+    expect(sourceCommitCount).toBe(1);
+  });
+});
+
 describe('project authority renderer wiring source guards (AUD-001)', () => {
   it('keeps native save/open preparation side-effect free until the authority transaction commits', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
@@ -1095,5 +1309,8 @@ describe('project authority renderer wiring source guards (AUD-001)', () => {
     expect(source).toMatch(/getSaveBlock\(\)/);
     // The old behavior — treating a bare path broadcast as a full project switch — is gone.
     expect(source).not.toMatch(/onProjectPathChanged\(\(filePath\) => \{\s*setNativeProjectPath\(filePath\);\s*\}\)/);
+    expect(source).not.toContain('restoreProjectDocument(savedDocument');
+    expect(source).toContain('markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave)');
+    expect(source).toMatch(/imageDocumentsAtSave\.get\(imageDocument\.id\) === imageDocument/);
   });
 });

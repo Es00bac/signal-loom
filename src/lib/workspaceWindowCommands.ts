@@ -70,7 +70,7 @@ export type WorkspaceWindowCommand =
 export interface WorkspaceWindowCommandEnvelope {
   senderId: string;
   command: WorkspaceWindowCommand;
-  authority?: NativeProjectAuthorityDescriptor;
+  authority: NativeProjectAuthorityDescriptor;
 }
 
 let cachedSenderId: string | undefined;
@@ -88,20 +88,29 @@ export function createWorkspaceWindowCommandEnvelope(
   senderId: string,
   command: WorkspaceWindowCommand,
 ): WorkspaceWindowCommandEnvelope {
+  const authority = getCurrentProjectAuthorityClaim();
+  if (!authority) {
+    throw new Error('A workspace command requires exact current project authority.');
+  }
   return {
     senderId,
     command,
-    authority: getCurrentProjectAuthorityClaim(),
+    authority,
   };
 }
 
 export function postWorkspaceWindowCommand(command: WorkspaceWindowCommand): boolean {
-  if (typeof BroadcastChannel === 'undefined') {
+  const authority = getCurrentProjectAuthorityClaim();
+  if (typeof BroadcastChannel === 'undefined' || !authority) {
     return false;
   }
 
   const channel = new BroadcastChannel(WORKSPACE_WINDOW_COMMAND_CHANNEL);
-  channel.postMessage(createWorkspaceWindowCommandEnvelope(getWorkspaceWindowSenderId(), command));
+  channel.postMessage({
+    senderId: getWorkspaceWindowSenderId(),
+    command,
+    authority,
+  } satisfies WorkspaceWindowCommandEnvelope);
   channel.close();
   return true;
 }

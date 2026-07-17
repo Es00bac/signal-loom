@@ -120,6 +120,7 @@ import {
 import { exportProjectAssets } from './lib/projectAssets';
 import {
   buildCurrentProjectDocument,
+  prepareProjectDocumentTransaction,
   resetProjectDocument,
   restoreProjectDocument,
 } from './lib/projectDocumentActions';
@@ -131,9 +132,12 @@ import {
 import { downloadBlob, buildWorkspaceDownloadFilename } from './shared/files/downloads';
 import { registerAndroidFileOpenHandler } from './lib/androidFileOpen';
 import {
+  beginProjectAuthorityTransition,
+  captureProjectAuthorityMutationScope,
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
   getCurrentProjectAuthorityClaim,
+  isCurrentProjectAuthorityMutationScope,
   setCurrentProjectAuthorityClaim,
   type NativeMenuCommand,
   type NativeProjectAdoptResult,
@@ -208,7 +212,12 @@ import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageE
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { serializeSlppr, deserializeSlppr } from './features/paper/SlpprFormat';
 import { paperAssetRepository } from './features/paper/assets/PaperAssetRuntime';
-import { usePaperStore } from './store/paperStore';
+import {
+  capturePaperWorkspaceDocumentSignatures,
+  getDirtyPaperWorkspaceDocumentTitles,
+  markPaperWorkspaceDocumentsCleanIfUnchanged,
+  usePaperStore,
+} from './store/paperStore';
 import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
@@ -447,6 +456,7 @@ function FlowApp() {
   const [projectAuthorityUiState, setProjectAuthorityUiState] = useState<ProjectAuthorityClientState>({ stale: false });
   const nativeWebContentsIdRef = useRef<number | undefined>(undefined);
   const projectAuthorityClientRef = useRef<ProjectAuthorityClient | undefined>(undefined);
+  const projectSwitchInProgressRef = useRef(false);
   const [flowContextMenu, setFlowContextMenu] = useState<{
     x: number;
     y: number;
@@ -875,7 +885,8 @@ function FlowApp() {
 
       if (options.repairVersionGaps !== false && shouldRepairSourceLibraryNativeVersionGap(sourceLibraryNativeVersionRef.current, nativeVersion)) {
         const bridge = getSignalLoomNativeBridge();
-        if (!bridge?.getSourceLibrarySnapshot) {
+        const repairScope = captureProjectAuthorityMutationScope();
+        if (!bridge?.getSourceLibrarySnapshot || !repairScope) {
           useSourceBinStore.getState().setNativeSyncStatus(buildSourceLibraryNativeSyncStatus('degraded', {
             expectedNativeVersion: nativeVersion,
             message: 'Native Source Library version gap detected, but snapshot repair is unavailable.',
@@ -890,9 +901,12 @@ function FlowApp() {
           repairDirection: 'pull-native-snapshot',
         }));
 
-        void bridge.getSourceLibrarySnapshot().then((result) => {
+        void bridge.getSourceLibrarySnapshot({ claim: repairScope.claim }).then((result) => {
           if (
             !result?.snapshot
+            || !isCurrentProjectAuthorityMutationScope(repairScope)
+            || result.authority.authorityId !== repairScope.claim.authorityId
+            || result.authority.version !== repairScope.claim.version
             || result.version < nativeVersion
             || !shouldAcceptSourceLibraryNativeVersion(sourceLibraryNativeVersionRef.current, result.version)
           ) {
@@ -961,6 +975,7 @@ function FlowApp() {
     }
 
     let cancelled = false;
+    const snapshotScope = captureProjectAuthorityMutationScope();
     // Install the listener before requesting the snapshot so a workspace opened
     // during native Source Library churn cannot miss an update between the two.
     const removeListener = bridge.onSourceLibraryChanged?.((event) => {
@@ -975,14 +990,12 @@ function FlowApp() {
       applySourceLibraryChangeToRenderer(event.change, event.version);
     });
 
-    void bridge.getSourceLibrarySnapshot().then((result) => {
-      const claim = getCurrentProjectAuthorityClaim();
+    if (snapshotScope) void bridge.getSourceLibrarySnapshot({ claim: snapshotScope.claim }).then((result) => {
       if (
         cancelled || !result?.snapshot || result.version <= 0
-        || !result.authority
-        || !claim
-        || result.authority.authorityId !== claim.authorityId
-        || result.authority.version !== claim.version
+        || !isCurrentProjectAuthorityMutationScope(snapshotScope)
+        || result.authority.authorityId !== snapshotScope.claim.authorityId
+        || result.authority.version !== snapshotScope.claim.version
       ) {
         return;
       }
@@ -1010,13 +1023,29 @@ function FlowApp() {
     }
 
     const automationBridge = globalWindow.signalLoomAutomation ?? {};
-    automationBridge.applySourceLibraryChange = async (change) => {
-      applySourceLibraryChangeToRenderer(change, undefined, { repairVersionGaps: false });
+    automationBridge.applySourceLibraryChange = async (request) => {
       const bridge = getSignalLoomNativeBridge();
       if (!bridge?.applySourceLibraryChange) {
         return { error: 'native bridge missing' };
       }
-      return bridge.applySourceLibraryChange({ change, claim: getCurrentProjectAuthorityClaim() });
+      const scope = captureProjectAuthorityMutationScope();
+      const claim = request?.claim;
+      if (
+        !scope || !claim
+        || claim.authorityId !== scope.claim.authorityId
+        || claim.version !== scope.claim.version
+      ) {
+        return { error: 'exact project authority missing or stale' };
+      }
+      const result = await bridge.applySourceLibraryChange({
+        change: request.change,
+        claim: scope.claim,
+      });
+      if (!result.ok || !result.version || !isCurrentProjectAuthorityMutationScope(scope)) {
+        return result.ok ? { ...result, ok: false, error: 'project authority changed during Source publication' } : result;
+      }
+      applySourceLibraryChangeToRenderer(request.change, result.version, { repairVersionGaps: false });
+      return result;
     };
     globalWindow.signalLoomAutomation = automationBridge;
 
@@ -1305,6 +1334,7 @@ function FlowApp() {
 
     switch (command) {
       case 'file:new': {
+        if (projectSwitchInProgressRef.current) return;
         const confirmed = await useConfirmationStore.getState().requestConfirmation(
           'Start a new blank project? Unsaved changes in the current workspace will be discarded.',
           'Start New Project'
@@ -1313,26 +1343,54 @@ function FlowApp() {
           return;
         }
 
-        const clearResult = await bridge?.clearProjectPath();
-        if (clearResult && clearResult.ok === false) {
+        if (!bridge) {
+          await resetProjectDocument({ allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
+          setNativeProjectPath(undefined);
+          setNativeScratchDirectoryPath(undefined);
+          return;
+        }
+        const authorityClient = getProjectAuthorityClient();
+        const preparedNative = await bridge.clearProjectPath({ claim: authorityClient.getClaim() });
+        if (preparedNative.rejected || !preparedNative.transactionId) {
           await showAlertDialog({
             title: 'New Project Failed',
-            message: 'The native project reset was not committed, so the current workspace was left unchanged.',
+            message: preparedNative.rejected?.message
+              ?? 'The native project reset was not prepared, so the current workspace was left unchanged.',
             tone: 'danger',
           });
           return;
         }
-        // Native authority commits first. Only then clear renderer stores, and the reset helper
-        // restores its exact Flow/Paper/Image/Source snapshot if a late local phase fails.
-        resetSourceLibraryNativeSyncTracking();
-        await resetProjectDocument({ allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
-        if (clearResult?.authority) {
-          // This window's freshly reset stores are the new blank project's canonical state.
-          await getProjectAuthorityClient().adoptSnapshot({ authority: clearResult.authority });
-        } else {
-          setNativeProjectPath(undefined);
+        projectSwitchInProgressRef.current = true;
+        let rendererTransaction: Awaited<ReturnType<typeof prepareProjectDocumentTransaction>> | undefined;
+        let endAuthorityTransition: (() => void) | undefined;
+        try {
+          rendererTransaction = await prepareProjectDocumentTransaction(undefined, {
+            allowDirtyImageReplacement: true,
+            allowDirtyPaperReplacement: true,
+          });
+          rendererTransaction.assertCanCommit();
+          endAuthorityTransition = beginProjectAuthorityTransition();
+          resetSourceLibraryNativeSyncTracking();
+          rendererTransaction.commit();
+          const commitResult = await bridge.commitProjectSwitch({ transactionId: preparedNative.transactionId });
+          if (commitResult.rejected || !commitResult.authority) {
+            rendererTransaction.rollback();
+            throw new Error(commitResult.rejected?.message ?? 'The native project reset could not commit.');
+          }
+          await authorityClient.adoptSnapshot({ authority: commitResult.authority });
+          setNativeScratchDirectoryPath(undefined);
+        } catch (error) {
+          rendererTransaction?.rollback();
+          await bridge.cancelProjectSwitch({ transactionId: preparedNative.transactionId }).catch(() => undefined);
+          await showAlertDialog({
+            title: 'New Project Failed',
+            message: error instanceof Error ? error.message : 'The current project was left unchanged.',
+            tone: 'danger',
+          });
+        } finally {
+          endAuthorityTransition?.();
+          projectSwitchInProgressRef.current = false;
         }
-        setNativeScratchDirectoryPath(undefined);
         return;
       }
       case 'file:open': {
@@ -1342,35 +1400,60 @@ function FlowApp() {
         }
 
         try {
-          const result = await bridge.openProjectFile();
+          if (projectSwitchInProgressRef.current) return;
+          const authorityClient = getProjectAuthorityClient();
+          const result = await bridge.openProjectFile({ claim: authorityClient.getClaim() });
 
-          if (!result.canceled && result.document) {
-            if (result.scratchDirectoryPath) {
-              setNativeScratchDirectoryPath(result.scratchDirectoryPath);
-            }
-            const openedDocument = result.document;
-            if (result.authority) {
-              try {
-                await getProjectAuthorityClient().adoptSnapshot(
-                  { authority: result.authority, filePath: result.filePath },
-                  async () => {
-                    resetSourceLibraryNativeSyncTracking();
-                    await restoreProjectDocument(openedDocument);
-                  },
-                );
-              } catch (restoreError) {
-                // The main process already switched the authoritative project; this window
-                // failed to hydrate it, so it stays explicitly stale/read-only until a
-                // reload succeeds. A bare title/path change must never stand in for that.
-                getProjectAuthorityClient().noteAdoptionFailure(
-                  restoreError instanceof Error ? restoreError.message : undefined,
-                );
-                throw restoreError;
+          if (result.rejected) throw new Error(result.rejected.message);
+          if (!result.canceled && result.document && result.transactionId) {
+            const dirtyImageTitles = useImageEditorStore.getState().documents
+              .filter((document) => document.dirty)
+              .map((document) => document.title);
+            const dirtyPaperTitles = getDirtyPaperWorkspaceDocumentTitles();
+            const hasDirtyDocuments = dirtyImageTitles.length > 0 || dirtyPaperTitles.length > 0;
+            if (hasDirtyDocuments) {
+              const dirtySummary = [
+                ...dirtyImageTitles.map((title) => `Image: ${title}`),
+                ...dirtyPaperTitles.map((title) => `Paper: ${title}`),
+              ].join('\n');
+              const discard = await useConfirmationStore.getState().requestConfirmation(
+                `Open the selected project and discard these unsaved documents?\n\n${dirtySummary}`,
+                'Unsaved Documents',
+              );
+              if (!discard) {
+                await bridge.cancelProjectSwitch({ transactionId: result.transactionId });
+                return;
               }
-            } else {
+            }
+            projectSwitchInProgressRef.current = true;
+            let rendererTransaction: Awaited<ReturnType<typeof prepareProjectDocumentTransaction>> | undefined;
+            let endAuthorityTransition: (() => void) | undefined;
+            try {
+              rendererTransaction = await prepareProjectDocumentTransaction(result.document, {
+                allowDirtyImageReplacement: hasDirtyDocuments,
+                allowDirtyPaperReplacement: hasDirtyDocuments,
+              });
+              rendererTransaction.assertCanCommit();
+              endAuthorityTransition = beginProjectAuthorityTransition();
               resetSourceLibraryNativeSyncTracking();
-              await restoreProjectDocument(openedDocument);
-              setNativeProjectPath(result.filePath);
+              rendererTransaction.commit();
+              const commitResult = await bridge.commitProjectSwitch({ transactionId: result.transactionId });
+              if (commitResult.rejected || !commitResult.authority) {
+                rendererTransaction.rollback();
+                throw new Error(commitResult.rejected?.message ?? 'The prepared project could not commit.');
+              }
+              await authorityClient.adoptSnapshot({
+                authority: commitResult.authority,
+                filePath: commitResult.filePath,
+              });
+              setNativeScratchDirectoryPath(commitResult.scratchDirectoryPath);
+            } catch (error) {
+              rendererTransaction?.rollback();
+              await bridge.cancelProjectSwitch({ transactionId: result.transactionId }).catch(() => undefined);
+              throw error;
+            } finally {
+              endAuthorityTransition?.();
+              projectSwitchInProgressRef.current = false;
             }
           }
         } catch (error) {
@@ -1392,6 +1475,10 @@ function FlowApp() {
         if (await projectSaveBlockedByAuthority()) {
           return;
         }
+        const imageDocumentsAtSave = new Map(
+          useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
+        );
+        const paperSignaturesAtSave = capturePaperWorkspaceDocumentSignatures();
         const document = await buildNativeSaveProjectDocument(getNativeProjectName());
         const result = await bridge.saveProjectFile({ document, claim: authorityClient.getClaim() });
         authorityClient.applySaveResult(result);
@@ -1404,20 +1491,20 @@ function FlowApp() {
           if (result.scratchDirectoryPath) {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
-          const savedDocument = result.document;
-          if (savedDocument && result.authority) {
-            await authorityClient.adoptSnapshot(
-              { authority: result.authority, filePath: result.filePath },
-              async () => {
-                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
-              },
+          if (result.document?.sourceBin && result.sourceLibraryVersion) {
+            resetSourceLibraryNativeSyncTracking();
+            applySourceLibraryChangeToRenderer(
+              { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
+              result.sourceLibraryVersion,
+              { repairVersionGaps: false },
             );
-          } else {
-            if (savedDocument) {
-              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
-            }
-            setNativeProjectPath(result.filePath);
           }
+          for (const imageDocument of useImageEditorStore.getState().documents) {
+            if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
+              useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+            }
+          }
+          markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave);
         }
         return;
       }
@@ -1431,6 +1518,10 @@ function FlowApp() {
         if (await projectSaveBlockedByAuthority()) {
           return;
         }
+        const imageDocumentsAtSave = new Map(
+          useImageEditorStore.getState().documents.map((imageDocument) => [imageDocument.id, imageDocument]),
+        );
+        const paperSignaturesAtSave = capturePaperWorkspaceDocumentSignatures();
         const document = await buildNativeSaveProjectDocument(getNativeProjectName());
         const result = await bridge.saveProjectFileAs({ document, claim: authorityClient.getClaim() });
         authorityClient.applySaveResult(result);
@@ -1443,20 +1534,20 @@ function FlowApp() {
           if (result.scratchDirectoryPath) {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
-          const savedDocument = result.document;
-          if (savedDocument && result.authority) {
-            await authorityClient.adoptSnapshot(
-              { authority: result.authority, filePath: result.filePath },
-              async () => {
-                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
-              },
+          if (result.document?.sourceBin && result.sourceLibraryVersion) {
+            resetSourceLibraryNativeSyncTracking();
+            applySourceLibraryChangeToRenderer(
+              { type: 'source-library-snapshot', snapshot: result.document.sourceBin },
+              result.sourceLibraryVersion,
+              { repairVersionGaps: false },
             );
-          } else {
-            if (savedDocument) {
-              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true, allowDirtyPaperReplacement: true });
-            }
-            setNativeProjectPath(result.filePath);
           }
+          for (const imageDocument of useImageEditorStore.getState().documents) {
+            if (imageDocumentsAtSave.get(imageDocument.id) === imageDocument) {
+              useImageEditorStore.getState().markDocumentClean(imageDocument.id);
+            }
+          }
+          markPaperWorkspaceDocumentsCleanIfUnchanged(paperSignaturesAtSave);
         }
         return;
       }
@@ -1569,7 +1660,14 @@ function FlowApp() {
 
         const result = await bridge.importMediaFiles({
           scratchDirectoryPath: nativeScratchDirectoryPath,
+          claim: getProjectAuthorityClient().getClaim(),
         });
+
+        if (result.rejected) {
+          getProjectAuthorityClient().noteAdoptionFailure(result.rejected.message);
+          await confirmStaleProjectReload();
+          return;
+        }
 
         if (!result.canceled && result.items.length > 0) {
           await importNativeFiles(result.items, flowImportTargetBinId);
@@ -1594,7 +1692,13 @@ function FlowApp() {
           return;
         }
 
-        const result = await bridge.chooseScratchDirectory();
+        const result = await bridge.chooseScratchDirectory({ claim: getProjectAuthorityClient().getClaim() });
+
+        if (result.rejected) {
+          getProjectAuthorityClient().noteAdoptionFailure(result.rejected.message);
+          await confirmStaleProjectReload();
+          return;
+        }
 
         if (!result.canceled && result.directoryPath) {
           setNativeScratchDirectoryPath(result.directoryPath);
@@ -1894,6 +1998,7 @@ function FlowApp() {
         return;
     }
   }, [
+    applySourceLibraryChangeToRenderer,
     downloadCurrentProjectDocument,
     confirmStaleProjectReload,
     copyFlowSelection,
