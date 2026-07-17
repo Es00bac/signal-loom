@@ -49,9 +49,10 @@ describe('desktop external-open wiring guards', () => {
     const appSource = readFileSync(join(process.cwd(), 'src/App.tsx'), 'utf8');
 
     expect(appSource).toContain('registerNativeExternalOpenConsumer(');
-    // Project entries reuse the exact native open completion: source-library baton reset,
-    // canonical restore, then native path ownership.
-    expect(appSource).toMatch(/applyProject[\s\S]{0,700}resetSourceLibraryNativeSyncTracking\(\);[\s\S]{0,200}await restoreProjectDocument\(result\.document\);[\s\S]{0,200}setNativeProjectPath\(result\.filePath\);/);
+    // Dirty authorization precedes acceptance; renderer-local path ownership follows commit.
+    expect(appSource).toMatch(/authorizeProject[\s\S]{0,300}assertProjectDocumentReplacementAllowed\(\)/);
+    expect(appSource).toMatch(/applyProject[\s\S]{0,700}resetSourceLibraryNativeSyncTracking\(\);[\s\S]{0,250}restoreProjectDocument\(result\.document, \{ allowDirtyImageReplacement: true \}\)/);
+    expect(appSource).toMatch(/onProjectCommitted[\s\S]{0,300}setNativeProjectPath\(result\.filePath\);/);
     // Paper entries reuse the canonical .slppr import transaction and land in the Paper workspace.
     expect(appSource).toMatch(/applyPaper[\s\S]{0,700}deserializeSlppr\(bytes, paperAssetRepository\)[\s\S]{0,300}openDocumentJson\(JSON\.stringify\(doc\)\)[\s\S]{0,200}setWorkspaceView\('paper'\);/);
     // The consumer must wait for the startup restore to settle so external opens win the race.
@@ -61,8 +62,12 @@ describe('desktop external-open wiring guards', () => {
   it('declares the typed external-open bridge in the renderer native contract', () => {
     const nativeAppSource = readFileSync(join(process.cwd(), 'src/lib/nativeApp.ts'), 'utf8');
 
-    expect(nativeAppSource).toContain('takeExternalOpenRequests?:');
+    expect(nativeAppSource).toContain('authorizeExternalOpenRenderer?:');
+    expect(nativeAppSource).toContain('nextExternalOpenIntent?:');
+    expect(nativeAppSource).toContain('acceptExternalOpenIntent?:');
+    expect(nativeAppSource).toContain('rejectExternalOpenIntent?:');
+    expect(nativeAppSource).toContain('commitExternalOpenIntent?:');
     expect(nativeAppSource).toContain('onExternalOpenPending?:');
-    expect(nativeAppSource).toContain('NativeExternalOpenTakeResult');
+    expect(nativeAppSource).toContain('NativeExternalOpenNextResult');
   });
 });

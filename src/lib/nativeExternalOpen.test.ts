@@ -1,28 +1,43 @@
 import { describe, expect, it, vi } from 'vitest';
 import { registerNativeExternalOpenConsumer, type NativeExternalOpenErrorContext } from './nativeExternalOpen';
-import type { NativeExternalOpenTakeResult, NativeProjectFileResult, SignalLoomNativeBridge } from './nativeApp';
+import type {
+  NativeExternalOpenNextResult,
+  NativeProjectFileResult,
+  SignalLoomNativeBridge,
+} from './nativeApp';
 import type { FlowProjectDocument } from './projectLibrary';
-
-type PendingListener = () => void;
 
 const projectDocumentStub = {} as FlowProjectDocument;
 
-function createBridge(batches: NativeExternalOpenTakeResult[]) {
-  const listeners = new Set<PendingListener>();
-  const remaining = [...batches];
-  const takeExternalOpenRequests = vi.fn(async () => remaining.shift() ?? { entries: [] });
-  const onExternalOpenPending = vi.fn((callback: PendingListener) => {
-    listeners.add(callback);
-    return () => listeners.delete(callback);
-  });
+function createHandlers() {
+  return {
+    authorizeProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
+    applyProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
+    onProjectCommitted: vi.fn(async (_result: NativeProjectFileResult) => {}),
+    applyPaper: vi.fn(async (_bytes: Uint8Array, _filePath?: string) => {}),
+    onError: vi.fn(async (_context: NativeExternalOpenErrorContext) => {}),
+  };
+}
+
+function createBridge(responses: NativeExternalOpenNextResult[], authorized = true) {
+  const listeners = new Set<() => void>();
+  const remaining = [...responses];
   const bridge = {
-    takeExternalOpenRequests,
-    onExternalOpenPending,
+    authorizeExternalOpenRenderer: vi.fn(async () => authorized
+      ? { authorized: true, epoch: 'epoch-1' }
+      : { authorized: false, reason: 'not-designated-renderer' }),
+    nextExternalOpenIntent: vi.fn(async () => remaining.shift() ?? { status: 'empty' }),
+    acceptExternalOpenIntent: vi.fn(async () => ({ status: 'accepted' })),
+    rejectExternalOpenIntent: vi.fn(async () => ({ status: 'rejected' })),
+    commitExternalOpenIntent: vi.fn(async () => ({ status: 'committed' })),
+    releaseExternalOpenRenderer: vi.fn(async () => ({ status: 'revoked' })),
+    onExternalOpenPending: vi.fn((callback: () => void) => {
+      listeners.add(callback);
+      return () => listeners.delete(callback);
+    }),
   } as unknown as SignalLoomNativeBridge;
   return {
     bridge,
-    takeExternalOpenRequests,
-    onExternalOpenPending,
     emitPending: () => {
       for (const listener of [...listeners]) listener();
     },
@@ -30,253 +45,185 @@ function createBridge(batches: NativeExternalOpenTakeResult[]) {
   };
 }
 
-function createHandlers() {
-  return {
-    applyProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
-    applyPaper: vi.fn(async (_bytes: Uint8Array, _filePath?: string) => {}),
-    onError: vi.fn(async (_context: NativeExternalOpenErrorContext) => {}),
-  };
-}
-
-async function flushMicrotasks(rounds = 8) {
-  for (let i = 0; i < rounds; i += 1) {
-    await Promise.resolve();
-  }
+async function flushMicrotasks(rounds = 16) {
+  for (let index = 0; index < rounds; index += 1) await Promise.resolve();
 }
 
 describe('registerNativeExternalOpenConsumer', () => {
-  it('is a safe no-op when the bridge or its external-open methods are absent', async () => {
+  it('is a safe no-op without the complete transactional bridge', async () => {
     const handlers = createHandlers();
-
-    const unregisterWithoutBridge = registerNativeExternalOpenConsumer(undefined, handlers);
-    const unregisterWithoutMethods = registerNativeExternalOpenConsumer(
-      {} as unknown as SignalLoomNativeBridge,
-      handlers,
-    );
+    const disposeMissing = registerNativeExternalOpenConsumer(undefined, handlers);
+    const disposeLegacy = registerNativeExternalOpenConsumer({} as SignalLoomNativeBridge, handlers);
     await flushMicrotasks();
-
-    expect(typeof unregisterWithoutBridge).toBe('function');
-    expect(typeof unregisterWithoutMethods).toBe('function');
-    unregisterWithoutBridge();
-    unregisterWithoutMethods();
+    disposeMissing();
+    disposeLegacy();
     expect(handlers.applyProject).not.toHaveBeenCalled();
-    expect(handlers.onError).not.toHaveBeenCalled();
   });
 
-  it('subscribes to the pending channel before running the initial drain', async () => {
+  it('subscribes before authorization and applies a project only after guard acceptance', async () => {
     const order: string[] = [];
-    const listeners = new Set<PendingListener>();
-    const bridge = {
-      takeExternalOpenRequests: vi.fn(async () => {
-        order.push('take');
-        return { entries: [] };
-      }),
-      onExternalOpenPending: vi.fn((callback: PendingListener) => {
-        order.push('subscribe');
-        listeners.add(callback);
-        return () => listeners.delete(callback);
-      }),
-    } as unknown as SignalLoomNativeBridge;
-
-    const unregister = registerNativeExternalOpenConsumer(bridge, createHandlers());
-    await flushMicrotasks();
-    unregister();
-
-    expect(order[0]).toBe('subscribe');
-    expect(order).toContain('take');
-  });
-
-  it('applies drained project and paper entries in order through the canonical handlers', async () => {
-    const projectResult: NativeProjectFileResult = {
+    const projectResult = {
       canceled: false,
-      filePath: '/home/user/comic.sloom',
+      filePath: '/home/user/Comic 週刊.sloom',
       document: projectDocumentStub,
     };
-    const paperBytes = new Uint8Array([1, 2, 3]);
-    const { bridge } = createBridge([
-      {
-        entries: [
-          { kind: 'project', filePath: '/home/user/comic.sloom', result: projectResult },
-          { kind: 'paper', filePath: '/home/user/layout.slppr', bytes: paperBytes },
-        ],
-      },
-    ]);
-    const applied: string[] = [];
-    const handlers = {
-      applyProject: vi.fn(async () => {
-        applied.push('project');
-      }),
-      applyPaper: vi.fn(async () => {
-        applied.push('paper');
-      }),
-      onError: vi.fn(async () => {}),
-    };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'intent-1', kind: 'project', filePath: projectResult.filePath, result: projectResult },
+    }]);
+    const typedBridge = bridge as SignalLoomNativeBridge;
+    vi.mocked(typedBridge.onExternalOpenPending!).mockImplementation((callback) => {
+      order.push('subscribe');
+      return () => void callback;
+    });
+    vi.mocked(typedBridge.authorizeExternalOpenRenderer!).mockImplementation(async () => {
+      order.push('authorize-renderer');
+      return { authorized: true, epoch: 'epoch-1' };
+    });
+    vi.mocked(typedBridge.acceptExternalOpenIntent!).mockImplementation(async () => {
+      order.push('accept');
+      return { status: 'accepted' };
+    });
+    vi.mocked(typedBridge.commitExternalOpenIntent!).mockImplementation(async () => {
+      order.push('commit');
+      return { status: 'committed' };
+    });
+    const handlers = createHandlers();
+    handlers.authorizeProject.mockImplementation(async () => { order.push('dirty-guard'); });
+    handlers.applyProject.mockImplementation(async () => { order.push('apply'); });
+    handlers.onProjectCommitted.mockImplementation(async () => { order.push('publish-renderer-path'); });
 
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
     await flushMicrotasks();
-    unregister();
+    dispose();
 
-    expect(handlers.applyProject).toHaveBeenCalledTimes(1);
-    expect(handlers.applyProject).toHaveBeenCalledWith(projectResult);
-    expect(handlers.applyPaper).toHaveBeenCalledTimes(1);
-    const [bytesArg, filePathArg] = handlers.applyPaper.mock.calls[0] as unknown as [Uint8Array, string];
-    expect(Array.from(bytesArg)).toEqual([1, 2, 3]);
-    expect(filePathArg).toBe('/home/user/layout.slppr');
-    expect(applied).toEqual(['project', 'paper']);
-    expect(handlers.onError).not.toHaveBeenCalled();
+    expect(order).toEqual([
+      'subscribe',
+      'authorize-renderer',
+      'dirty-guard',
+      'accept',
+      'apply',
+      'commit',
+      'publish-renderer-path',
+    ]);
   });
 
-  it('drains again when the pending channel fires and never re-applies consumed entries', async () => {
-    const { bridge, takeExternalOpenRequests, emitPending } = createBridge([
+  it('rejects a dirty-guard refusal without accepting, applying, or committing', async () => {
+    const projectResult = { canceled: false, filePath: '/dirty.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'dirty-intent', kind: 'project', filePath: '/dirty.sloom', result: projectResult },
+    }]);
+    const handlers = createHandlers();
+    handlers.authorizeProject.mockRejectedValue(new Error('dirty Image document'));
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
+    await flushMicrotasks();
+    dispose();
+
+    expect(bridge.rejectExternalOpenIntent).toHaveBeenCalledWith(expect.objectContaining({ intentId: 'dirty-intent' }));
+    expect(bridge.acceptExternalOpenIntent).not.toHaveBeenCalled();
+    expect(handlers.applyProject).not.toHaveBeenCalled();
+    expect(bridge.commitExternalOpenIntent).not.toHaveBeenCalled();
+    expect(handlers.onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'dirty Image document' }));
+  });
+
+  it('commits an already-accepted intent without applying it twice', async () => {
+    const projectResult = { canceled: false, filePath: '/retry.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'accepted',
+      intent: { id: 'accepted-intent', kind: 'project', filePath: '/retry.sloom', result: projectResult },
+    }]);
+    const handlers = createHandlers();
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
+    await flushMicrotasks();
+    dispose();
+
+    expect(handlers.authorizeProject).not.toHaveBeenCalled();
+    expect(handlers.applyProject).not.toHaveBeenCalled();
+    expect(bridge.acceptExternalOpenIntent).not.toHaveBeenCalled();
+    expect(bridge.commitExternalOpenIntent).toHaveBeenCalledTimes(1);
+    expect(handlers.onProjectCommitted).toHaveBeenCalledWith(projectResult);
+  });
+
+  it('rolls back an accepted intent when renderer application fails before commit', async () => {
+    const projectResult = { canceled: false, filePath: '/broken.sloom', document: projectDocumentStub };
+    const { bridge } = createBridge([{
+      status: 'offered',
+      state: 'offered',
+      intent: { id: 'broken-intent', kind: 'project', filePath: '/broken.sloom', result: projectResult },
+    }]);
+    const handlers = createHandlers();
+    handlers.applyProject.mockRejectedValue(new Error('restore rolled back'));
+
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
+    await flushMicrotasks();
+    dispose();
+
+    expect(bridge.acceptExternalOpenIntent).toHaveBeenCalledTimes(1);
+    expect(bridge.rejectExternalOpenIntent).toHaveBeenCalledWith(expect.objectContaining({ intentId: 'broken-intent' }));
+    expect(bridge.commitExternalOpenIntent).not.toHaveBeenCalled();
+    expect(handlers.onProjectCommitted).not.toHaveBeenCalled();
+  });
+
+  it('serializes wakeups and preserves project/Paper intent order', async () => {
+    let releaseProject = () => {};
+    const projectGate = new Promise<void>((resolve) => { releaseProject = resolve; });
+    const { bridge, emitPending } = createBridge([
       {
-        entries: [{
+        status: 'offered',
+        state: 'offered',
+        intent: {
+          id: 'project',
           kind: 'project',
           filePath: '/a.sloom',
           result: { canceled: false, filePath: '/a.sloom', document: projectDocumentStub },
-        }],
+        },
       },
-      { entries: [{ kind: 'paper', filePath: '/b.slppr', bytes: new Uint8Array([9]) }] },
+      { status: 'offered', state: 'offered', intent: { id: 'paper', kind: 'paper', filePath: '/b.slppr', bytes: new Uint8Array([7]) } },
     ]);
-    const handlers = createHandlers();
-
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
-    await flushMicrotasks();
-    emitPending();
-    await flushMicrotasks();
-    emitPending();
-    await flushMicrotasks();
-    unregister();
-
-    expect(takeExternalOpenRequests).toHaveBeenCalledTimes(3);
-    expect(handlers.applyProject).toHaveBeenCalledTimes(1);
-    expect(handlers.applyPaper).toHaveBeenCalledTimes(1);
-  });
-
-  it('serializes overlapping drains so entries apply sequentially', async () => {
-    let releaseFirstApply: () => void = () => {};
-    const firstApplyGate = new Promise<void>((resolvePromise) => {
-      releaseFirstApply = resolvePromise;
-    });
     const events: string[] = [];
-    const { bridge, emitPending } = createBridge([
-      { entries: [{ kind: 'paper', filePath: '/a.slppr', bytes: new Uint8Array([1]) }] },
-      { entries: [{ kind: 'paper', filePath: '/b.slppr', bytes: new Uint8Array([2]) }] },
-    ]);
-    const handlers = {
-      applyProject: vi.fn(async (_result: NativeProjectFileResult) => {}),
-      applyPaper: vi.fn(async (_bytes: Uint8Array, filePath?: string) => {
-        events.push(`start:${filePath}`);
-        if (filePath === '/a.slppr') {
-          await firstApplyGate;
-        }
-        events.push(`end:${filePath}`);
-      }),
-      onError: vi.fn(async (_context: NativeExternalOpenErrorContext) => {}),
-    };
+    const handlers = createHandlers();
+    handlers.applyProject.mockImplementation(async () => {
+      events.push('project:start');
+      await projectGate;
+      events.push('project:end');
+    });
+    handlers.applyPaper.mockImplementation(async () => { events.push('paper'); });
 
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
     await flushMicrotasks();
     emitPending();
     await flushMicrotasks();
-
-    expect(events).toEqual(['start:/a.slppr']);
-    releaseFirstApply();
-    await flushMicrotasks();
-    unregister();
-
-    expect(events).toEqual(['start:/a.slppr', 'end:/a.slppr', 'start:/b.slppr', 'end:/b.slppr']);
+    expect(events).toEqual(['project:start']);
+    releaseProject();
+    await flushMicrotasks(30);
+    dispose();
+    expect(events).toEqual(['project:start', 'project:end', 'paper']);
   });
 
-  it('routes error entries and malformed entries to onError without applying them', async () => {
-    const { bridge } = createBridge([
-      {
-        entries: [
-          { kind: 'project', filePath: '/broken.sloom', error: 'The project file is corrupt.' },
-          { kind: 'paper', filePath: '/empty.slppr' },
-          { kind: 'mystery', filePath: '/odd.bin' } as never,
-        ],
-      },
-    ]);
+  it('does not let a non-designated renderer ask for an intent', async () => {
+    const { bridge } = createBridge([], false);
     const handlers = createHandlers();
-
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
+    const dispose = registerNativeExternalOpenConsumer(bridge, handlers);
     await flushMicrotasks();
-    unregister();
-
-    expect(handlers.applyProject).not.toHaveBeenCalled();
-    expect(handlers.applyPaper).not.toHaveBeenCalled();
-    expect(handlers.onError).toHaveBeenCalledTimes(3);
-    expect(handlers.onError.mock.calls[0][0]).toMatchObject({
-      kind: 'project',
-      filePath: '/broken.sloom',
-      message: 'The project file is corrupt.',
-    });
+    dispose();
+    expect(bridge.nextExternalOpenIntent).not.toHaveBeenCalled();
+    expect(handlers.onError).not.toHaveBeenCalled();
   });
 
-  it('reports handler failures through onError and keeps processing later entries', async () => {
-    const { bridge } = createBridge([
-      {
-        entries: [
-          {
-            kind: 'project',
-            filePath: '/a.sloom',
-            result: { canceled: false, filePath: '/a.sloom', document: projectDocumentStub },
-          },
-          { kind: 'paper', filePath: '/b.slppr', bytes: new Uint8Array([7]) },
-        ],
-      },
-    ]);
-    const handlers = {
-      applyProject: vi.fn(async (_result: NativeProjectFileResult) => {
-        throw new Error('restore exploded');
-      }),
-      applyPaper: vi.fn(async (_bytes: Uint8Array, _filePath?: string) => {}),
-      onError: vi.fn(async (_context: NativeExternalOpenErrorContext) => {}),
-    };
-
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
-    await flushMicrotasks();
-    unregister();
-
-    expect(handlers.onError).toHaveBeenCalledTimes(1);
-    expect(handlers.onError.mock.calls[0][0]).toMatchObject({ kind: 'project', message: 'restore exploded' });
-    expect(handlers.applyPaper).toHaveBeenCalledTimes(1);
-  });
-
-  it('reports take failures through onError instead of throwing', async () => {
-    const bridge = {
-      takeExternalOpenRequests: vi.fn(async () => {
-        throw new Error('ipc unavailable');
-      }),
-      onExternalOpenPending: vi.fn(() => () => {}),
-    } as unknown as SignalLoomNativeBridge;
-    const handlers = createHandlers();
-
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
-    await flushMicrotasks();
-    unregister();
-
-    expect(handlers.onError).toHaveBeenCalledTimes(1);
-    expect(handlers.onError.mock.calls[0][0]).toMatchObject({ kind: 'take', message: 'ipc unavailable' });
-  });
-
-  it('unregisters the pending listener and stops draining after disposal', async () => {
-    const { bridge, takeExternalOpenRequests, emitPending, listenerCount } = createBridge([
-      { entries: [] },
-      { entries: [{ kind: 'paper', filePath: '/late.slppr', bytes: new Uint8Array([1]) }] },
-    ]);
-    const handlers = createHandlers();
-
-    const unregister = registerNativeExternalOpenConsumer(bridge, handlers);
+  it('releases its epoch and listener on disposal', async () => {
+    const { bridge, listenerCount } = createBridge([]);
+    const dispose = registerNativeExternalOpenConsumer(bridge, createHandlers());
     await flushMicrotasks();
     expect(listenerCount()).toBe(1);
-
-    unregister();
-    expect(listenerCount()).toBe(0);
-    emitPending();
+    dispose();
     await flushMicrotasks();
-
-    expect(takeExternalOpenRequests).toHaveBeenCalledTimes(1);
-    expect(handlers.applyPaper).not.toHaveBeenCalled();
+    expect(listenerCount()).toBe(0);
+    expect(bridge.releaseExternalOpenRenderer).toHaveBeenCalledWith('epoch-1');
   });
 });

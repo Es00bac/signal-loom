@@ -449,27 +449,47 @@ export interface NativePaperOpenResult {
   path?: string;
 }
 
-/** One externally opened document drained from the main-process queue (exactly once). */
-export interface NativeExternalOpenProjectEntry {
+/** One main-owned external-open intent offered to the designated renderer epoch. */
+export interface NativeExternalOpenProjectIntent {
+  id: string;
   kind: 'project';
-  filePath?: string;
-  /** Present on success: the canonical main-process open transaction's result. */
+  filePath: string;
+  /** Prepared without changing canonical main-process project state. */
   result?: NativeProjectFileResult;
   error?: string;
 }
 
-export interface NativeExternalOpenPaperEntry {
+export interface NativeExternalOpenPaperIntent {
+  id: string;
   kind: 'paper';
-  filePath?: string;
-  /** Present on success: raw .slppr bytes for the renderer's canonical import. */
+  filePath: string;
   bytes?: Uint8Array;
   error?: string;
 }
 
-export type NativeExternalOpenEntry = NativeExternalOpenProjectEntry | NativeExternalOpenPaperEntry;
+export type NativeExternalOpenIntent = NativeExternalOpenProjectIntent | NativeExternalOpenPaperIntent;
 
-export interface NativeExternalOpenTakeResult {
-  entries: NativeExternalOpenEntry[];
+export interface NativeExternalOpenAuthorizationResult {
+  authorized: boolean;
+  epoch?: string;
+  reason?: string;
+}
+
+export interface NativeExternalOpenNextResult {
+  status: 'offered' | 'empty' | 'unauthorized';
+  intent?: NativeExternalOpenIntent;
+  state?: 'offered' | 'accepted';
+}
+
+export interface NativeExternalOpenTransitionRequest {
+  epoch: string;
+  intentId: string;
+  reason?: string;
+}
+
+export interface NativeExternalOpenTransitionResult {
+  status: 'accepted' | 'rejected' | 'committed' | 'revoked' | 'unauthorized' | 'not-found' | 'invalid-state' | 'error';
+  error?: string;
 }
 
 export interface NativePaperSaveResult {
@@ -746,10 +766,14 @@ export interface SignalLoomNativeBridge {
   secretAvailable?: () => Promise<boolean>;
   secretEncrypt?: (plaintext: string) => Promise<string | null>;
   secretDecrypt?: (ciphertextBase64: string) => Promise<string | null>;
-  // External opens (double-clicked .sloom/.slppr files, signal-loom:// deep links). Optional:
-  // only builds whose preload exposes the external-open queue provide them; the renderer
-  // consumer no-ops when absent. Each take atomically drains the queue — exactly-once delivery.
-  takeExternalOpenRequests?: () => Promise<NativeExternalOpenTakeResult>;
+  // Main-owned transactional external opens. Only the designated Flow renderer receives an
+  // epoch; an intent remains recoverable until explicit accept/reject and commit.
+  authorizeExternalOpenRenderer?: () => Promise<NativeExternalOpenAuthorizationResult>;
+  nextExternalOpenIntent?: (epoch: string) => Promise<NativeExternalOpenNextResult>;
+  acceptExternalOpenIntent?: (request: NativeExternalOpenTransitionRequest) => Promise<NativeExternalOpenTransitionResult>;
+  rejectExternalOpenIntent?: (request: NativeExternalOpenTransitionRequest) => Promise<NativeExternalOpenTransitionResult>;
+  commitExternalOpenIntent?: (request: NativeExternalOpenTransitionRequest) => Promise<NativeExternalOpenTransitionResult>;
+  releaseExternalOpenRenderer?: (epoch: string) => Promise<NativeExternalOpenTransitionResult>;
   onExternalOpenPending?: (callback: () => void) => () => void;
   onMenuCommand: (callback: (command: NativeMenuCommand) => void) => () => void;
   onProjectPathChanged: (callback: (filePath: string | undefined) => void) => () => void;

@@ -323,14 +323,15 @@ describe('Electron single-instance and external-open source guards', () => {
   });
 
   it('acquires the lock bare and consumes the natively relayed second-instance argv', () => {
-    // Electron 41's POSIX process singleton cannot carry requestSingleInstanceLock
-    // additionalData: the running app logs "additional_data_size exceeds payload length",
-    // never acknowledges, and the CONNECTING instance kills it and takes over (observed
-    // live on Linux). The lock must be acquired with no payload; the winner reads the
-    // relayed argv/workingDirectory, with additionalData parsed only defensively.
+    // The deterministic Electron lifecycle probe proves bare-lock argv relay with Unicode and
+    // spaces. The app does not rely on the unconfirmed additionalData crash report.
     expect(source).toMatch(/const hasSingleInstanceLock = app\.requestSingleInstanceLock\(\);/);
     expect(source).not.toMatch(/requestSingleInstanceLock\(\s*[^)\s]/);
     expect(source).toMatch(/app\.on\('second-instance', \(_event, argv, workingDirectory, additionalData\) => \{[\s\S]*parseSecondInstanceOpenPayload\(additionalData\)/);
+    const probe = readFileSync(join(process.cwd(), 'scripts/electron-single-instance-probe.mjs'), 'utf8');
+    expect(probe).toContain('requestSingleInstanceLock()');
+    expect(probe).toContain('second-instance');
+    expect(probe).toContain('Comic 週刊.sloom');
   });
 
   it('focuses the existing window and drains queued targets on second-instance', () => {
@@ -355,13 +356,28 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toMatch(/createExternalOpenQueue\(\{[\s\S]*isFile:/);
   });
 
-  it('fulfills external document opens through the canonical open transactions only', () => {
-    const takeHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-take'"));
+  it('stages external projects without publishing canonical state before renderer acceptance', () => {
+    expect(source).toContain("ipcMain.handle('signal-loom:external-open-authorize'");
+    expect(source).toContain("ipcMain.handle('signal-loom:external-open-accept'");
+    expect(source).toContain("ipcMain.handle('signal-loom:external-open-reject'");
+    expect(source).toContain("ipcMain.handle('signal-loom:external-open-commit'");
+    expect(source).toMatch(/async function prepareProjectDocumentFromPath[\s\S]*prepareProjectDocumentForNativeOpen/);
+    const offerHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-next'"));
+    expect(offerHandler.slice(0, 2400)).not.toContain('setCurrentProjectAssetRoots(');
+    expect(offerHandler.slice(0, 2400)).not.toContain('broadcastProjectPathChanged(');
+    expect(offerHandler.slice(0, 2400)).not.toContain('syncSourceLibraryFromDocument(');
+    const acceptHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-accept'"));
+    expect(acceptHandler.slice(0, 2200)).toContain('stageAcceptedExternalProject(request.intentId, prepared.result)');
+    const rejectHandler = source.slice(source.indexOf("ipcMain.handle('signal-loom:external-open-reject'"));
+    expect(rejectHandler.slice(0, 1200)).toContain('rollbackAcceptedExternalProject(request?.intentId)');
+    expect(source).toMatch(/async function commitAcceptedExternalProject[\s\S]*rememberProjectPath[\s\S]*commitDocumentIntent[\s\S]*broadcastSourceLibraryChanged[\s\S]*broadcastProjectPathChanged/);
+  });
 
-    expect(takeHandler.length).toBeGreaterThan(100);
-    expect(takeHandler.slice(0, 1600)).toContain('takeDocumentRequests()');
-    expect(takeHandler.slice(0, 1600)).toContain('openProjectDocumentFromPath(request.filePath)');
-    expect(takeHandler.slice(0, 1600)).toMatch(/readFile\(request\.filePath\)/);
+  it('authorizes only the designated live Flow renderer and rotates authorization on reload or death', () => {
+    expect(source).toMatch(/function isDesignatedExternalOpenRenderer[\s\S]*mainWindow[\s\S]*webContents/);
+    expect(source).toMatch(/external-open-authorize[\s\S]*isDesignatedExternalOpenRenderer/);
+    expect(source).toMatch(/did-start-loading[\s\S]*revokeExternalOpenRenderer/);
+    expect(source).toMatch(/render-process-gone[\s\S]*revokeExternalOpenRenderer/);
   });
 
   it('announces queued document opens to the target window over the pending channel', () => {
@@ -369,9 +385,10 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toMatch(/function dispatchPendingExternalOpenRequests\(\)[\s\S]*createWorkspaceWindow\(request\.workspace\)/);
   });
 
-  it('skips the remembered startup project when an external project open is queued', () => {
-    expect(source).toMatch(/loadRememberedStartupProject\(\{ skipRemembered: externalOpenQueue\.hasPending\('project'\) \}\)/);
-    expect(source).toMatch(/async function loadRememberedStartupProject\(\{ skipRemembered = false \} = \{\}\)[\s\S]*const filePath = skipRemembered \? undefined : await readRememberedProjectPath\(\);/);
+  it('restores remembered state before offering a startup intent so rejection preserves it', () => {
+    expect(source).toMatch(/async function loadRememberedStartupProject\(\)[\s\S]*const filePath = await readRememberedProjectPath\(\);/);
+    expect(source).toContain('await loadRememberedStartupProject();');
+    expect(source).not.toContain("skipRemembered: externalOpenQueue.hasPending('project')");
   });
 
   it('registers the signal-loom deep-link scheme only for packaged winners', () => {
@@ -381,7 +398,11 @@ describe('Electron single-instance and external-open source guards', () => {
   it('exposes the external-open bridge from the preload script', () => {
     const preload = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
 
-    expect(preload).toContain("takeExternalOpenRequests: () => ipcRenderer.invoke('signal-loom:external-open-take')");
+    expect(preload).toContain("authorizeExternalOpenRenderer: () => ipcRenderer.invoke('signal-loom:external-open-authorize')");
+    expect(preload).toContain("nextExternalOpenIntent: (epoch) => ipcRenderer.invoke('signal-loom:external-open-next', epoch)");
+    expect(preload).toContain("acceptExternalOpenIntent: (request) => ipcRenderer.invoke('signal-loom:external-open-accept', request)");
+    expect(preload).toContain("rejectExternalOpenIntent: (request) => ipcRenderer.invoke('signal-loom:external-open-reject', request)");
+    expect(preload).toContain("commitExternalOpenIntent: (request) => ipcRenderer.invoke('signal-loom:external-open-commit', request)");
     expect(preload).toContain("onExternalOpenPending: (callback) => onChannel('signal-loom:external-open-pending', callback)");
   });
 });

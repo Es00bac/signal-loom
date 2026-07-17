@@ -2494,17 +2494,36 @@ function FlowApp() {
       return;
     }
 
+    let replacementAuthorization: ProjectReplacementAuthorization | undefined;
     return registerNativeExternalOpenConsumer(getSignalLoomNativeBridge(), {
+      authorizeProject: async () => {
+        replacementAuthorization = await requestProjectReplacementAuthorization({
+          key: 'external-open-project',
+          save: () => lossPreventionSaveRef.current(),
+          authorizeDirtyImageReplacement: (projection) => imageReplacementAuthorizationRef.current(projection),
+        }) ?? undefined;
+        if (!replacementAuthorization) {
+          throw new Error('Project replacement canceled.');
+        }
+      },
       applyProject: async (result) => {
         if (!result.document) {
           return;
         }
-        if (result.scratchDirectoryPath) {
-          setNativeScratchDirectoryPath(result.scratchDirectoryPath);
-        }
-        resetSourceLibraryNativeSyncTracking();
-        await restoreProjectDocument(result.document);
+        const authorization = replacementAuthorization;
+        replacementAuthorization = undefined;
+        if (!authorization) throw new Error('Project replacement authorization expired.');
+        await restoreProjectDocument(result.document, {
+          imageAuthorization: authorization.image,
+          paperAuthorization: authorization.paper,
+          transactionBookkeeping: 'reset-source-library-native-sync',
+        });
+      },
+      onProjectCommitted: async (result) => {
+        setNativeScratchDirectoryPath(result.scratchDirectoryPath);
         setNativeProjectPath(result.filePath);
+        const adoption = await getProjectAuthorityClient().reloadFromDisk();
+        if (!adoption.ok) throw new Error(adoption.error ?? 'The opened project could not be adopted.');
       },
       applyPaper: async (bytes) => {
         const doc = await deserializeSlppr(bytes, paperAssetRepository);
@@ -2521,7 +2540,7 @@ function FlowApp() {
         });
       },
     });
-  }, [nativeStartupSettled, resetSourceLibraryNativeSyncTracking, setNativeScratchDirectoryPath, setWorkspaceView]);
+  }, [getProjectAuthorityClient, nativeStartupSettled, setNativeScratchDirectoryPath, setWorkspaceView]);
 
   useEffect(() => {
     const bridge = getSignalLoomNativeBridge();

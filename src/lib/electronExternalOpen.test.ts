@@ -21,8 +21,15 @@ interface ExternalOpenQueue {
   ) => { enqueued: Array<{ kind: string }>; rejected: Array<{ value: string; reason: string }> };
   hasPending: (kind?: string) => boolean;
   pendingCount: () => number;
-  takeDocumentRequests: () => Array<{ kind: 'project' | 'paper'; filePath: string }>;
   takeWorkspaceRequests: () => Array<{ kind: 'workspace'; workspace: string }>;
+  authorizeRenderer: (rendererId: string) => { authorized: true; epoch: string };
+  offerNextDocumentIntent: (authorization: { rendererId: string; epoch: string }) =>
+    | { status: 'offered'; intent: { id: string; kind: 'project' | 'paper'; filePath: string } }
+    | { status: 'empty' | 'unauthorized' };
+  acceptDocumentIntent: (request: { rendererId: string; epoch: string; intentId: string }) => { status: string };
+  rejectDocumentIntent: (request: { rendererId: string; epoch: string; intentId: string }) => { status: string };
+  commitDocumentIntent: (request: { rendererId: string; epoch: string; intentId: string }) => { status: string };
+  revokeRenderer: (request: { rendererId: string; epoch: string }) => { status: string };
 }
 
 interface ElectronExternalOpenModule {
@@ -47,6 +54,9 @@ interface ElectronExternalOpenModule {
     isFile: (filePath: string) => boolean;
     workspaceViews?: readonly string[];
     maxPending?: number;
+    maxRecentCommits?: number;
+    idempotencyWindowMs?: number;
+    now?: () => number;
   }) => ExternalOpenQueue;
 }
 
@@ -320,7 +330,7 @@ describe('second instance open payload', () => {
 describe('external open queue', () => {
   const context = { cwd: '/home/user', platform: 'linux' };
 
-  it('enqueues validated document targets and drains them exactly once', async () => {
+  it('enqueues validated document targets and commits them exactly once', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
     const queue = createExternalOpenQueue({ isFile: () => true });
 
@@ -330,24 +340,117 @@ describe('external open queue', () => {
     expect(queue.hasPending('project')).toBe(true);
     expect(queue.pendingCount()).toBe(2);
 
-    expect(queue.takeDocumentRequests()).toEqual([
+    const authorization = queue.authorizeRenderer('renderer-a');
+    for (const expected of [
       { kind: 'project', filePath: '/home/user/comic.sloom' },
       { kind: 'paper', filePath: '/home/user/layout.slppr' },
-    ]);
-    expect(queue.takeDocumentRequests()).toEqual([]);
+    ]) {
+      const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
+      expect(offer).toMatchObject({ status: 'offered', intent: expected });
+      if (offer.status !== 'offered') throw new Error('Expected an offered intent.');
+      expect(queue.acceptDocumentIntent({
+        rendererId: 'renderer-a',
+        epoch: authorization.epoch,
+        intentId: offer.intent.id,
+      })).toMatchObject({ status: 'accepted' });
+      expect(queue.commitDocumentIntent({
+        rendererId: 'renderer-a',
+        epoch: authorization.epoch,
+        intentId: offer.intent.id,
+      })).toMatchObject({ status: 'committed' });
+    }
+    expect(queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch })).toEqual({ status: 'empty' });
     expect(queue.hasPending()).toBe(false);
   });
 
-  it('drops duplicate pending targets but allows re-opening after a drain', async () => {
+  it('keeps bounded idempotency after commit, then permits a genuinely later user open', async () => {
     const { createExternalOpenQueue } = await loadExternalOpenModule();
-    const queue = createExternalOpenQueue({ isFile: () => true });
+    let now = 1_000;
+    const queue = createExternalOpenQueue({
+      isFile: () => true,
+      now: () => now,
+      idempotencyWindowMs: 2_000,
+    });
 
     expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
     expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'duplicate' });
     expect(queue.pendingCount()).toBe(1);
 
-    expect(queue.takeDocumentRequests()).toHaveLength(1);
+    const authorization = queue.authorizeRenderer('renderer-a');
+    const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
+    expect(offer.status).toBe('offered');
+    if (offer.status !== 'offered') throw new Error('Expected an offered intent.');
+    expect(queue.acceptDocumentIntent({
+      rendererId: 'renderer-a',
+      epoch: authorization.epoch,
+      intentId: offer.intent.id,
+    })).toMatchObject({ status: 'accepted' });
+    expect(queue.commitDocumentIntent({
+      rendererId: 'renderer-a',
+      epoch: authorization.epoch,
+      intentId: offer.intent.id,
+    })).toMatchObject({ status: 'committed' });
+
+    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'duplicate' });
+    now += 2_001;
     expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
+  });
+
+  it('does not consume or deduplicate a rejected dirty-guard intent', async () => {
+    const { createExternalOpenQueue } = await loadExternalOpenModule();
+    const queue = createExternalOpenQueue({ isFile: () => true });
+    queue.enqueueValue('/home/user/comic.sloom', context);
+
+    const authorization = queue.authorizeRenderer('renderer-a');
+    const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
+    if (offer.status !== 'offered') throw new Error('Expected an offered intent.');
+    expect(queue.rejectDocumentIntent({
+      rendererId: 'renderer-a',
+      epoch: authorization.epoch,
+      intentId: offer.intent.id,
+    })).toMatchObject({ status: 'rejected' });
+    expect(queue.pendingCount()).toBe(0);
+    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
+  });
+
+  it('can reject after acceptance and still permits a deliberate retry', async () => {
+    const { createExternalOpenQueue } = await loadExternalOpenModule();
+    const queue = createExternalOpenQueue({ isFile: () => true });
+    queue.enqueueValue('/home/user/comic.sloom', context);
+    const authorization = queue.authorizeRenderer('renderer-a');
+    const offer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch });
+    if (offer.status !== 'offered') throw new Error('Expected an offered intent.');
+    queue.acceptDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch, intentId: offer.intent.id });
+
+    expect(queue.rejectDocumentIntent({
+      rendererId: 'renderer-a',
+      epoch: authorization.epoch,
+      intentId: offer.intent.id,
+    })).toMatchObject({ status: 'rejected' });
+    expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
+  });
+
+  it('authorizes one renderer epoch and rejects stale or competing drains', async () => {
+    const { createExternalOpenQueue } = await loadExternalOpenModule();
+    const queue = createExternalOpenQueue({ isFile: () => true });
+    queue.enqueueValue('/home/user/comic.sloom', context);
+
+    const first = queue.authorizeRenderer('renderer-a');
+    expect(queue.offerNextDocumentIntent({ rendererId: 'renderer-b', epoch: first.epoch })).toMatchObject({
+      status: 'unauthorized',
+    });
+    const firstOffer = queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: first.epoch });
+    expect(firstOffer.status).toBe('offered');
+
+    expect(queue.revokeRenderer({ rendererId: 'renderer-a', epoch: first.epoch })).toMatchObject({ status: 'revoked' });
+    const second = queue.authorizeRenderer('renderer-a');
+    expect(second.epoch).not.toBe(first.epoch);
+    expect(queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: first.epoch })).toMatchObject({
+      status: 'unauthorized',
+    });
+    expect(queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: second.epoch })).toMatchObject({
+      status: 'offered',
+    });
   });
 
   it('rejects targets that are not existing regular files', async () => {
@@ -373,7 +476,11 @@ describe('external open queue', () => {
     expect(queue.enqueueValue('/home/user/comic.sloom', context)).toMatchObject({ status: 'enqueued' });
 
     expect(queue.hasPending('workspace')).toBe(true);
-    expect(queue.takeDocumentRequests()).toEqual([{ kind: 'project', filePath: '/home/user/comic.sloom' }]);
+    const authorization = queue.authorizeRenderer('renderer-a');
+    expect(queue.offerNextDocumentIntent({ rendererId: 'renderer-a', epoch: authorization.epoch })).toMatchObject({
+      status: 'offered',
+      intent: { kind: 'project', filePath: '/home/user/comic.sloom' },
+    });
     expect(queue.takeWorkspaceRequests()).toEqual([{ kind: 'workspace', workspace: 'paper' }]);
     expect(queue.takeWorkspaceRequests()).toEqual([]);
   });

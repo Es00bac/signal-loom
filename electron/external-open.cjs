@@ -4,8 +4,8 @@
 // Linux/Windows, a `second-instance` relaunch, macOS `open-file`/`open-url` events — funnels
 // through this module: raw values are classified against a strict allowlist (local `.sloom`
 // projects, local `.slppr` Paper layouts, and the already-defined `signal-loom://workspace/<view>`
-// deep links), then held in a single exactly-once queue until a renderer drains them. The module
-// is pure (filesystem access is injected) so the whole contract is unit-testable outside Electron.
+// deep links), then held in a transactional queue until the designated renderer commits them.
+// The module is pure (filesystem/time access is injected) so the contract is testable outside Electron.
 'use strict';
 
 const { posix, win32 } = require('node:path');
@@ -21,6 +21,8 @@ const SECOND_INSTANCE_PAYLOAD_KIND = 'signal-loom-external-open';
 const MAX_EXTERNAL_OPEN_TARGET_LENGTH = 4096;
 const MAX_SECOND_INSTANCE_ARGV_ENTRIES = 64;
 const DEFAULT_MAX_PENDING_REQUESTS = 16;
+const DEFAULT_MAX_RECENT_COMMITS = 64;
+const DEFAULT_IDEMPOTENCY_WINDOW_MS = 1_500;
 
 function hasControlCharacters(value) {
   for (const character of value) {
@@ -182,10 +184,9 @@ function extractExternalOpenCandidatesFromArgv(argv, context = {}) {
 }
 
 /**
- * Build the JSON-serializable payload a losing instance hands the winner through
- * `app.requestSingleInstanceLock(additionalData)`. Electron mangles the relayed argv on some
- * platforms, so the loser ships its own untouched argv plus the working directory needed to
- * resolve relative paths.
+ * Build a validated legacy additionalData payload. Production uses Electron's bare-lock native
+ * argv/workingDirectory relay, which is covered by the real lifecycle probe; these helpers remain
+ * defensive compatibility parsers only.
  */
 function buildSecondInstanceOpenPayload(argv, workingDirectory) {
   const entries = (Array.isArray(argv) ? argv : [])
@@ -223,15 +224,19 @@ function parseSecondInstanceOpenPayload(value) {
 }
 
 /**
- * Exactly-once queue for validated external-open requests. Document targets must be existing
- * regular files at enqueue time (`isFile` is injected), duplicates collapse while pending, and
- * each `take*` call atomically removes what it returns so a request can never be delivered twice.
+ * Main-owned transactional queue for validated external-open intents. Documents remain owned by
+ * main until the designated renderer accepts and commits them. A rejection removes the intent
+ * without creating an idempotency receipt, while a commit creates a bounded, time-limited receipt
+ * that collapses duplicate OS delivery without blocking a genuinely later user open.
  */
 function createExternalOpenQueue(options) {
   const {
     isFile,
     workspaceViews = DEFAULT_EXTERNAL_OPEN_WORKSPACE_VIEWS,
     maxPending = DEFAULT_MAX_PENDING_REQUESTS,
+    maxRecentCommits = DEFAULT_MAX_RECENT_COMMITS,
+    idempotencyWindowMs = DEFAULT_IDEMPOTENCY_WINDOW_MS,
+    now = Date.now,
   } = options ?? {};
 
   if (typeof isFile !== 'function') {
@@ -239,9 +244,55 @@ function createExternalOpenQueue(options) {
   }
 
   const pending = [];
+  const recentCommits = [];
+  let nextIntentSequence = 1;
+  let nextEpochSequence = 1;
+  let authorization;
 
   function pendingKey(target) {
     return target.kind === 'workspace' ? `workspace\n${target.workspace}` : `${target.kind}\n${target.filePath}`;
+  }
+
+  function pruneRecentCommits() {
+    const cutoff = now() - idempotencyWindowMs;
+    while (recentCommits.length > 0 && recentCommits[0].committedAt <= cutoff) {
+      recentCommits.shift();
+    }
+  }
+
+  function rememberCommit(key) {
+    pruneRecentCommits();
+    recentCommits.push({ key, committedAt: now() });
+    while (recentCommits.length > maxRecentCommits) {
+      recentCommits.shift();
+    }
+  }
+
+  function publicIntent(entry) {
+    return entry.kind === 'workspace'
+      ? { id: entry.id, kind: 'workspace', workspace: entry.workspace }
+      : { id: entry.id, kind: entry.kind, filePath: entry.filePath };
+  }
+
+  function isAuthorized(request) {
+    return Boolean(
+      authorization
+      && request
+      && request.rendererId === authorization.rendererId
+      && request.epoch === authorization.epoch,
+    );
+  }
+
+  function requeueOwnedIntents(rendererId, epoch) {
+    const releasedIntentIds = [];
+    for (const entry of pending) {
+      if (entry.ownerRendererId !== rendererId || entry.ownerEpoch !== epoch) continue;
+      entry.state = 'pending';
+      delete entry.ownerRendererId;
+      delete entry.ownerEpoch;
+      releasedIntentIds.push(entry.id);
+    }
+    return releasedIntentIds;
   }
 
   function enqueueValue(rawValue, context = {}) {
@@ -260,14 +311,23 @@ function createExternalOpenQueue(options) {
     }
 
     const key = pendingKey(classified);
+    pruneRecentCommits();
     if (pending.some((entry) => entry.key === key)) {
+      return { status: 'duplicate', kind: classified.kind };
+    }
+    if (recentCommits.some((entry) => entry.key === key)) {
       return { status: 'duplicate', kind: classified.kind };
     }
     if (pending.length >= maxPending) {
       return { status: 'rejected', reason: 'queue-overflow', value: String(rawValue) };
     }
 
-    pending.push({ ...classified, key });
+    pending.push({
+      ...classified,
+      id: `external-open-${nextIntentSequence++}`,
+      key,
+      state: 'pending',
+    });
     return { status: 'enqueued', kind: classified.kind };
   }
 
@@ -290,14 +350,97 @@ function createExternalOpenQueue(options) {
     return { enqueued, rejected };
   }
 
-  function takeMatching(predicate) {
+  function takeWorkspaceRequests() {
     const taken = [];
     for (let index = pending.length - 1; index >= 0; index -= 1) {
-      if (predicate(pending[index])) {
-        taken.unshift(pending.splice(index, 1)[0]);
-      }
+      if (pending[index].kind !== 'workspace') continue;
+      const [entry] = pending.splice(index, 1);
+      rememberCommit(entry.key);
+      taken.unshift({ kind: 'workspace', workspace: entry.workspace });
     }
     return taken;
+  }
+
+  function authorizeRenderer(rendererId) {
+    if (typeof rendererId !== 'string' || !rendererId) {
+      return { authorized: false, reason: 'invalid-renderer' };
+    }
+    const releasedIntentIds = authorization
+      ? requeueOwnedIntents(authorization.rendererId, authorization.epoch)
+      : [];
+    authorization = {
+      rendererId,
+      epoch: `external-open-epoch-${nextEpochSequence++}`,
+    };
+    return { authorized: true, epoch: authorization.epoch, releasedIntentIds };
+  }
+
+  function revokeRenderer(request) {
+    if (!isAuthorized(request)) {
+      return { status: 'unauthorized', releasedIntentIds: [] };
+    }
+    const releasedIntentIds = requeueOwnedIntents(authorization.rendererId, authorization.epoch);
+    authorization = undefined;
+    return { status: 'revoked', releasedIntentIds };
+  }
+
+  function offerNextDocumentIntent(request) {
+    if (!isAuthorized(request)) return { status: 'unauthorized' };
+    const owned = pending.find((entry) =>
+      entry.kind !== 'workspace'
+      && entry.ownerRendererId === request.rendererId
+      && entry.ownerEpoch === request.epoch,
+    );
+    if (owned) return { status: 'offered', intent: publicIntent(owned), state: owned.state };
+
+    const entry = pending.find((candidate) => candidate.kind !== 'workspace' && candidate.state === 'pending');
+    if (!entry) return { status: 'empty' };
+    entry.state = 'offered';
+    entry.ownerRendererId = request.rendererId;
+    entry.ownerEpoch = request.epoch;
+    return { status: 'offered', intent: publicIntent(entry), state: entry.state };
+  }
+
+  function transitionOwnedIntent(request, expectedState, nextState, status) {
+    if (!isAuthorized(request)) return { status: 'unauthorized' };
+    const entry = pending.find((candidate) => candidate.id === request.intentId);
+    if (!entry || entry.ownerRendererId !== request.rendererId || entry.ownerEpoch !== request.epoch) {
+      return { status: 'not-found' };
+    }
+    if (entry.state !== expectedState) return { status: 'invalid-state', state: entry.state };
+    entry.state = nextState;
+    return { status };
+  }
+
+  function acceptDocumentIntent(request) {
+    return transitionOwnedIntent(request, 'offered', 'accepted', 'accepted');
+  }
+
+  function rejectDocumentIntent(request) {
+    if (!isAuthorized(request)) return { status: 'unauthorized' };
+    const index = pending.findIndex((entry) =>
+      entry.id === request.intentId
+      && entry.ownerRendererId === request.rendererId
+      && entry.ownerEpoch === request.epoch,
+    );
+    if (index === -1) return { status: 'not-found' };
+    pending.splice(index, 1);
+    return { status: 'rejected' };
+  }
+
+  function commitDocumentIntent(request) {
+    if (!isAuthorized(request)) return { status: 'unauthorized' };
+    const index = pending.findIndex((entry) =>
+      entry.id === request.intentId
+      && entry.ownerRendererId === request.rendererId
+      && entry.ownerEpoch === request.epoch,
+    );
+    if (index === -1) return { status: 'not-found' };
+    const entry = pending[index];
+    if (entry.state !== 'accepted') return { status: 'invalid-state', state: entry.state };
+    pending.splice(index, 1);
+    rememberCommit(entry.key);
+    return { status: 'committed' };
   }
 
   return {
@@ -305,12 +448,13 @@ function createExternalOpenQueue(options) {
     enqueueArgv,
     hasPending: (kind) => (kind ? pending.some((entry) => entry.kind === kind) : pending.length > 0),
     pendingCount: () => pending.length,
-    takeDocumentRequests: () =>
-      takeMatching((entry) => entry.kind === 'project' || entry.kind === 'paper')
-        .map((entry) => ({ kind: entry.kind, filePath: entry.filePath })),
-    takeWorkspaceRequests: () =>
-      takeMatching((entry) => entry.kind === 'workspace')
-        .map((entry) => ({ kind: 'workspace', workspace: entry.workspace })),
+    authorizeRenderer,
+    revokeRenderer,
+    offerNextDocumentIntent,
+    acceptDocumentIntent,
+    rejectDocumentIntent,
+    commitDocumentIntent,
+    takeWorkspaceRequests,
   };
 }
 

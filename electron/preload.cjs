@@ -67,10 +67,14 @@ contextBridge.exposeInMainWorld('signalLoomNative', {
   secretAvailable: () => ipcRenderer.invoke('signal-loom:secret-available'),
   secretEncrypt: (plaintext) => ipcRenderer.invoke('signal-loom:secret-encrypt', plaintext),
   secretDecrypt: (ciphertextBase64) => ipcRenderer.invoke('signal-loom:secret-decrypt', ciphertextBase64),
-  // External opens (double-clicked .sloom/.slppr files, signal-loom:// deep links): the
-  // renderer atomically drains validated requests from the main-process queue and is woken
-  // by the pending channel when new ones arrive while the app is already running.
-  takeExternalOpenRequests: () => ipcRenderer.invoke('signal-loom:external-open-take'),
+  // Transactional external-open protocol. Main designates one live Flow renderer and retains
+  // each intent until that renderer explicitly accepts/rejects and commits it.
+  authorizeExternalOpenRenderer: () => ipcRenderer.invoke('signal-loom:external-open-authorize'),
+  nextExternalOpenIntent: (epoch) => ipcRenderer.invoke('signal-loom:external-open-next', epoch),
+  acceptExternalOpenIntent: (request) => ipcRenderer.invoke('signal-loom:external-open-accept', request),
+  rejectExternalOpenIntent: (request) => ipcRenderer.invoke('signal-loom:external-open-reject', request),
+  commitExternalOpenIntent: (request) => ipcRenderer.invoke('signal-loom:external-open-commit', request),
+  releaseExternalOpenRenderer: (epoch) => ipcRenderer.invoke('signal-loom:external-open-release', epoch),
   onExternalOpenPending: (callback) => onChannel('signal-loom:external-open-pending', callback),
   onMenuCommand: (callback) => onChannel('signal-loom:menu-command', callback),
   onProjectPathChanged: (callback) => onChannel('signal-loom:project-path-changed', callback),

@@ -30,6 +30,7 @@
     "smoke:native:project": "node scripts/native-real-project-smoke.mjs",
     "smoke:native:project:soak": "node scripts/native-real-project-soak.mjs",
     "smoke:native:stress": "node scripts/native-smoke.mjs --stress",
+    "probe:electron-single-instance": "node scripts/electron-single-instance-probe.mjs",
     "gate:local": "node scripts/release-gate.mjs local",
     "gate:native": "node scripts/release-gate.mjs native",
     "gate:android-localdream": "node scripts/android-localdream-gate.mjs",

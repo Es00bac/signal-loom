@@ -174,11 +174,11 @@ if (isolatedUserDataDir) {
 // immediately after the userData override and before ANY shared side effect (the GPU
 // fallback sentinel, privileged protocol schemes, fixed-port services, windows). A losing
 // instance quits untouched; its file arguments reach the winner through the natively
-// relayed second-instance argv. The lock MUST be acquired with no additionalData payload:
-// Electron 41's POSIX process singleton cannot parse it ("additional_data_size exceeds
-// payload length"), the running app never acknowledges, and the connecting instance then
-// KILLS the running app and takes over — observed live on Linux. Everything below the
-// declarations runs only inside the winner branch at the bottom of this module.
+// relayed second-instance argv. The lock is deliberately bare: the native argv relay already
+// carries every supported target, and scripts/electron-single-instance-probe.mjs verifies that
+// contract deterministically with spaces and Unicode. No correctness claim depends on the
+// unconfirmed additionalData failure report. Everything below the declarations runs only inside
+// the winner branch at the bottom of this module.
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 function getRendererEntryUrl() {
@@ -542,8 +542,8 @@ function commitStartupProjectAuthority() {
 }
 
 // Every external open (initial argv, second-instance relaunch, macOS open-file/open-url)
-// funnels through this validated exactly-once queue; the renderer drains document targets
-// over IPC and routes them through its canonical open transactions.
+// funnels through this validated transactional queue. Main retains document intents until the
+// designated renderer epoch accepts/rejects and commits them.
 const externalOpenQueue = createExternalOpenQueue({
   isFile: (filePath) => {
     try {
@@ -554,6 +554,52 @@ const externalOpenQueue = createExternalOpenQueue({
   },
   workspaceViews: WORKSPACE_VIEWS,
 });
+const preparedExternalOpenIntents = new Map();
+const acceptedExternalProjectTransactions = new Map();
+let externalOpenRendererAuthorization = undefined;
+let externalOpenLifecycle = Promise.resolve();
+
+function serializeExternalOpenLifecycle(operation) {
+  const result = externalOpenLifecycle.then(operation, operation);
+  externalOpenLifecycle = result.catch(() => undefined);
+  return result;
+}
+
+function externalOpenRendererId(webContents) {
+  return String(webContents?.id ?? '');
+}
+
+function isDesignatedExternalOpenRenderer(webContents) {
+  return Boolean(
+    mainWindow
+    && !mainWindow.isDestroyed()
+    && mainWindow.webContents === webContents
+    && !webContents.isDestroyed(),
+  );
+}
+
+function isAuthorizedExternalOpenRequest(webContents, request) {
+  return Boolean(
+    isDesignatedExternalOpenRenderer(webContents)
+    && externalOpenRendererAuthorization
+    && externalOpenRendererAuthorization.rendererId === externalOpenRendererId(webContents)
+    && request?.epoch === externalOpenRendererAuthorization.epoch,
+  );
+}
+
+function revokeExternalOpenRenderer(webContents) {
+  const rendererId = externalOpenRendererId(webContents);
+  const authorization = externalOpenRendererAuthorization;
+  if (!authorization || authorization.rendererId !== rendererId) return;
+  void serializeExternalOpenLifecycle(async () => {
+    if (externalOpenRendererAuthorization?.epoch !== authorization.epoch) return;
+    const outcome = externalOpenQueue.revokeRenderer(authorization);
+    for (const intentId of outcome.releasedIntentIds ?? []) {
+      await rollbackAcceptedExternalProject(intentId);
+    }
+    externalOpenRendererAuthorization = undefined;
+  });
+}
 
 function enqueueExternalOpenArgv(argv, workingDirectory) {
   const outcome = externalOpenQueue.enqueueArgv(argv, {
@@ -605,7 +651,10 @@ function dispatchPendingExternalOpenRequests() {
   }
 
   if (externalOpenQueue.hasPending('project') || externalOpenQueue.hasPending('paper')) {
-    const target = focusExternalOpenTargetWindow();
+    const target = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWorkspaceWindow('flow');
+    if (target?.isMinimized()) target.restore();
+    target?.show();
+    target?.focus();
     target?.webContents.send('signal-loom:external-open-pending');
   }
 }
@@ -1015,11 +1064,11 @@ function setCurrentProjectAssetRoots(filePath, document, scratchDirectoryPath) {
   currentAssetCapabilityRootPaths = [...new Set(currentAssetCapabilityRootPaths)];
 }
 
-// skipRemembered: an external project open is queued for this launch, so the requested file —
-// not the remembered one — must own the startup restore. The remembered path itself is kept;
-// the external open re-remembers through the canonical open transaction once it succeeds.
-async function loadRememberedStartupProject({ skipRemembered = false } = {}) {
-  const filePath = skipRemembered ? undefined : await readRememberedProjectPath();
+async function loadRememberedStartupProject() {
+  // A queued external open is only an intent until the renderer's dirty guard accepts it. Restore
+  // the remembered project first so rejecting/canceling a startup intent leaves the old canonical
+  // project intact instead of silently replacing it with a blank baton.
+  const filePath = await readRememberedProjectPath();
   if (!filePath) {
     setCurrentProjectAssetRoots(undefined, undefined, undefined);
     startupProject = undefined;
@@ -1145,6 +1194,25 @@ function createWorkspaceWindow(workspace = 'flow') {
     if (choice === 0) event.preventDefault();
   });
 
+  if (workspace === 'flow') {
+    workspaceWindow.webContents.on('did-start-loading', () => {
+      revokeExternalOpenRenderer(workspaceWindow.webContents);
+    });
+    workspaceWindow.webContents.on('render-process-gone', (_event, details) => {
+      revokeExternalOpenRenderer(workspaceWindow.webContents);
+      if (!workspaceWindow.isDestroyed() && ['abnormal-exit', 'crashed', 'oom', 'launch-failed'].includes(details.reason)) {
+        // A fresh renderer will receive a new epoch; any uncommitted accepted intent is rolled
+        // back and re-offered after the normal startup restore.
+        setTimeout(() => {
+          if (!workspaceWindow.isDestroyed()) workspaceWindow.webContents.reload();
+        }, 0);
+      }
+    });
+    workspaceWindow.webContents.on('destroyed', () => {
+      revokeExternalOpenRenderer(workspaceWindow.webContents);
+    });
+  }
+
   workspaceWindow.setMenu(menuForWorkspace(workspace));
   workspaceWindow.setAutoHideMenuBar(false);
   workspaceWindow.setMenuBarVisibility(true);
@@ -1185,6 +1253,7 @@ function createWorkspaceWindow(workspace = 'flow') {
   workspaceWindow.on('closed', () => {
     workspaceWindows.delete(workspace);
     if (workspace === 'flow') {
+      revokeExternalOpenRenderer(workspaceWindow.webContents);
       mainWindow = null;
     }
   });
@@ -1646,6 +1715,57 @@ function restoreCommittedProjectSnapshot(snapshot) {
   // capability maps before rethrowing. Replaying the old document here would incorrectly
   // increment Source and republish an already-restored version.
   void snapshot;
+}
+
+async function stageAcceptedExternalProject(intentId, prepared, sender) {
+  const rendererEpoch = getRendererAuthorityEpoch(sender.id);
+  const isSenderLive = () => isLiveAuthoritySender(sender, rendererEpoch);
+  const outcome = await projectAuthority.prepareOpenProject({
+    senderId: sender.id,
+    rendererEpoch,
+    isSenderLive,
+    claim: projectAuthority.getCurrent(),
+    load: () => prepared.staged,
+  });
+  if (!outcome.transactionId) {
+    throw new Error(outcome.rejected?.message ?? 'The external project could not be prepared.');
+  }
+  acceptedExternalProjectTransactions.set(intentId, {
+    transactionId: outcome.transactionId,
+    senderId: sender.id,
+    rendererEpoch,
+    result: prepared.result,
+  });
+}
+
+async function rollbackAcceptedExternalProject(intentId) {
+  const transaction = acceptedExternalProjectTransactions.get(intentId);
+  if (!transaction) return;
+  acceptedExternalProjectTransactions.delete(intentId);
+  await projectAuthority.cancelPreparedProject({
+    transactionId: transaction.transactionId,
+    senderId: transaction.senderId,
+    rendererEpoch: transaction.rendererEpoch,
+  });
+}
+
+async function commitAcceptedExternalProject(intentId, authorization) {
+  const transaction = acceptedExternalProjectTransactions.get(intentId);
+  if (!transaction) return { status: 'invalid-state' };
+  const authorityOutcome = await projectAuthority.commitPreparedProject({
+    transactionId: transaction.transactionId,
+    senderId: transaction.senderId,
+    rendererEpoch: transaction.rendererEpoch,
+    publish: publishCommittedProjectSnapshot,
+    restorePublish: restoreCommittedProjectSnapshot,
+  });
+  if (!authorityOutcome.ok) {
+    acceptedExternalProjectTransactions.delete(intentId);
+    return { status: 'error', error: authorityOutcome.rejected?.message ?? 'The external project commit failed.' };
+  }
+  const outcome = externalOpenQueue.commitDocumentIntent({ ...authorization, intentId });
+  if (outcome.status === 'committed') acceptedExternalProjectTransactions.delete(intentId);
+  return outcome;
 }
 
 async function getNativeFilePathFromAssetUrl(assetUrl) {
@@ -2982,49 +3102,118 @@ function installIpcHandlers() {
     });
   });
 
-  // External-open fulfillment. The renderer drains the validated queue and routes each entry
-  // through its canonical open transaction; fulfillment happens here (not at enqueue) so
-  // projects go through the exact same main-process transaction as the Open dialog and the
-  // renderer can never hand arbitrary paths across this bridge — only queued, validated
-  // targets are ever read. Each take is atomic: a drained entry is delivered exactly once.
-  ipcMain.handle('signal-loom:external-open-take', async () => {
-    const requests = externalOpenQueue.takeDocumentRequests();
-    const entries = [];
+  // Main owns every document intent until a single designated Flow renderer completes the
+  // authorize → offer → accept/reject → commit protocol. Preparing an offer reads and validates
+  // bytes only. Canonical roots, source state, startup baton, remembered path, and broadcasts do
+  // not move until the renderer explicitly accepts after its dirty-document guard succeeds.
+  ipcMain.handle('signal-loom:external-open-authorize', (event) =>
+    serializeExternalOpenLifecycle(async () => {
+      if (!isDesignatedExternalOpenRenderer(event.sender)) {
+        return { authorized: false, reason: 'not-designated-renderer' };
+      }
+      const rendererId = externalOpenRendererId(event.sender);
+      const outcome = externalOpenQueue.authorizeRenderer(rendererId);
+      for (const intentId of outcome.releasedIntentIds ?? []) {
+        await rollbackAcceptedExternalProject(intentId);
+      }
+      externalOpenRendererAuthorization = { rendererId, epoch: outcome.epoch };
+      return { authorized: true, epoch: outcome.epoch };
+    }));
 
-    for (const request of requests) {
-      if (request.kind === 'project') {
+  ipcMain.handle('signal-loom:external-open-next', (event, epoch) =>
+    serializeExternalOpenLifecycle(async () => {
+      const authorization = { rendererId: externalOpenRendererId(event.sender), epoch };
+      if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) {
+        return { status: 'unauthorized' };
+      }
+      const outcome = externalOpenQueue.offerNextDocumentIntent(authorization);
+      if (outcome.status !== 'offered') return outcome;
+
+      let prepared = preparedExternalOpenIntents.get(outcome.intent.id);
+      if (!prepared) {
         try {
-          entries.push({
-            kind: 'project',
-            filePath: request.filePath,
-            result: await openProjectDocumentFromPath(request.filePath),
-          });
+          if (outcome.intent.kind === 'project') {
+            const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+            const staged = await openProjectDocumentFromPath(
+              outcome.intent.filePath,
+              () => isLiveAuthoritySender(event.sender, rendererEpoch),
+            );
+            const { preparedPublication: _preparedPublication, ...result } = staged.result;
+            prepared = { result, staged };
+          } else {
+            prepared = { bytes: await readFile(outcome.intent.filePath) };
+          }
         } catch (error) {
-          entries.push({
-            kind: 'project',
-            filePath: request.filePath,
-            error: error instanceof Error ? error.message : 'The project file could not be opened.',
-          });
+          prepared = {
+            error: error instanceof Error
+              ? error.message
+              : outcome.intent.kind === 'project'
+                ? 'The project file could not be opened.'
+                : 'The layout file could not be opened.',
+          };
         }
-      } else {
+        preparedExternalOpenIntents.set(outcome.intent.id, prepared);
+      }
+      const publicPrepared = prepared.error
+        ? { error: prepared.error }
+        : prepared.result
+          ? { result: prepared.result }
+          : { bytes: prepared.bytes };
+      return { status: 'offered', state: outcome.state, intent: { ...outcome.intent, ...publicPrepared } };
+    }));
+
+  ipcMain.handle('signal-loom:external-open-accept', (event, request) =>
+    serializeExternalOpenLifecycle(async () => {
+      const authorization = { rendererId: externalOpenRendererId(event.sender), epoch: request?.epoch };
+      if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
+      const prepared = preparedExternalOpenIntents.get(request?.intentId);
+      if (!prepared || prepared.error) return { status: 'invalid-state' };
+      const outcome = externalOpenQueue.acceptDocumentIntent({ ...authorization, intentId: request?.intentId });
+      if (outcome.status !== 'accepted') return outcome;
+      if (prepared.result) {
         try {
-          entries.push({
-            kind: 'paper',
-            filePath: request.filePath,
-            bytes: await readFile(request.filePath),
-          });
+          await stageAcceptedExternalProject(request.intentId, prepared, event.sender);
         } catch (error) {
-          entries.push({
-            kind: 'paper',
-            filePath: request.filePath,
-            error: error instanceof Error ? error.message : 'The layout file could not be opened.',
-          });
+          externalOpenQueue.rejectDocumentIntent({ ...authorization, intentId: request.intentId });
+          preparedExternalOpenIntents.delete(request.intentId);
+          return { status: 'error', error: error instanceof Error ? error.message : String(error) };
         }
       }
-    }
+      return outcome;
+    }));
 
-    return { entries };
-  });
+  ipcMain.handle('signal-loom:external-open-reject', (event, request) =>
+    serializeExternalOpenLifecycle(async () => {
+      const authorization = { rendererId: externalOpenRendererId(event.sender), epoch: request?.epoch };
+      if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
+      await rollbackAcceptedExternalProject(request?.intentId);
+      const outcome = externalOpenQueue.rejectDocumentIntent({ ...authorization, intentId: request?.intentId });
+      if (outcome.status === 'rejected') preparedExternalOpenIntents.delete(request.intentId);
+      return outcome;
+    }));
+
+  ipcMain.handle('signal-loom:external-open-commit', (event, request) =>
+    serializeExternalOpenLifecycle(async () => {
+      const authorization = { rendererId: externalOpenRendererId(event.sender), epoch: request?.epoch };
+      if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
+      const outcome = acceptedExternalProjectTransactions.has(request?.intentId)
+        ? await commitAcceptedExternalProject(request.intentId, authorization)
+        : externalOpenQueue.commitDocumentIntent({ ...authorization, intentId: request?.intentId });
+      if (outcome.status === 'committed') preparedExternalOpenIntents.delete(request.intentId);
+      return outcome;
+    }));
+
+  ipcMain.handle('signal-loom:external-open-release', (event, epoch) =>
+    serializeExternalOpenLifecycle(async () => {
+      const authorization = { rendererId: externalOpenRendererId(event.sender), epoch };
+      if (!isAuthorizedExternalOpenRequest(event.sender, authorization)) return { status: 'unauthorized' };
+      const outcome = externalOpenQueue.revokeRenderer(authorization);
+      for (const intentId of outcome.releasedIntentIds ?? []) {
+        await rollbackAcceptedExternalProject(intentId);
+      }
+      externalOpenRendererAuthorization = undefined;
+      return outcome;
+    }));
 
   ipcMain.handle('signal-loom:project-open', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
@@ -4208,7 +4397,7 @@ if (!hasSingleInstanceLock) {
         return;
       }
     }
-    await loadRememberedStartupProject({ skipRemembered: externalOpenQueue.hasPending('project') });
+    await loadRememberedStartupProject();
     commitStartupProjectAuthority();
     createWorkspaceWindow('flow');
     // Queued deep links open their workspace windows now; queued documents focus the main
