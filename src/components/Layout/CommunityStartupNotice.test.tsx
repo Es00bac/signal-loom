@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const VALID_KEY = 'SLOOM-valid-test-key';
 const SETTINGS_STORAGE_KEY = 'flow-settings-storage';
+const NOTICE_DAY_STORAGE_KEY = 'signal-loom-community-notice-day';
 
 vi.hoisted(() => {
   const entries = new Map<string, string>();
@@ -43,11 +44,23 @@ vi.mock('../../lib/secretCipher', () => ({
   isSecretEncryptionActive: () => true,
 }));
 
+const verifierControl = vi.hoisted(() => ({
+  mode: 'instant' as 'instant' | 'deferred',
+  pending: [] as Array<{ key: string; resolve: (verdict: unknown) => void }>,
+}));
+
 vi.mock('../../lib/licenseKey', () => ({
-  verifyLicenseKey: async (key: string) =>
-    key === VALID_KEY
+  verifyLicenseKey: (key: string) => {
+    const verdict = key === VALID_KEY
       ? { licensed: true, email: 'buyer@example.com', edition: 'commercial' }
-      : { licensed: false, reason: 'Key not valid for this build.' },
+      : { licensed: false, reason: 'Key not valid for this build.' };
+    if (verifierControl.mode === 'instant') {
+      return Promise.resolve(verdict);
+    }
+    return new Promise((resolve) => {
+      verifierControl.pending.push({ key, resolve });
+    });
+  },
   describeLicenseEdition: () => 'Community edition',
 }));
 
@@ -94,6 +107,8 @@ beforeEach(() => {
   vi.resetModules();
   window.localStorage.clear();
   cipherControl.pending.length = 0;
+  verifierControl.mode = 'instant';
+  verifierControl.pending.length = 0;
 });
 
 afterEach(async () => {
@@ -147,5 +162,85 @@ describe('CommunityStartupNotice hydration race (AUD-015)', () => {
     await vi.waitFor(() => {
       expect(noticeElement()).not.toBeNull();
     });
+  });
+
+  it('an unmount during the startup decision never claims the day', async () => {
+    // A community profile with a stale (unverifiable) key keeps the decision inside license
+    // verification long enough for the window to go away underneath it.
+    seedPersistedSettings({ licenseKey: 'SLOOM-stale-unverifiable-key' });
+    verifierControl.mode = 'deferred';
+    await renderNotice();
+    await settle();
+
+    await act(async () => {
+      await flushPendingDecrypts();
+    });
+    await settle();
+
+    await vi.waitFor(() => {
+      expect(verifierControl.pending.length).toBeGreaterThan(0);
+    });
+
+    // The window closes (reload / workspace teardown) before the decision lands.
+    const mounted = root;
+    if (!mounted) {
+      throw new Error('notice root was not mounted');
+    }
+    await act(async () => {
+      mounted.unmount();
+    });
+    root = null;
+
+    for (const entry of verifierControl.pending.splice(0)) {
+      entry.resolve({ licensed: false, reason: 'Key not valid for this build.' });
+    }
+    await settle();
+
+    // The cancelled decision displayed nothing, so it must not claim the day — a claim here
+    // would suppress a notice that was never displayed.
+    expect(noticeElement()).toBeNull();
+    expect(window.localStorage.getItem(NOTICE_DAY_STORAGE_KEY)).toBeNull();
+  });
+
+  it('exactly one notice shows when two windows decide together', async () => {
+    seedPersistedSettings({ locale: 'en' });
+    const { CommunityStartupNotice } = await import('./CommunityStartupNotice');
+    const containers = [document.createElement('div'), document.createElement('div')];
+    const roots: Root[] = [];
+    for (const element of containers) {
+      document.body.appendChild(element);
+    }
+    try {
+      await act(async () => {
+        for (const element of containers) {
+          const mounted = createRoot(element);
+          roots.push(mounted);
+          mounted.render(<CommunityStartupNotice />);
+        }
+      });
+      await settle();
+      await act(async () => {
+        await flushPendingDecrypts();
+      });
+      await settle();
+
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('[data-community-notice]').length).toBe(1);
+      });
+      // Hold long enough for a second (incorrect) decision to have landed, then re-check.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+      expect(document.querySelectorAll('[data-community-notice]').length).toBe(1);
+    } finally {
+      await act(async () => {
+        for (const mounted of roots) {
+          mounted.unmount();
+        }
+      });
+      for (const element of containers) {
+        element.remove();
+      }
+    }
   });
 });

@@ -1,29 +1,12 @@
 import React from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
+import {
+  claimCommunityNoticeDay,
+  releaseCommunityNoticeDayClaim,
+} from './communityNoticeDayClaim';
 
-const NOTICE_DAY_STORAGE_KEY = 'signal-loom-community-notice-day';
 const DISMISS_ENABLE_DELAY_SECONDS = 4;
 const BUY_LICENSE_URL = 'https://sloom.studio/#license';
-
-function todayStamp(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function readLastShownDay(): string | null {
-  try {
-    return window.localStorage.getItem(NOTICE_DAY_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeLastShownDay(): void {
-  try {
-    window.localStorage.setItem(NOTICE_DAY_STORAGE_KEY, todayStamp());
-  } catch {
-    // Storage unavailable: the notice simply may show again next launch.
-  }
-}
 
 /**
  * Community-edition startup notice (hermes strategy-and-licensing-spec Part 2 §4):
@@ -49,20 +32,39 @@ export const CommunityStartupNotice: React.FC = () => {
     }
     decidedRef.current = true;
 
+    let cancelled = false;
     void (async () => {
       // Fail-closed rehydration leaves license unverified — check the stored key first so a
       // licensed user never sees a Community flash.
       await revalidateLicense();
+      if (cancelled) {
+        // Unmounted mid-decision: nothing was displayed, so nothing may be claimed.
+        return;
+      }
       const { license: current } = useSettingsStore.getState();
       if (current.licensed) {
         return;
       }
-      if (readLastShownDay() === todayStamp()) {
+      // The once-per-day slot is shared by every window; exactly one renderer claims and shows.
+      const claimed = await claimCommunityNoticeDay();
+      if (!claimed) {
         return;
       }
-      writeLastShownDay();
+      if (cancelled) {
+        // Claimed, but this window went away before displaying — give the claim back rather
+        // than suppressing a notice nobody ever saw.
+        releaseCommunityNoticeDayClaim();
+        return;
+      }
       setVisible(true);
     })();
+
+    return () => {
+      cancelled = true;
+      // Let a StrictMode remount (same instance, refs persist) decide again; the cancelled
+      // closure above can no longer claim or display anything.
+      decidedRef.current = false;
+    };
   }, [settingsHydrated, revalidateLicense]);
 
   React.useEffect(() => {

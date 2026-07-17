@@ -10,7 +10,7 @@ import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent } from '
 import '@xyflow/react/dist/style.css';
 
 import { useCatalogStore } from './store/catalogStore';
-import { useSettingsStore } from './store/settingsStore';
+import { installLicenseCrossWindowSync, useSettingsStore } from './store/settingsStore';
 import { describeLicenseEdition } from './lib/licenseKey';
 import { useConfirmationStore } from './store/confirmationStore';
 import { showAlertDialog } from './store/alertDialogStore';
@@ -366,6 +366,9 @@ function FlowApp() {
   useEffect(() => {
     document.title = licenseIsCommercial ? 'Sloom Studio' : 'Sloom Studio — Community';
   }, [licenseIsCommercial]);
+  // AUD-015: a license removal/activation/import in another window rehydrates and re-verifies
+  // this renderer too, so every window fail-closes — or unlocks — together.
+  useEffect(() => installLicenseCrossWindowSync(), []);
   const defaultModels = useSettingsStore((state) => state.defaultModels);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);

@@ -292,10 +292,17 @@ interface SettingsState {
   /** Re-verify the persisted key (app boot; license is fail-closed after rehydration). */
   revalidateLicense: () => Promise<void>;
   /**
-   * True once the persisted encrypted settings snapshot has finished hydrating — or definitively
-   * failed to (missing storage, undecryptable foreign-profile envelope) — so in-memory state is
-   * authoritative. Startup decisions that read persisted identity (the commercial license above
-   * all) must wait for this instead of judging the pre-hydration defaults.
+   * True once the persisted encrypted settings snapshot has finished its initial hydration — or
+   * definitively failed to (missing storage, undecryptable foreign-profile envelope) — so
+   * in-memory state is authoritative. Startup decisions that read persisted identity (the
+   * commercial license above all) must wait for this instead of judging the pre-hydration
+   * defaults.
+   *
+   * This is a one-shot initial latch by design: it stays true across later rehydrates (manual
+   * persist.rehydrate(), cross-window license sync) and deliberately does not model
+   * "rehydration in progress" — no caller needs that today. License consistency across later
+   * rehydrates is owned by the generation-guarded canonical verification (revalidateLicense),
+   * not by this flag; add separate state if a future caller needs in-progress visibility.
    */
   settingsHydrated: boolean;
 }
@@ -343,15 +350,31 @@ function createEncryptedSettingsStorage(): StateStorage {
       });
       return raw;
     },
-    setItem: async (name, value) => {
-      const store = backing();
-      if (!store) return;
-      const envelope = await encryptSecret(value);
-      try {
-        store.setItem(name, envelope);
-      } catch {
-        /* quota / availability */
+    setItem: (name, value) => {
+      // Serialize writes: parallel encryptions could otherwise land out of order and leave a
+      // stale blob on disk, and the license-identity broadcast below must never fire before the
+      // write that actually carries the new identity. The armed flag is captured at enqueue
+      // time, so only the write enqueued by the mutating set() triggers the broadcast.
+      const broadcastAfterWrite = licenseSyncBroadcastArmed;
+      if (broadcastAfterWrite) {
+        licenseSyncBroadcastArmed = false;
       }
+      const write = pendingSettingsWrite.then(async () => {
+        const store = backing();
+        if (store) {
+          try {
+            const envelope = await encryptSecret(value);
+            store.setItem(name, envelope);
+          } catch {
+            /* encryption / quota / availability */
+          }
+        }
+        if (broadcastAfterWrite) {
+          postLicenseSyncBroadcast();
+        }
+      });
+      pendingSettingsWrite = write;
+      return write;
     },
     removeItem: (name) => {
       try {
@@ -387,6 +410,87 @@ function markSettingsHydrated(): void {
   settingsHydrationSettled = true;
   useSettingsStore.setState({ settingsHydrated: true });
   resolveSettingsHydration();
+}
+
+/** Serializes encrypted settings writes so the persisted blob always converges on the latest state. */
+let pendingSettingsWrite: Promise<void> = Promise.resolve();
+
+/**
+ * License-identity generation (AUD-015): verification is asynchronous, so every mutation of the
+ * persisted license identity — key removal, activation, backup import, any applied rehydrate —
+ * bumps this counter to invalidate whatever verification is still in flight. A verification may
+ * only apply its verdict while both the generation and the key it captured are still current;
+ * anything resolving later is discarded, so a stale positive can never fail open.
+ */
+let licenseVerificationGeneration = 0;
+
+/** The one in-flight canonical verification; concurrent triggers coalesce onto it instead of duplicating. */
+let pendingLicenseVerification: { generation: number; key: string; promise: Promise<void> } | null = null;
+
+function invalidatePendingLicenseVerification(): void {
+  licenseVerificationGeneration += 1;
+}
+
+/**
+ * Cross-window license-identity sync (AUD-015): every renderer window runs its own store over the
+ * shared encrypted settings blob, so a key removal/activation/import in one window must reach the
+ * others. The mutating window arms a broadcast that the storage layer above posts only after the
+ * persist write carrying the new identity has landed; receiving windows rehydrate, which
+ * fail-closes `license` in merge and re-verifies through the canonical path. This is deliberately
+ * scoped to license identity/rehydration — no other store state is synchronized here.
+ */
+const LICENSE_SYNC_CHANNEL_NAME = 'flow-license-identity-sync';
+const LICENSE_SYNC_MESSAGE = 'license-identity-changed';
+let licenseSyncBroadcastArmed = false;
+let licenseSyncChannel: BroadcastChannel | null = null;
+
+function getLicenseSyncChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') {
+    return null;
+  }
+  if (!licenseSyncChannel) {
+    try {
+      licenseSyncChannel = new BroadcastChannel(LICENSE_SYNC_CHANNEL_NAME);
+    } catch {
+      // Opaque-origin or shutting-down contexts can refuse the channel; degrade to no sync.
+      return null;
+    }
+    // Node exposes unref (test runs); browsers have no such member.
+    (licenseSyncChannel as unknown as { unref?: () => void }).unref?.();
+  }
+  return licenseSyncChannel;
+}
+
+function armLicenseSyncBroadcast(): void {
+  licenseSyncBroadcastArmed = true;
+}
+
+function postLicenseSyncBroadcast(): void {
+  try {
+    getLicenseSyncChannel()?.postMessage(LICENSE_SYNC_MESSAGE);
+  } catch {
+    /* channel closed / unavailable */
+  }
+}
+
+/**
+ * Subscribe this window to license-identity changes made by other windows (install once per
+ * renderer, e.g. from the App shell). Returns the cleanup that detaches the listener.
+ */
+export function installLicenseCrossWindowSync(): () => void {
+  const channel = getLicenseSyncChannel();
+  if (!channel) {
+    return () => {};
+  }
+  const handleMessage = (event: MessageEvent) => {
+    if (event.data !== LICENSE_SYNC_MESSAGE) {
+      return;
+    }
+    // Re-read the shared blob: merge fail-closes `license`, the post-rehydrate hook re-verifies.
+    void useSettingsStore.persist.rehydrate();
+  };
+  channel.addEventListener('message', handleMessage);
+  return () => channel.removeEventListener('message', handleMessage);
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -565,9 +669,14 @@ export const useSettingsStore = create<SettingsState>()(
         // The sanitizers below defend every field, so the structural cast is safe even on a
         // hand-edited or corrupt payload (same trust model as the persist `merge` above).
         const data = (isRecord(parsed) ? parsed : {}) as Partial<SettingsBackupData>;
+        // The imported payload owns the license identity now: invalidate in-flight verification,
+        // apply fail-closed, then settle entitlement through the one canonical verification.
+        // Callers get a deterministic postcondition — when this resolves, `license` reflects the
+        // verifier's verdict on the imported key. Other windows learn through the broadcast.
+        invalidatePendingLicenseVerification();
+        armLicenseSyncBroadcast();
         set((current) => mergeSettingsBackupData(current, data));
-        // A restored license key re-verifies immediately (merge leaves it fail-closed).
-        void get().revalidateLicense();
+        await get().revalidateLicense();
       },
       settingsBackupSupported: isSettingsBackupSupported(),
       isSettingsOpen: false,
@@ -581,32 +690,85 @@ export const useSettingsStore = create<SettingsState>()(
       setLicenseKey: async (key) => {
         const verification = await verifyLicenseKey(key);
         if (verification.licensed) {
+          // Activation is a new identity event: invalidate any verification still in flight so
+          // it cannot clobber this fresh, verifier-backed grant, and tell the other windows.
+          invalidatePendingLicenseVerification();
+          armLicenseSyncBroadcast();
           set({ licenseKey: key.trim(), license: verification });
         }
         return verification;
       },
-      removeLicenseKey: () => set({ licenseKey: '', license: { licensed: false } }),
+      removeLicenseKey: () => {
+        // Removal fail-closes immediately and invalidates whatever verification is still in
+        // flight — a stale positive verdict for the removed key must never resurrect the grant.
+        invalidatePendingLicenseVerification();
+        armLicenseSyncBroadcast();
+        set({ licenseKey: '', license: { licensed: false } });
+      },
       revalidateLicense: async () => {
         // AUD-015: encrypted hydration is asynchronous, so a boot-time call can observe the
         // default empty key. Judge the license only against the hydrated snapshot.
         await waitForSettingsHydration();
+        const generation = licenseVerificationGeneration;
         const storedKey = get().licenseKey;
-        if (!storedKey) {
-          return;
+        if (
+          pendingLicenseVerification
+          && pendingLicenseVerification.generation === generation
+          && pendingLicenseVerification.key === storedKey
+        ) {
+          // The identical verification is already in flight — join it instead of duplicating it.
+          return pendingLicenseVerification.promise;
         }
-        const verification = await verifyLicenseKey(storedKey);
-        set({ license: verification });
+        const verification = (async () => {
+          // Fail closed for the whole verification window: the commercial gates read this
+          // boolean directly and must never trust a verdict that predates the current key.
+          if (get().license.licensed) {
+            set({ license: { licensed: false } });
+          }
+          if (!storedKey) {
+            return;
+          }
+          let verdict: LicenseVerification;
+          try {
+            verdict = await verifyLicenseKey(storedKey);
+          } catch {
+            // verifyLicenseKey is itself fail-closed, but the store must not depend on that
+            // contract: a rejection still resolves this promise, still fail-closed.
+            verdict = { licensed: false, reason: 'License verification failed.' };
+          }
+          if (generation !== licenseVerificationGeneration || get().licenseKey !== storedKey) {
+            // A newer identity event (removal, activation, import, rehydrate) owns the state
+            // now; applying this verdict would attach it to a key it never verified.
+            return;
+          }
+          set({ license: verdict });
+        })();
+        pendingLicenseVerification = { generation, key: storedKey, promise: verification };
+        try {
+          await verification;
+        } finally {
+          if (pendingLicenseVerification?.promise === verification) {
+            pendingLicenseVerification = null;
+          }
+        }
       },
     }),
     {
       name: SETTINGS_STORAGE_KEY,
       storage: createJSONStorage(() => createEncryptedSettingsStorage()),
       // Fires after every hydration attempt — restored, empty, or errored — including manual
-      // rehydrate() calls; the latch itself only settles once.
+      // rehydrate() calls; the latch itself only settles once. Every completed rehydrate then
+      // re-verifies the (fail-closed) license exactly once through the canonical path: a
+      // key-change subscription cannot do this job, because a same-key rehydrate also resets
+      // `license` without ever changing the key string.
       onRehydrateStorage: () => () => {
         markSettingsHydrated();
+        void useSettingsStore.getState().revalidateLicense();
       },
       merge: (persistedState, currentState) => {
+        // Every applied rehydrate replaces the license identity and fail-closes `license` below,
+        // so whatever verification was in flight before it is stale by definition.
+        invalidatePendingLicenseVerification();
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
 
@@ -710,16 +872,6 @@ export const useSettingsStore = create<SettingsState>()(
     },
   ),
 );
-
-// AUD-015: when the persisted license identity changes underneath the session — the initial
-// encrypted hydration landing after boot validation, a later rehydrate from another writer, an
-// imported settings backup — re-verify it. merge() and import always fail-close `license`, so
-// this can only upgrade the state through the offline verifier, never around it.
-useSettingsStore.subscribe((state, previousState) => {
-  if (state.licenseKey !== previousState.licenseKey) {
-    void state.revalidateLicense();
-  }
-});
 
 /**
  * Sanitize + merge a decrypted settings-backup payload onto the current state. Mirrors the persist
