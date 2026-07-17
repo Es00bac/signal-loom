@@ -2,6 +2,7 @@ import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type {
   EditorSourceKind,
   EnvelopeItem,
+  FlowNodeType,
   NodeData,
   NodeResultAttempt,
   ResultType,
@@ -10,6 +11,14 @@ import type {
 export type RestorableSourceBinItem = SourceBinLibraryItem & { assetUrl?: string };
 
 const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
+const GENERATED_RESULT_TYPES_BY_NODE: Partial<Record<FlowNodeType, readonly ResultType[]>> = {
+  imageGen: ['image'],
+  cropImageNode: ['image'],
+  videoGen: ['video'],
+  audioGen: ['audio'],
+  composition: ['video'],
+  packageNode: ['package'],
+};
 
 export function resultTypeForSourceKind(kind: EditorSourceKind): ResultType | undefined {
   switch (kind) {
@@ -88,9 +97,11 @@ function isNodeResultAttempt(value: unknown): value is NodeResultAttempt {
   const attempt = value as Partial<NodeResultAttempt>;
   return (
     typeof attempt.id === 'string' &&
-    typeof attempt.result === 'string' &&
     typeof attempt.resultType === 'string' &&
     VALID_RESULT_TYPES.has(attempt.resultType as ResultType) &&
+    (attempt.resultType === 'boolean'
+      ? typeof attempt.result === 'boolean'
+      : typeof attempt.result === 'string' && attempt.result.length > 0) &&
     typeof attempt.statusMessage === 'string' &&
     typeof attempt.createdAt === 'string'
   );
@@ -114,6 +125,7 @@ export function collectSourceBinItemsForFlowNode(
 
 export function buildFlowNodeGeneratedResultPatch(
   nodeId: string,
+  nodeType: FlowNodeType,
   data: NodeData,
   sourceBinItems: RestorableSourceBinItem[],
   options: { replaceExistingHistory?: boolean } = {},
@@ -121,7 +133,14 @@ export function buildFlowNodeGeneratedResultPatch(
   const sourceItems = collectSourceBinItemsForFlowNode(nodeId, sourceBinItems);
   if (sourceItems.length === 0) return undefined;
 
-  const sourceHistory = sourceItems
+  const compatibleResultTypes = GENERATED_RESULT_TYPES_BY_NODE[nodeType];
+  if (!compatibleResultTypes) return undefined;
+
+  const compatibleSourceItems = sourceItems.filter((item) => {
+    const resultType = resultTypeForSourceKind(item.kind);
+    return resultType !== undefined && compatibleResultTypes.includes(resultType);
+  });
+  const sourceHistory = compatibleSourceItems
     .map((item, index) => sourceBinItemToResultAttempt(item, index))
     .filter((attempt): attempt is NodeResultAttempt => Boolean(attempt));
   const existingHistory = Array.isArray(data.resultHistory)
@@ -146,7 +165,7 @@ export function buildFlowNodeGeneratedResultPatch(
     }
   }
 
-  const sourceEnvelopeItems = sourceItems.filter((item) => item.envelopeId || item.envelopeIndex !== undefined);
+  const sourceEnvelopeItems = compatibleSourceItems.filter((item) => item.envelopeId || item.envelopeIndex !== undefined);
   const existingEnvelopeItems = Array.isArray(data.envelopeItems) ? data.envelopeItems : [];
   if ((options.replaceExistingHistory || existingEnvelopeItems.length === 0) && sourceEnvelopeItems.length > 0) {
     const envelopeItems = sourceEnvelopeItems

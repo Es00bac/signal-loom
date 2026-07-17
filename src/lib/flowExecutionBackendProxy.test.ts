@@ -119,6 +119,7 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
       result: decision,
       resultType: 'boolean',
+      outputMetadata: { decision, resultType: 'boolean' },
       statusMessage: `Verified: ${decision ? 'TRUE' : 'FALSE'}`,
     })));
 
@@ -128,35 +129,29 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
       proxySettings(),
     );
 
-    expect(result).toMatchObject({ result: decision, resultType: 'boolean' });
+    expect(result).toMatchObject({ result: decision, resultType: 'boolean', outputMetadata: { decision, resultType: 'boolean' } });
     expect(typeof result.result).toBe('boolean');
   });
 
   it.each([
-    ['true\nIt matches.', true],
-    [' FaLsE \nIt does not match.', false],
-  ])('accepts a strict string decision through the proxy: %s', async (decision, expected) => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ result: decision, resultType: 'boolean' })));
-
-    await expect(executeNodeRequest(
-      proxiedVisionVerifyNode(),
-      { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG },
-      proxySettings(),
-    )).resolves.toMatchObject({ result: expected, resultType: 'boolean' });
-  });
-
-  it.each([
-    ['', 'empty'],
-    ['maybe', 'unknown token'],
-    ['untrue', 'embedded token'],
-    ['true false', 'contradictory true-first line'],
-    ['false true', 'contradictory false-first line'],
-    [undefined, 'missing result'],
-    [null, 'null result'],
-    [42, 'numeric result'],
-    [{ decision: true }, 'object result'],
-  ])('rejects malformed proxied Vision Verify responses without resubmitting: %s', async (result) => {
-    const fetchMock = vi.fn(async () => jsonResponse({ result, resultType: 'boolean' }));
+    [{ result: 'true', resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' } }, 'string result'],
+    [{ result: 'false', resultType: 'boolean', outputMetadata: { decision: false, resultType: 'boolean' } }, 'false string result'],
+    [{ result: 1, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' } }, 'numeric result'],
+    [{ result: null, resultType: 'boolean', outputMetadata: { decision: false, resultType: 'boolean' } }, 'null result'],
+    [{ result: { decision: true }, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' } }, 'object result'],
+    [{ result: true, resultType: 'text', outputMetadata: { decision: true, resultType: 'boolean' } }, 'primary type mismatch'],
+    [{ result: true }, 'missing primary type'],
+    [{ result: true, resultType: 'boolean' }, 'missing metadata'],
+    [{ result: true, resultType: 'boolean', outputMetadata: [] }, 'array metadata'],
+    [{ result: true, resultType: 'boolean', outputMetadata: { resultType: 'boolean' } }, 'missing metadata decision'],
+    [{ result: false, resultType: 'boolean', outputMetadata: { decision: false } }, 'missing metadata type'],
+    [{ result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'text' } }, 'metadata type mismatch'],
+    [{ result: true, resultType: 'boolean', outputMetadata: { decision: false, resultType: 'boolean' } }, 'true decision disagreement'],
+    [{ result: false, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' } }, 'false decision disagreement'],
+    [{ result: true, resultType: 'boolean', outputMetadata: { decision: 'true', resultType: 'boolean' } }, 'string metadata decision'],
+    [{ result: true, resultType: 'boolean', outputMetadata: { decision: true, resultType: 'boolean' }, error: 'provider rejected the request' }, 'tempting result in error payload'],
+  ])('rejects malformed proxied Vision Verify responses without resubmitting: %s', async (payload, _description) => {
+    const fetchMock = vi.fn(async () => jsonResponse(payload));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(executeNodeRequest(
@@ -168,17 +163,22 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects proxied Vision Verify result/type mismatches and explicit provider rejections', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ result: true, resultType: 'text' }))
-      .mockResolvedValueOnce(jsonResponse({ result: true, resultType: 'boolean', error: 'provider rejected the request' }));
+  it.each([
+    ['malformed JSON', new Response('{"result":true', { status: 200, headers: { 'content-type': 'application/json' } })],
+    ['truncated JSON', new Response('{', { status: 200, headers: { 'content-type': 'application/json' } })],
+    ['wrong top-level schema', jsonResponse([])],
+    ['semantically invalid Vision payload', jsonResponse({ result: true, resultType: 'boolean', outputMetadata: { decision: true } })],
+  ])('does not resubmit a processed proxy response with %s', async (_description, response) => {
+    const fetchMock = vi.fn(async () => response);
     vi.stubGlobal('fetch', fetchMock);
-    const context = { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG };
-    const retryingSettings = proxySettings({ batchMaxRetries: 2 });
 
-    await expect(executeNodeRequest(proxiedVisionVerifyNode(), context, retryingSettings)).rejects.toBeInstanceOf(NonRetryableError);
-    await expect(executeNodeRequest(proxiedVisionVerifyNode(), context, retryingSettings)).rejects.toBeInstanceOf(NonRetryableError);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(executeNodeRequest(
+      proxiedVisionVerifyNode(),
+      { prompt: 'check', editImageInput: 'data:image/png;base64,AA==', config: DEFAULT_EXECUTION_CONFIG },
+      proxySettings({ batchMaxRetries: 2 }),
+    )).rejects.toBeInstanceOf(NonRetryableError);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('applies the Android accelerator upscale on the client after the proxy returns, without forwarding the token', async () => {

@@ -120,21 +120,81 @@ function sanitizeUsage(value: unknown): UsageTelemetry | undefined {
 
 type SafeMetadataValue = string | number | boolean | null | SafeMetadataValue[] | { [key: string]: SafeMetadataValue };
 
-function sanitizeMetadataValue(value: unknown, depth = 0): SafeMetadataValue | undefined {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (depth >= 12) return undefined;
-  if (Array.isArray(value)) {
-    const items = value.map((item) => sanitizeMetadataValue(item, depth + 1));
-    return items.every((item) => item !== undefined) ? items as SafeMetadataValue[] : undefined;
-  }
-  if (!isRecord(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
+const SAFE_OUTPUT_METADATA_MAX_DEPTH = 12;
+const SAFE_OUTPUT_METADATA_MAX_KEYS_PER_OBJECT = 64;
+const SAFE_OUTPUT_METADATA_MAX_KEYS = 256;
+const SAFE_OUTPUT_METADATA_MAX_ARRAY_LENGTH = 256;
+const SAFE_OUTPUT_METADATA_MAX_STRING_BYTES = 16 * 1024;
+const SAFE_OUTPUT_METADATA_MAX_KEY_BYTES = 512;
+const SAFE_OUTPUT_METADATA_MAX_NODES = 1024;
+const SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES = 1024 * 1024;
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+/**
+ * Output metadata is untrusted persisted data. Bound it in one linear walk so
+ * a malformed attempt loses only metadata, never its otherwise valid result.
+ */
+function sanitizeMetadataValue(value: unknown): SafeMetadataValue | undefined {
+  const seen = new WeakSet<object>();
+  let nodeCount = 0;
+  let keyCount = 0;
+  let estimatedUtf8Bytes = 0;
+
+  const visit = (candidate: unknown, depth: number): SafeMetadataValue | undefined => {
+    nodeCount += 1;
+    if (nodeCount > SAFE_OUTPUT_METADATA_MAX_NODES || depth > SAFE_OUTPUT_METADATA_MAX_DEPTH) return undefined;
+
+    if (candidate === null || typeof candidate === 'boolean') return candidate;
+    if (typeof candidate === 'number') return Number.isFinite(candidate) ? candidate : undefined;
+    if (typeof candidate === 'string') {
+      const bytes = utf8ByteLength(candidate);
+      estimatedUtf8Bytes += bytes;
+      return bytes <= SAFE_OUTPUT_METADATA_MAX_STRING_BYTES && estimatedUtf8Bytes <= SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES
+        ? candidate
+        : undefined;
+    }
+    if (typeof candidate !== 'object' || candidate === null || seen.has(candidate)) return undefined;
+    seen.add(candidate);
+
+    if (Array.isArray(candidate)) {
+      if (candidate.length > SAFE_OUTPUT_METADATA_MAX_ARRAY_LENGTH) return undefined;
+      const items: SafeMetadataValue[] = [];
+      for (const item of candidate) {
+        const sanitized = visit(item, depth + 1);
+        if (sanitized === undefined) return undefined;
+        items.push(sanitized);
+      }
+      return items;
+    }
+
+    if (Object.getPrototypeOf(candidate) !== Object.prototype && Object.getPrototypeOf(candidate) !== null) return undefined;
+    const entries = Object.entries(candidate);
+    if (entries.length > SAFE_OUTPUT_METADATA_MAX_KEYS_PER_OBJECT) return undefined;
+    keyCount += entries.length;
+    if (keyCount > SAFE_OUTPUT_METADATA_MAX_KEYS) return undefined;
+
+    const result: { [key: string]: SafeMetadataValue } = {};
+    for (const [key, item] of entries) {
+      const keyBytes = utf8ByteLength(key);
+      estimatedUtf8Bytes += keyBytes;
+      if (keyBytes > SAFE_OUTPUT_METADATA_MAX_KEY_BYTES || estimatedUtf8Bytes > SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES) return undefined;
+      const sanitized = visit(item, depth + 1);
+      if (sanitized === undefined) return undefined;
+      result[key] = sanitized;
+    }
+    return result;
+  };
+
+  const sanitized = visit(value, 0);
+  if (sanitized === undefined) return undefined;
+  try {
+    return utf8ByteLength(JSON.stringify(sanitized)) <= SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES ? sanitized : undefined;
+  } catch {
     return undefined;
   }
-  const entries = Object.entries(value).map(([key, item]) => [key, sanitizeMetadataValue(item, depth + 1)] as const);
-  return entries.every(([, item]) => item !== undefined)
-    ? Object.fromEntries(entries) as { [key: string]: SafeMetadataValue }
-    : undefined;
 }
 
 function sanitizeOutputMetadata(value: unknown): Record<string, unknown> | undefined {
@@ -1207,7 +1267,7 @@ function hydrateFlowSnapshotFromSourceBin(
       const data: NodeData = { ...node.data };
 
       if (sourceItems.length > 0) {
-        Object.assign(data, buildFlowNodeGeneratedResultPatch(node.id, data, sourceItems));
+        Object.assign(data, buildFlowNodeGeneratedResultPatch(node.id, node.type, data, sourceItems));
       }
 
       return {

@@ -863,6 +863,81 @@ describe('Electron project file helpers', () => {
     expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
   });
 
+  it('keeps Electron and browser Source Library hydration aligned without retyping Vision decisions', async () => {
+    const { parseProjectDocumentJson } = await loadProjectFilesModule();
+    const raw = {
+      id: 'source-hydration', name: 'Source hydration', savedAt: 1,
+      flow: {
+        version: 3,
+        nodes: [
+          {
+            id: 'verify-false', type: 'visionVerifyNode', position: { x: 0, y: 0 }, data: {
+              selectedResultId: 'false', resultHistory: [
+                { id: 'true', result: true, resultType: 'boolean', statusMessage: 'TRUE', createdAt: '2026-07-16T00:00:00.000Z' },
+                { id: 'false', result: false, resultType: 'boolean', statusMessage: 'FALSE', createdAt: '2026-07-16T00:01:00.000Z', sourceBinItemId: 'stale-link' },
+              ],
+            },
+          },
+          {
+            id: 'verify-true', type: 'visionVerifyNode', position: { x: 1, y: 0 }, data: {
+              selectedResultId: 'true', resultHistory: [
+                { id: 'false', result: false, resultType: 'boolean', statusMessage: 'FALSE', createdAt: '2026-07-16T00:00:00.000Z' },
+                { id: 'true', result: true, resultType: 'boolean', statusMessage: 'TRUE', createdAt: '2026-07-16T00:01:00.000Z' },
+              ],
+            },
+          },
+          { id: 'image', type: 'imageGen', position: { x: 2, y: 0 }, data: {} },
+          { id: 'text', type: 'textNode', position: { x: 3, y: 0 }, data: {} },
+        ],
+        edges: [],
+      },
+      sourceBin: {
+        items: [
+          { id: 'collision-false', kind: 'text', label: 'false', text: 'false', originNodeId: 'verify-false', createdAt: 1 },
+          { id: 'collision-true', kind: 'text', label: 'true', text: 'true', originNodeId: 'verify-true', createdAt: 2 },
+          { id: 'image-result', kind: 'image', label: 'Image', assetUrl: 'data:image/png;base64,IMAGE', originNodeId: 'image', createdAt: 3 },
+          { id: 'text-result', kind: 'text', label: 'Text', text: 'do not hydrate', originNodeId: 'text', createdAt: 4 },
+        ],
+      },
+    };
+    const renderer = sanitizeProjectDocument(raw);
+    const electron = parseProjectDocumentJson(JSON.stringify(raw)) as typeof renderer;
+
+    expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
+    const byId = new Map(electron.flow.nodes.map((node) => [node.id, node.data]));
+    expect(byId.get('verify-false')).toMatchObject({ selectedResultId: 'false', result: false, resultType: 'boolean' });
+    expect(byId.get('verify-true')).toMatchObject({ selectedResultId: 'true', result: true, resultType: 'boolean' });
+    expect(byId.get('image')).toMatchObject({ result: 'data:image/png;base64,IMAGE', resultType: 'image' });
+    expect(byId.get('text')?.resultHistory).toBeUndefined();
+  });
+
+  it('matches Electron metadata bounds after JSON serialization', async () => {
+    const { parseProjectDocumentJson } = await loadProjectFilesModule();
+    const raw = {
+      id: 'metadata-parity', name: 'Metadata parity', savedAt: 1,
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'image', type: 'imageGen', position: { x: 0, y: 0 }, data: {
+            resultHistory: [
+              { id: 'safe', result: 'data:image/png;base64,SAFE', resultType: 'image', statusMessage: 'safe', createdAt: '2026-07-16T00:00:00.000Z', outputMetadata: { note: 'x'.repeat(16 * 1024) } },
+              { id: 'large', result: 'data:image/png;base64,LARGE', resultType: 'image', statusMessage: 'large', createdAt: '2026-07-16T00:01:00.000Z', outputMetadata: { note: 'x'.repeat(2 * 1024 * 1024) } },
+              { id: 'wide', result: 'data:image/png;base64,WIDE', resultType: 'image', statusMessage: 'wide', createdAt: '2026-07-16T00:02:00.000Z', outputMetadata: Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`key-${index}`, index])) },
+            ],
+          },
+        }],
+        edges: [],
+      },
+    };
+    const renderer = sanitizeProjectDocument(raw);
+    const electron = parseProjectDocumentJson(JSON.stringify(raw)) as typeof renderer;
+
+    expect(electron.flow.nodes).toEqual(renderer.flow.nodes);
+    expect(electron.flow.nodes[0].data.resultHistory?.map((attempt) => attempt.outputMetadata)).toEqual([
+      { note: 'x'.repeat(16 * 1024) }, undefined, undefined,
+    ]);
+  });
+
   it('round-trips selected Boolean and media attempts with validated metadata, variables, and Source Bin linkage', async () => {
     const { parseProjectDocumentJson } = await loadProjectFilesModule();
     const raw = {

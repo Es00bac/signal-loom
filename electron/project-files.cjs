@@ -706,19 +706,78 @@ function sanitizeUsage(value) {
   };
 }
 
-function sanitizeMetadataValue(value, depth = 0) {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (depth >= 12) return undefined;
-  if (Array.isArray(value)) {
-    const items = value.map((item) => sanitizeMetadataValue(item, depth + 1));
-    return items.every((item) => item !== undefined) ? items : undefined;
+const SAFE_OUTPUT_METADATA_MAX_DEPTH = 12;
+const SAFE_OUTPUT_METADATA_MAX_KEYS_PER_OBJECT = 64;
+const SAFE_OUTPUT_METADATA_MAX_KEYS = 256;
+const SAFE_OUTPUT_METADATA_MAX_ARRAY_LENGTH = 256;
+const SAFE_OUTPUT_METADATA_MAX_STRING_BYTES = 16 * 1024;
+const SAFE_OUTPUT_METADATA_MAX_KEY_BYTES = 512;
+const SAFE_OUTPUT_METADATA_MAX_NODES = 1024;
+const SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES = 1024 * 1024;
+
+function utf8ByteLength(value) {
+  return Buffer.byteLength(value, 'utf8');
+}
+
+function sanitizeMetadataValue(value) {
+  const seen = new WeakSet();
+  let nodeCount = 0;
+  let keyCount = 0;
+  let estimatedUtf8Bytes = 0;
+
+  const visit = (candidate, depth) => {
+    nodeCount += 1;
+    if (nodeCount > SAFE_OUTPUT_METADATA_MAX_NODES || depth > SAFE_OUTPUT_METADATA_MAX_DEPTH) return undefined;
+
+    if (candidate === null || typeof candidate === 'boolean') return candidate;
+    if (typeof candidate === 'number') return Number.isFinite(candidate) ? candidate : undefined;
+    if (typeof candidate === 'string') {
+      const bytes = utf8ByteLength(candidate);
+      estimatedUtf8Bytes += bytes;
+      return bytes <= SAFE_OUTPUT_METADATA_MAX_STRING_BYTES && estimatedUtf8Bytes <= SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES
+        ? candidate
+        : undefined;
+    }
+    if (typeof candidate !== 'object' || candidate === null || seen.has(candidate)) return undefined;
+    seen.add(candidate);
+
+    if (Array.isArray(candidate)) {
+      if (candidate.length > SAFE_OUTPUT_METADATA_MAX_ARRAY_LENGTH) return undefined;
+      const items = [];
+      for (const item of candidate) {
+        const sanitized = visit(item, depth + 1);
+        if (sanitized === undefined) return undefined;
+        items.push(sanitized);
+      }
+      return items;
+    }
+
+    const prototype = Object.getPrototypeOf(candidate);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+    const entries = Object.entries(candidate);
+    if (entries.length > SAFE_OUTPUT_METADATA_MAX_KEYS_PER_OBJECT) return undefined;
+    keyCount += entries.length;
+    if (keyCount > SAFE_OUTPUT_METADATA_MAX_KEYS) return undefined;
+
+    const result = {};
+    for (const [key, item] of entries) {
+      const keyBytes = utf8ByteLength(key);
+      estimatedUtf8Bytes += keyBytes;
+      if (keyBytes > SAFE_OUTPUT_METADATA_MAX_KEY_BYTES || estimatedUtf8Bytes > SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES) return undefined;
+      const sanitized = visit(item, depth + 1);
+      if (sanitized === undefined) return undefined;
+      result[key] = sanitized;
+    }
+    return result;
+  };
+
+  const sanitized = visit(value, 0);
+  if (sanitized === undefined) return undefined;
+  try {
+    return utf8ByteLength(JSON.stringify(sanitized)) <= SAFE_OUTPUT_METADATA_MAX_UTF8_BYTES ? sanitized : undefined;
+  } catch {
+    return undefined;
   }
-  if (!isObject(value)) return undefined;
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return undefined;
-  const entries = Object.entries(value).map(([key, item]) => [key, sanitizeMetadataValue(item, depth + 1)]);
-  return entries.every(([, item]) => item !== undefined) ? Object.fromEntries(entries) : undefined;
 }
 
 function sanitizeOutputMetadata(value) {
@@ -772,6 +831,7 @@ function restoreSelectedResultFromHistory(data, history) {
   data.result = active.result;
   data.resultType = active.resultType;
   data.usage = active.usage;
+  data.error = undefined;
   data.resultMimeType = active.mimeType;
   data.resultExtension = active.extension;
   data.resultFileName = active.fileName;
@@ -900,6 +960,94 @@ function sanitizeSourceBinSnapshot(sourceBin) {
   };
 }
 
+const GENERATED_RESULT_TYPES_BY_NODE = {
+  imageGen: ['image'],
+  cropImageNode: ['image'],
+  videoGen: ['video'],
+  audioGen: ['audio'],
+  composition: ['video'],
+  packageNode: ['package'],
+};
+
+function resultTypeForSourceKind(kind) {
+  switch (kind) {
+    case 'image': return 'image';
+    case 'video':
+    case 'composition': return 'video';
+    case 'audio': return 'audio';
+    case 'package': return 'package';
+    default: return undefined;
+  }
+}
+
+function sourceBinItemBelongsToFlowNode(item, nodeId) {
+  return item.originNodeId === nodeId
+    || item.envelopeId === nodeId
+    || (typeof item.originNodeId === 'string' && item.originNodeId.startsWith(`${nodeId}:`));
+}
+
+function sourceBinItemToResultAttempt(item, index) {
+  const resultType = resultTypeForSourceKind(item.kind);
+  const result = item.assetUrl;
+  if (typeof result !== 'string' || !result || !resultType) return undefined;
+  return {
+    id: `source-${item.id || index}`,
+    result,
+    resultType,
+    statusMessage: `Restored ${item.label || resultType} from project source bin`,
+    createdAt: new Date(item.createdAt || 0).toISOString(),
+    sourceBinItemId: item.id || undefined,
+  };
+}
+
+function isNodeResultAttempt(value) {
+  if (!isObject(value) || !VALID_RESULT_TYPES.has(value.resultType)) return false;
+  return (value.resultType === 'boolean'
+    ? typeof value.result === 'boolean'
+    : typeof value.result === 'string' && value.result.length > 0)
+    && typeof value.id === 'string'
+    && typeof value.statusMessage === 'string'
+    && typeof value.createdAt === 'string';
+}
+
+function restoreGeneratedResultFromSourceBin(node, sourceBin) {
+  const compatibleResultTypes = GENERATED_RESULT_TYPES_BY_NODE[node.type];
+  if (!compatibleResultTypes) return { ...node, data: { ...node.data } };
+  const sourceItems = collectSourceBinItems(sourceBin)
+    .filter((item) => sourceBinItemBelongsToFlowNode(item, node.id))
+    .sort((a, b) => (a.envelopeIndex ?? a.createdAt ?? 0) - (b.envelopeIndex ?? b.createdAt ?? 0));
+  const sourceHistory = sourceItems
+    .map((item, index) => sourceBinItemToResultAttempt(item, index))
+    .filter((attempt) => attempt && compatibleResultTypes.includes(attempt.resultType));
+  const data = { ...node.data };
+  const existingHistory = Array.isArray(data.resultHistory) ? data.resultHistory.filter(isNodeResultAttempt) : [];
+  const history = existingHistory.length > 0 ? existingHistory : sourceHistory;
+  if (history.length === 0) return { ...node, data };
+
+  const selected = typeof data.selectedResultId === 'string'
+    ? history.find((attempt) => attempt.id === data.selectedResultId)
+    : undefined;
+  const active = selected ?? history[history.length - 1];
+  data.resultHistory = history;
+  data.selectedResultId = active.id;
+  data.result = active.result;
+  data.resultType = active.resultType;
+  data.usage = active.usage;
+  if (existingHistory.length === 0) data.statusMessage = active.statusMessage;
+  data.resultMimeType = active.mimeType;
+  data.resultExtension = active.extension;
+  data.resultFileName = active.fileName;
+  data.resultOutputMetadata = active.outputMetadata;
+  return { ...node, data };
+}
+
+function hydrateFlowSnapshotFromSourceBin(flow, sourceBin) {
+  return {
+    ...flow,
+    nodes: flow.nodes.map((node) => restoreGeneratedResultFromSourceBin(node, sourceBin)),
+  };
+}
+
 function sanitizeProjectUsageLedgerEntry(entry, index) {
   if (!isObject(entry)) return undefined;
   if (!VALID_USAGE_SOURCES.has(entry.source) || !VALID_USAGE_CONFIDENCE.has(entry.confidence)) return undefined;
@@ -957,7 +1105,7 @@ function findActiveFlowWorkspace(flowWorkspaces, activeFlowWorkspaceId) {
   return flowWorkspaces.find((workspace) => workspace?.id === activeFlowWorkspaceId) ?? flowWorkspaces[0];
 }
 
-function sanitizeFlowWorkspaceSnapshot(snapshot, index) {
+function sanitizeFlowWorkspaceSnapshot(snapshot, index, sourceBin) {
   if (!isObject(snapshot) || !snapshot.flow) {
     return undefined;
   }
@@ -969,14 +1117,14 @@ function sanitizeFlowWorkspaceSnapshot(snapshot, index) {
     name: stringOr(snapshot.name, index === 0 ? DEFAULT_FLOW_WORKSPACE_NAME : `Flow Workspace ${index + 1}`),
     createdAt,
     updatedAt: finiteOr(snapshot.updatedAt, createdAt),
-    flow: sanitizeFlowSnapshot(snapshot.flow),
+    flow: hydrateFlowSnapshotFromSourceBin(sanitizeFlowSnapshot(snapshot.flow), sourceBin),
   };
 }
 
-function sanitizeFlowWorkspaceState(document) {
-  const legacyFlow = document.flow ? sanitizeFlowSnapshot(document.flow) : undefined;
+function sanitizeFlowWorkspaceState(document, sourceBin) {
+  const legacyFlow = document.flow ? hydrateFlowSnapshotFromSourceBin(sanitizeFlowSnapshot(document.flow), sourceBin) : undefined;
   const sanitizedWorkspaces = Array.isArray(document.flowWorkspaces)
-    ? document.flowWorkspaces.flatMap((workspace, index) => sanitizeFlowWorkspaceSnapshot(workspace, index) ?? [])
+    ? document.flowWorkspaces.flatMap((workspace, index) => sanitizeFlowWorkspaceSnapshot(workspace, index, sourceBin) ?? [])
     : [];
   const flowWorkspaces = sanitizedWorkspaces.length > 0
     ? sanitizedWorkspaces
@@ -998,7 +1146,8 @@ function sanitizeFlowWorkspaceState(document) {
 }
 
 function sanitizeProjectDocument(document) {
-  const flowWorkspaceState = sanitizeFlowWorkspaceState(document);
+  const sourceBin = sanitizeSourceBinSnapshot(document.sourceBin);
+  const flowWorkspaceState = sanitizeFlowWorkspaceState(document, sourceBin);
 
   return {
     ...document,
@@ -1009,7 +1158,7 @@ function sanitizeProjectDocument(document) {
     flow: flowWorkspaceState.flow,
     flowWorkspaces: flowWorkspaceState.flowWorkspaces,
     activeFlowWorkspaceId: flowWorkspaceState.activeFlowWorkspaceId,
-    sourceBin: sanitizeSourceBinSnapshot(document.sourceBin),
+    sourceBin,
     usageLedger: sanitizeProjectUsageLedgerSnapshot(document.usageLedger),
     fileSystem: isObject(document.fileSystem) ? {
       projectDirectoryName: optionalString(document.fileSystem.projectDirectoryName),

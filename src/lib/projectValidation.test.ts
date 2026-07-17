@@ -152,6 +152,81 @@ describe('sanitizeProjectDocument', () => {
     ]));
   });
 
+  it.each([
+    ['near-limit string', { note: 'x'.repeat(16 * 1024) }, true],
+    ['over-limit string', { note: 'x'.repeat(16 * 1024 + 1) }, false],
+    ['wide object', { ...Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`key-${index}`, index])) }, false],
+    ['near-limit array', { values: Array.from({ length: 256 }, (_, index) => index) }, true],
+    ['over-limit array', { values: Array.from({ length: 257 }, (_, index) => index) }, false],
+    ['oversized key', { ['k'.repeat(513)]: true }, false],
+    ['aggregate UTF-8 overflow', Object.fromEntries(Array.from({ length: 64 }, (_, index) => [`entry-${index}`, 'x'.repeat(16 * 1024)])), false],
+    ['node-count overflow', { values: Array.from({ length: 256 }, () => [0, 0, 0, 0]) }, false],
+  ])('keeps attempts but drops unsafe output metadata: %s', (_description, outputMetadata, preserved) => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'image-1', type: 'imageGen', position: { x: 1, y: 2 }, data: {
+            selectedResultId: 'safe-result',
+            resultHistory: [{
+              id: 'safe-result', result: 'data:image/png;base64,SAFE', resultType: 'image', statusMessage: 'Generated',
+              createdAt: '2026-07-16T00:00:00.000Z', outputMetadata,
+            }],
+          },
+        }],
+        edges: [],
+      },
+    });
+
+    const attempt = project.flow.nodes[0].data.resultHistory?.[0];
+    expect(attempt).toMatchObject({ id: 'safe-result', result: 'data:image/png;base64,SAFE', resultType: 'image' });
+    expect(attempt?.outputMetadata === undefined).toBe(!preserved);
+    expect(project.flow.nodes[0].data).toMatchObject({
+      selectedResultId: 'safe-result', result: 'data:image/png;base64,SAFE', resultType: 'image',
+    });
+  });
+
+  it('drops cyclic and custom-prototype metadata without dropping the renderer attempt', () => {
+    const cyclic: Record<string, unknown> = { note: 'cycle' };
+    cyclic.self = cyclic;
+    class UntrustedMetadata { note = 'custom prototype'; }
+
+    for (const outputMetadata of [cyclic, new UntrustedMetadata()]) {
+      const project = projectWith({
+        flow: {
+          version: 3,
+          nodes: [{
+            id: 'image-1', type: 'imageGen', position: { x: 1, y: 2 }, data: {
+              resultHistory: [{
+                id: 'result', result: 'data:image/png;base64,SAFE', resultType: 'image', statusMessage: 'Generated',
+                createdAt: '2026-07-16T00:00:00.000Z', outputMetadata,
+              }],
+            },
+          }],
+          edges: [],
+        },
+      });
+      expect(project.flow.nodes[0].data.resultHistory?.[0]).toMatchObject({ id: 'result', outputMetadata: undefined });
+    }
+  });
+
+  it('drops over-depth nested metadata deterministically', () => {
+    let outputMetadata: unknown = 'leaf';
+    for (let index = 0; index < 14; index += 1) outputMetadata = { nested: outputMetadata };
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [{
+          id: 'image-1', type: 'imageGen', position: { x: 1, y: 2 }, data: {
+            resultHistory: [{ id: 'result', result: 'data:image/png;base64,SAFE', resultType: 'image', statusMessage: 'Generated', createdAt: '2026-07-16T00:00:00.000Z', outputMetadata }],
+          },
+        }],
+        edges: [],
+      },
+    });
+    expect(project.flow.nodes[0].data.resultHistory?.[0]?.outputMetadata).toBeUndefined();
+  });
+
   it('migrates legacy Vision Verify current and text-tagged history values, including a selected false attempt', () => {
     const project = projectWith({
       flow: {
@@ -822,6 +897,41 @@ describe('sanitizeProjectDocument', () => {
       result: 'data:image/png;base64,TWO',
       resultType: 'image',
     });
+  });
+
+  it('hydrates only compatible media results and preserves selected Vision false through colliding Source items', () => {
+    const project = projectWith({
+      flow: {
+        version: 3,
+        nodes: [
+          {
+            id: 'verify', type: 'visionVerifyNode', position: { x: 0, y: 0 }, data: {
+              selectedResultId: 'false-result',
+              resultHistory: [{ id: 'false-result', result: false, resultType: 'boolean', statusMessage: 'Verified: FALSE', createdAt: '2026-07-16T00:00:00.000Z', sourceBinItemId: 'stale-link' }],
+            },
+          },
+          { id: 'image', type: 'imageGen', position: { x: 1, y: 0 }, data: {} },
+          { id: 'video', type: 'videoGen', position: { x: 2, y: 0 }, data: {} },
+          { id: 'text', type: 'textNode', position: { x: 3, y: 0 }, data: {} },
+        ],
+        edges: [],
+      },
+      sourceBin: {
+        items: [
+          { id: 'verify-text', kind: 'text', label: 'False as text', text: 'false', originNodeId: 'verify', createdAt: 1 },
+          { id: 'image-result', kind: 'image', label: 'Image', assetUrl: 'data:image/png;base64,IMAGE', originNodeId: 'image', createdAt: 2 },
+          { id: 'video-result', kind: 'composition', label: 'Video', assetUrl: 'data:video/mp4;base64,VIDEO', originNodeId: 'video', createdAt: 3 },
+          { id: 'text-result', kind: 'text', label: 'Text', text: 'must not hydrate', originNodeId: 'text', createdAt: 4 },
+        ],
+      },
+    });
+
+    const byId = new Map(project.flow.nodes.map((node) => [node.id, node.data]));
+    expect(byId.get('verify')).toMatchObject({ selectedResultId: 'false-result', result: false, resultType: 'boolean' });
+    expect(byId.get('verify')?.resultHistory).toEqual([expect.objectContaining({ id: 'false-result', result: false, sourceBinItemId: 'stale-link' })]);
+    expect(byId.get('image')).toMatchObject({ result: 'data:image/png;base64,IMAGE', resultType: 'image' });
+    expect(byId.get('video')).toMatchObject({ result: 'data:video/mp4;base64,VIDEO', resultType: 'video' });
+    expect(byId.get('text')?.resultHistory).toBeUndefined();
   });
 
   it('reconstructs envelope items from source-bin batch entries on .sloom open', () => {

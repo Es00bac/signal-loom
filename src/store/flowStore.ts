@@ -2687,7 +2687,7 @@ export const useFlowStore = create<FlowState>()(
         const updates = await Promise.all(
           nodesWithAssets.map(async (node) => {
             const sourceBinPatch = buildFlowNodePatchForRestoredSourceBinItem(node.data, sourceBinItems);
-            const generatedResultPatch = buildFlowNodeGeneratedResultPatch(node.id, node.data, sourceBinItems, {
+            const generatedResultPatch = buildFlowNodeGeneratedResultPatch(node.id, node.type, node.data, sourceBinItems, {
               replaceExistingHistory: true,
             });
             const sourceBinAssetUrl =

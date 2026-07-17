@@ -77,7 +77,7 @@ describe('Vision Verify execution contract', () => {
     [null, 'null result'],
     [42, 'numeric result'],
     [{ decision: true }, 'object result'],
-  ])('rejects malformed API-key responses without retrying a paid submission: %s', async (value) => {
+  ])('rejects malformed API-key responses without retrying a paid submission: %s', async (value, _description) => {
     response.text = value;
     const retryingSettings = {
       ...settings,

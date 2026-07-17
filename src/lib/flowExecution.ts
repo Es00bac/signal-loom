@@ -242,6 +242,7 @@ import { HttpStatusError, NonRetryableError, withExponentialBackoff } from './ex
 import { getProviderLimiter } from './providerRateLimiter';
 
 const FLOW_PROVIDER_RETRY_BUDGET_MS = 5 * 60_000;
+const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 
 export async function executeNodeRequest(
   node: AppNode,
@@ -578,17 +579,11 @@ async function executeNodeViaBackendProxy(
     throw new HttpStatusError(response.status, 'Backend proxy request failed');
   }
 
-  const payload = await response.json() as Partial<ExecutionResult> & { error?: string };
+  const payload = await decodeBackendProxyExecutionPayload(response);
   const payloadResult = payload.result;
 
   if (node.type === 'visionVerifyNode') {
-    if (payload.error) {
-      throw new NonRetryableError(`Vision Verify provider rejected the request: ${payload.error}`);
-    }
-    if (payload.resultType !== 'boolean') {
-      throw new NonRetryableError('Backend proxy returned a Vision Verify result with a non-Boolean result type.');
-    }
-    const verification = parseVisionVerificationResponse(payloadResult);
+    const verification = validateBackendProxyVisionVerificationResult(payload);
     const existingNotes = payload.usage?.notes ?? [];
     return {
       result: verification.value,
@@ -602,15 +597,16 @@ async function executeNodeViaBackendProxy(
           ? [verification.explanation, ...existingNotes]
           : existingNotes,
       },
+      outputMetadata: verification.outputMetadata,
     };
   }
 
   if (payload.error) {
-    throw new Error(payload.error);
+    throw new Error(String(payload.error));
   }
 
-  if (typeof payloadResult !== 'string' || typeof payload.resultType !== 'string') {
-    throw new Error('Backend proxy returned an invalid execution payload.');
+  if (typeof payloadResult !== 'string' || typeof payload.resultType !== 'string' || !VALID_RESULT_TYPES.has(payload.resultType)) {
+    throw new NonRetryableError('Backend proxy returned an invalid execution payload.');
   }
 
   return {
@@ -619,6 +615,62 @@ async function executeNodeViaBackendProxy(
     statusMessage: payload.statusMessage ?? 'Generated through backend proxy',
     usage: payload.usage,
   };
+}
+
+type BackendProxyExecutionPayload = Record<string, unknown> & Partial<ExecutionResult>;
+
+/**
+ * Once a proxy has replied 200, the provider run has been processed and must
+ * never be re-submitted merely because its response cannot be decoded. Keep
+ * transport/network failures outside this boundary so their existing retry
+ * policy remains unchanged.
+ */
+async function decodeBackendProxyExecutionPayload(response: Response): Promise<BackendProxyExecutionPayload> {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (cause) {
+    throw new NonRetryableError('Backend proxy completed the request but returned malformed JSON.', { cause });
+  }
+
+  if (!isRecord(payload) || Array.isArray(payload)) {
+    throw new NonRetryableError('Backend proxy completed the request but returned an invalid execution payload.');
+  }
+
+  return payload as BackendProxyExecutionPayload;
+}
+
+/**
+ * Vision Verify is deliberately stricter than direct/Vertex text parsing:
+ * the proxy protocol transports a typed decision, so its result must already
+ * be a literal Boolean. Metadata repeats the typed decision for downstream
+ * auditability and is required to agree exactly with the primary fields.
+ */
+function validateBackendProxyVisionVerificationResult(
+  payload: BackendProxyExecutionPayload,
+): { value: boolean; explanation: string; outputMetadata: Record<string, unknown> } {
+  if (Object.prototype.hasOwnProperty.call(payload, 'error')) {
+    throw new NonRetryableError('Vision Verify provider rejected the request through the backend proxy.');
+  }
+  if (typeof payload.result !== 'boolean') {
+    throw new NonRetryableError('Backend proxy returned a Vision Verify result that is not a literal Boolean.');
+  }
+  if (payload.resultType !== 'boolean') {
+    throw new NonRetryableError('Backend proxy returned a Vision Verify result with a non-Boolean result type.');
+  }
+  if (!isRecord(payload.outputMetadata) || Array.isArray(payload.outputMetadata)) {
+    throw new NonRetryableError('Backend proxy returned Vision Verify without required Boolean decision metadata.');
+  }
+
+  const metadata = payload.outputMetadata;
+  if (typeof metadata.decision !== 'boolean' || metadata.resultType !== 'boolean') {
+    throw new NonRetryableError('Backend proxy returned incomplete Vision Verify Boolean decision metadata.');
+  }
+  if (metadata.decision !== payload.result) {
+    throw new NonRetryableError('Backend proxy returned contradictory Vision Verify Boolean decisions.');
+  }
+
+  return { value: payload.result, explanation: '', outputMetadata: metadata };
 }
 
 function throwIfAborted(signal: AbortSignal | undefined) {
