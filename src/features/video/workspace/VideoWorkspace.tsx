@@ -201,9 +201,13 @@ import {
 } from '../../../lib/editorAssets';
 import {
   buildPaperStoryboardPageDescriptors,
-  buildPaperStoryboardPageSourcePayload,
   getPaperStoryboardExistingItemIds,
+  publishPaperStoryboardPageSourcePayloads,
 } from '../../../lib/paperVideoAssets';
+import {
+  buildPaperDocumentExactManagedFontOutput,
+  materializePaperDocumentAssetUrls,
+} from '../../paper/assets/PaperAssetRuntime';
 import type { NativeMenuCommand } from '../../../lib/nativeApp';
 import { useNativeMenuCommand } from '../../../shared/native/useNativeMenuCommand';
 import { fillTimelineGap, findTimelineGaps } from '../../../lib/editorTimelineGaps';
@@ -3055,13 +3059,12 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     setPaperStoryboardImportStatus(`Preparing ${paperDocument.pages.length} Paper page${paperDocument.pages.length === 1 ? '' : 's'}...`);
 
     try {
-      const importedItemIds: string[] = [];
-
-      for (const page of paperDocument.pages) {
-        const payload = await buildPaperStoryboardPageSourcePayload(paperDocument, page.id);
-        const libraryItem = await addAssetItem(payload);
-        importedItemIds.push(libraryItem.id);
-      }
+      const materializedDocument = await materializePaperDocumentAssetUrls(paperDocument, libraryItems);
+      const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
+      const importedItems = await publishPaperStoryboardPageSourcePayloads(exact.document, {
+        fontFaceCss: exact.fontFaceCss,
+      }, addAssetItem);
+      const importedItemIds = importedItems.map((item) => item.id);
 
       setSourceBinSearchQuery('');
       setSourceBinKindFilter('image');

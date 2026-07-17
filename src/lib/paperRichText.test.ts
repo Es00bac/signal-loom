@@ -29,8 +29,19 @@ describe('paperRichText helpers', () => {
   });
 
   it('drops invalid style fields but keeps text', () => {
-    const normalized = normalizePaperRichText([{ runs: [{ text: 'x', fontStyle: 'oblique', vertAlign: 'baseline', color: '   ' }] }]);
+    const normalized = normalizePaperRichText([{ runs: [{ text: 'x', fontStyle: 'slanted', vertAlign: 'baseline', color: '   ' }] }]);
     expect(normalized![0].runs[0]).toEqual({ text: 'x' });
+  });
+
+  it('retains exact oblique, stretch, and finite variable coordinates', () => {
+    const normalized = normalizePaperRichText([{ runs: [{
+      text: 'variable', fontStyle: 'oblique 12deg', fontStretch: '75%',
+      fontVariationSettings: { wdth: 75, wght: 640, bad: 12, opsz: Number.NaN },
+    }] }]);
+    expect(normalized?.[0].runs[0]).toMatchObject({
+      text: 'variable', fontStyle: 'oblique 12deg', fontStretch: '75%',
+      fontVariationSettings: { wdth: 75, wght: 640 },
+    });
   });
 
   it('paperRunsShareStyle compares style, not text', () => {

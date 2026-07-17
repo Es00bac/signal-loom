@@ -11,7 +11,14 @@ import type { PaperImportedFont } from '../../../types/paper';
 import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
-import { paperFontStyleDescriptor, paperManagedFontCssSource, paperManagedFontFamilyAlias } from '../../../lib/paperExactManagedFonts';
+import {
+  assertBrowserPaintablePaperManagedFace,
+  PaperExactManagedFontError,
+  paperFontStyleDescriptor,
+  paperManagedFontCssSource,
+  paperManagedFontFamilyAlias,
+  verifyExactPaperManagedFaceRegistration,
+} from '../../../lib/paperExactManagedFonts';
 
 function genFontId(): string {
   const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -25,6 +32,82 @@ function genFontId(): string {
 export interface PaperImportedFontRegistrationState {
   pendingFaceIds: string[];
   blocked: Array<{ faceId: string; message: string }>;
+}
+
+const liveRegistrationByDocument = new WeakMap<Document, Map<string, Promise<void>>>();
+const LIVE_FONT_LOAD_TIMEOUT_MS = 2500;
+
+function loadManagedFontFaceBounded(face: FontFace, label: string): Promise<FontFace> {
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => reject(new PaperExactManagedFontError(`${label} timed out before exact live paint; retry after restoring the standalone font.`)), LIVE_FONT_LOAD_TIMEOUT_MS);
+    face.load().then((loaded) => {
+      globalThis.clearTimeout(timer);
+      resolve(loaded);
+    }, (error) => {
+      globalThis.clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+function registrationKey(font: PaperImportedFont): string {
+  return [
+    font.id,
+    font.fontAsset.id,
+    font.fontAsset.sha256,
+    font.postscriptName,
+    font.weight,
+    font.style,
+    font.obliqueAngleDeg ?? '',
+    font.stretchPercent,
+    font.collectionIndex,
+    JSON.stringify(font.variationSettings ?? {}),
+  ].join(':');
+}
+
+/**
+ * Load, register, and then authenticate one exact face for live editor paint. The promise is shared per
+ * document/identity so a workspace registration effect and a rich-editor transaction cannot race two
+ * different FontFace instances into the same alias.
+ */
+export function ensurePaperImportedFontRegistered(
+  font: PaperImportedFont,
+  target: Document = globalThis.document,
+): Promise<void> {
+  assertBrowserPaintablePaperManagedFace(font);
+  if (typeof FontFace === 'undefined' || !target?.fonts) {
+    return Promise.reject(new PaperExactManagedFontError('Exact managed-font registration is unavailable in this renderer; the edit was not applied.'));
+  }
+  const registrations = liveRegistrationByDocument.get(target) ?? new Map<string, Promise<void>>();
+  liveRegistrationByDocument.set(target, registrations);
+  const key = registrationKey(font);
+  const existing = registrations.get(key);
+  if (existing) return existing;
+
+  const pending = (async () => {
+    const record = await paperAssetRepository.get(font.fontAsset.id);
+    if (!record
+      || record.ref.id !== font.fontAsset.id
+      || record.ref.sha256 !== font.fontAsset.sha256
+      || record.ref.byteLength !== font.fontAsset.byteLength
+      || record.ref.mimeType !== font.fontAsset.mimeType
+      || !(await verifyBinaryAssetRecord(record))) {
+      throw new PaperExactManagedFontError(`Exact bytes for ${font.postscriptName || font.id} are unavailable or do not match the document reference; restore the font and retry.`);
+    }
+    const face = new FontFace(paperManagedFontFamilyAlias(font), paperManagedFontCssSource(font, record.bytes), {
+      weight: String(font.weight),
+      style: paperFontStyleDescriptor(font.style, font.obliqueAngleDeg),
+      stretch: `${font.stretchPercent}%`,
+    });
+    const loaded = await loadManagedFontFaceBounded(face, `Managed face ${font.postscriptName || font.id}`);
+    target.fonts.add(loaded);
+    await verifyExactPaperManagedFaceRegistration(target, font);
+  })().catch((error) => {
+    registrations.delete(key);
+    throw error;
+  });
+  registrations.set(key, pending);
+  return pending;
 }
 
 export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFont[] | undefined): PaperImportedFontRegistrationState {
@@ -45,23 +128,8 @@ export function useRegisterImportedFonts(importedFonts: readonly PaperImportedFo
       }));
       void (async () => {
         try {
-          const record = await paperAssetRepository.get(font.fontAsset.id);
-          if (!record || cancelled
-            || record.ref.id !== font.fontAsset.id
-            || record.ref.sha256 !== font.fontAsset.sha256
-            || record.ref.byteLength !== font.fontAsset.byteLength
-            || record.ref.mimeType !== font.fontAsset.mimeType
-            || !(await verifyBinaryAssetRecord(record))) throw new Error(`Exact bytes for ${font.postscriptName || font.id} are unavailable or do not match the document reference.`);
-          // Collections must use their PostScript fragment. Passing a TTC/OTC ArrayBuffer lets the
-          // browser choose member zero, which is not this document's recorded collectionIndex.
-          const face = new FontFace(paperManagedFontFamilyAlias(font), paperManagedFontCssSource(font, record.bytes), {
-            weight: String(font.weight),
-            style: paperFontStyleDescriptor(font.style, font.obliqueAngleDeg),
-            stretch: `${font.stretchPercent}%`,
-          });
-          const loaded = await face.load();
+          await ensurePaperImportedFontRegistered(font);
           if (cancelled) return;
-          document.fonts.add(loaded);
           registered.current.add(key);
         } catch (error) {
           if (!cancelled) {
@@ -112,6 +180,10 @@ export function PaperFontImportControl() {
         const vet = vetFontBytes(bytes);
         if (!vet.ok) {
           setError(vet.errors[0] ?? 'This font could not be imported.');
+          return;
+        }
+        if (vet.format === 'collection') {
+          setError('TrueType/OpenType Collection files cannot be authenticated by Chromium. Extract the selected member to a standalone .ttf or .otf, then import that file.');
           return;
         }
         const record = await createBinaryAssetRecord(bytes, {

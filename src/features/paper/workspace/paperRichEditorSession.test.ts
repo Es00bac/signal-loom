@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
-import type { PaperTypography } from '../../../types/paper';
+import { createRichEditorBase, richTextToEditorHtml, serializeRichEditor } from '../../../lib/paperRichTextDom';
+import { paperManagedFontFamilyAlias, verifyExactPaperManagedFaceRegistration } from '../../../lib/paperExactManagedFonts';
+import type { PaperManagedFontFace, PaperTypography } from '../../../types/paper';
 import {
   applyTypographyToActiveRichEditor,
   applyTypographyToDomSelection,
@@ -31,9 +32,123 @@ function textNodeContaining(root: HTMLElement, value: string): Text {
   throw new Error(`No text node containing ${value}`);
 }
 
+function expectSynchronous<T>(value: T | Promise<T>): T {
+  if (value instanceof Promise) throw new Error('Expected a synchronous rich-editor transaction.');
+  return value;
+}
+
 afterEach(() => { document.body.replaceChildren(); });
 
+function managedVariableFace(): PaperManagedFontFace {
+  const sha256 = 'b'.repeat(64);
+  return {
+    id: 'managed-variable-640',
+    familyId: 'managed-variable',
+    familyName: 'Managed Variable',
+    postscriptName: 'ManagedVariable-Oblique',
+    weight: 640,
+    style: 'oblique',
+    obliqueAngleDeg: 12,
+    stretchPercent: 75,
+    collectionIndex: 0,
+    variableAxes: {
+      wdth: { min: 50, default: 100, max: 200 },
+      wght: { min: 100, default: 400, max: 900 },
+    },
+    variationSettings: { wdth: 75, wght: 640 },
+    unicodeRanges: [{ start: 0x20, end: 0x7e }],
+    format: 'truetype',
+    fontAsset: { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength: 3 },
+    embeddability: 'installable',
+    canSubset: true,
+    source: { kind: 'user-import' },
+    license: {},
+  };
+}
+
 describe('active rich editor Inspector formatting', () => {
+  it('awaits exact alias authentication and preserves Managed Variable 640/75 wdth/wght oblique 12deg through DOM, serialization, and reopen', async () => {
+    const face = managedVariableFace();
+    const alias = paperManagedFontFamilyAlias(face);
+    const editor = editorWith('Managed Variable');
+    const text = textNodeContaining(editor, 'Managed Variable');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    let releaseLoad!: (faces: Set<FontFace>) => void;
+    const loadPromise = new Promise<Set<FontFace>>((resolve) => { releaseLoad = resolve; });
+    const descriptors: string[] = [];
+    const fonts = {
+      ready: Promise.resolve(),
+      load: (descriptor: string) => {
+        descriptors.push(descriptor);
+        return loadPromise;
+      },
+      check: () => true,
+    };
+    const target = { fonts } as unknown as Document;
+    const next: PaperTypography = {
+      ...TYPOGRAPHY,
+      fontFamily: 'Managed Variable',
+      fontWeight: '640',
+      fontStretch: '75%',
+      fontStyle: 'oblique 12deg',
+      fontVariationSettings: { wdth: 75, wght: 640 },
+    };
+    const dispose = registerPaperRichEditorSession('managed-variable', {
+      applyTypography: async (previous, requested) => {
+        await verifyExactPaperManagedFaceRegistration(target, face);
+        const applied = applyTypographyToDomSelection(
+          editor,
+          range,
+          previous,
+          requested,
+          1,
+          { typography: previous, managedFonts: [face] },
+        );
+        if (!applied) return null;
+        const richText = serializeRichEditor(editor, createRichEditorBase(previous, 1, [face]));
+        return { richText, text: 'Managed Variable' };
+      },
+    });
+
+    const pending = resolvePaperRichEditorTypographyUpdate(
+      'managed-variable',
+      TYPOGRAPHY,
+      next,
+      [{ runs: [{ text: 'Managed Variable' }] }],
+    );
+    expect(pending).toBeInstanceOf(Promise);
+    expect(editor.querySelector(`[style*="${alias}"]`)).toBeNull();
+    releaseLoad(new Set([{ family: alias, status: 'loaded' } as FontFace]));
+    const resolved = await pending;
+
+    expect(descriptors).toEqual([`oblique 12deg 640 75% 16px "${alias}"`]);
+    const painted = editor.querySelector<HTMLSpanElement>(`span[data-paper-font-family="Managed Variable"]`);
+    expect(painted).not.toBeNull();
+    expect(painted!.style.fontFamily).toBe(`"${alias}"`);
+    expect(painted!.style.fontWeight).toBe('640');
+    expect(painted!.style.fontStretch).toBe('75%');
+    expect(painted!.style.getPropertyValue('font-variation-settings')).toContain('"wdth" 75');
+    expect(painted!.dataset.paperFontStyle).toBe('oblique 12deg');
+    expect(resolved.typography).toMatchObject(next);
+    expect(resolved.richText?.[0].runs[0]).toMatchObject({
+      text: 'Managed Variable',
+      fontFamily: 'Managed Variable',
+      fontWeight: '640',
+      fontStretch: '75%',
+      fontStyle: 'oblique 12deg',
+      fontVariationSettings: { wdth: 75, wght: 640 },
+    });
+
+    const reopened = document.createElement('div');
+    reopened.innerHTML = richTextToEditorHtml(resolved.richText ?? [], 1, { typography: next, managedFonts: [face] });
+    const reopenedSpan = reopened.querySelector<HTMLSpanElement>('span');
+    expect(reopenedSpan?.style.fontFamily).toBe(`"${alias}"`);
+    expect(reopenedSpan?.dataset.paperFontFamily).toBe('Managed Variable');
+    expect(reopenedSpan?.dataset.paperFontStyle).toBe('oblique 12deg');
+    dispose();
+  });
+
   it('retains a range edit while persisting vertical writing on and off', () => {
     const editor = editorWith('Selected rich words');
     const text = textNodeContaining(editor, 'Selected rich words');
@@ -52,12 +167,12 @@ describe('active rich editor Inspector formatting', () => {
     });
     const vertical = { ...TYPOGRAPHY, writingMode: 'vertical-rl' as const, align: 'center' as const };
 
-    const enabled = resolvePaperRichEditorTypographyUpdate('vertical-range', TYPOGRAPHY, vertical, [{ runs: [{ text: 'stale' }] }]);
+    const enabled = expectSynchronous(resolvePaperRichEditorTypographyUpdate('vertical-range', TYPOGRAPHY, vertical, [{ runs: [{ text: 'stale' }] }]));
     expect(enabled.typography.writingMode).toBe('vertical-rl');
     expect(enabled.richText?.[0]).toMatchObject({ align: 'center' });
     expect(enabled.richText?.[0].runs.map((run) => run.text).join('')).toBe('Selected rich words');
 
-    const disabled = resolvePaperRichEditorTypographyUpdate('vertical-range', vertical, TYPOGRAPHY, enabled.richText);
+    const disabled = expectSynchronous(resolvePaperRichEditorTypographyUpdate('vertical-range', vertical, TYPOGRAPHY, enabled.richText));
     expect(disabled.typography.writingMode).toBeUndefined();
     expect(disabled.richText?.[0].runs.map((run) => run.text).join('')).toBe('Selected rich words');
     dispose();
@@ -81,7 +196,7 @@ describe('active rich editor Inspector formatting', () => {
     });
     const next = { ...TYPOGRAPHY, writingMode: 'vertical-rl' as const, align: 'center' as const };
 
-    const result = resolvePaperRichEditorTypographyUpdate('vertical-caret', TYPOGRAPHY, next, [{ runs: [{ text: 'stale' }] }]);
+    const result = expectSynchronous(resolvePaperRichEditorTypographyUpdate('vertical-caret', TYPOGRAPHY, next, [{ runs: [{ text: 'stale' }] }]));
     expect(result.typography.writingMode).toBe('vertical-rl');
     expect(result.richText?.[0]).toMatchObject({ align: 'center' });
     expect(result.richText?.[0].runs.map((run) => run.text).join('')).toBe('Caret preserves rich text');
@@ -92,10 +207,10 @@ describe('active rich editor Inspector formatting', () => {
     const richText = [{ runs: [{ text: 'Saved rich content', fontWeight: '700' }] }];
     const vertical = { ...TYPOGRAPHY, writingMode: 'vertical-rl' as const };
 
-    const enabled = resolvePaperRichEditorTypographyUpdate('inactive-frame', TYPOGRAPHY, vertical, richText);
+    const enabled = expectSynchronous(resolvePaperRichEditorTypographyUpdate('inactive-frame', TYPOGRAPHY, vertical, richText));
     expect(enabled.typography.writingMode).toBe('vertical-rl');
     expect(enabled.richText).toEqual(richText);
-    const disabled = resolvePaperRichEditorTypographyUpdate('inactive-frame', vertical, TYPOGRAPHY, enabled.richText);
+    const disabled = expectSynchronous(resolvePaperRichEditorTypographyUpdate('inactive-frame', vertical, TYPOGRAPHY, enabled.richText));
     expect(disabled.typography.writingMode).toBeUndefined();
     expect(disabled.richText).toEqual(richText);
   });
@@ -156,7 +271,7 @@ describe('active rich editor Inspector formatting', () => {
     const dispose = registerPaperRichEditorSession('frame-a', {
       applyTypography: () => ({ text: 'updated', richText: [{ runs: [{ text: 'updated' }] }] }),
     });
-    expect(applyTypographyToActiveRichEditor('frame-a', TYPOGRAPHY, { ...TYPOGRAPHY, tracking: 20 })?.text).toBe('updated');
+    expect(expectSynchronous(applyTypographyToActiveRichEditor('frame-a', TYPOGRAPHY, { ...TYPOGRAPHY, tracking: 20 }))?.text).toBe('updated');
     dispose();
     expect(applyTypographyToActiveRichEditor('frame-a', TYPOGRAPHY, { ...TYPOGRAPHY, tracking: 20 })).toBeNull();
   });

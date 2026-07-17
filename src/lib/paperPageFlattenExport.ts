@@ -7,7 +7,12 @@ import {
   updatePaperDocumentSetup,
 } from './paperDocument';
 import { resolvePaperFrameAssetUrl } from './paperAssetReferences';
-import { collectExactPaperManagedFaces, readPaperManagedFontManifest, verifyExactPaperManagedFontReadiness } from './paperExactManagedFonts';
+import {
+  collectExactPaperManagedFaces,
+  PaperExactManagedFontError,
+  readPaperManagedFontManifest,
+  verifyExactPaperManagedFontReadiness,
+} from './paperExactManagedFonts';
 
 export interface PaperPageExportDimensions {
   widthMm: number;
@@ -90,6 +95,26 @@ export interface FlattenedPaperPageSourcePayload {
   dataUrl: string;
   sourceKey?: string;
   originNodeId?: string;
+  envelopeId?: string;
+  envelopeLabel?: string;
+  envelopeIndex?: number;
+}
+
+/** A raster/decode failure that is safe for a shipping caller to show directly to the user. */
+export class PaperPageOutputError extends Error {
+  readonly code = 'PAPER_PAGE_OUTPUT_FAILED';
+  readonly cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'PaperPageOutputError';
+    this.cause = cause;
+  }
+}
+
+export interface RasterizedPaperPageSourcePayloadOptions extends PaperPageEmbeddedAssetExportOptions {
+  /** Explicit browser document for isolated tests/renderers; production uses the current global document. */
+  browserDocument?: Document;
   envelopeId?: string;
   envelopeLabel?: string;
   envelopeIndex?: number;
@@ -246,6 +271,45 @@ export function buildFlattenedPaperPageSourcePayload(
     envelopeLabel: options.envelopeLabel,
     envelopeIndex: options.envelopeIndex,
   };
+}
+
+/**
+ * Build the only Source/Storyboard payload that may be published: a successfully decoded and rasterized PNG.
+ * Exact-font readiness errors retain their typed identity; all other raster/decode failures become a typed,
+ * actionable output error. No raw SVG fallback is returned.
+ */
+export async function buildRasterizedPaperPageSourcePayload(
+  document: PaperDocument,
+  pageId: string,
+  options: RasterizedPaperPageSourcePayloadOptions = {},
+): Promise<FlattenedPaperPageSourcePayload> {
+  try {
+    const { browserDocument, ...exportOptions } = options;
+    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, pageId, exportOptions);
+    const rasterExport = await rasterizeFlattenedPaperPageToPng(svgExport, browserDocument);
+    return buildFlattenedPaperPageSourcePayload(document, pageId, {
+      ...exportOptions,
+      dataUrl: rasterExport.dataUrl,
+      mimeType: rasterExport.mimeType,
+    });
+  } catch (error) {
+    if (error instanceof PaperExactManagedFontError) throw error;
+    const page = document.pages.find((candidate) => candidate.id === pageId);
+    const label = page ? `page ${page.pageNumber}` : 'the requested page';
+    const detail = error instanceof Error && error.message ? ` ${error.message}` : '';
+    throw new PaperPageOutputError(`Paper ${label} could not be decoded and rasterized, so no Source Library or Video asset was published.${detail}`, error);
+  }
+}
+
+/** Publish only after the complete PNG payload exists, keeping readiness/raster failures side-effect free. */
+export async function publishRasterizedPaperPageSourcePayload<T>(
+  document: PaperDocument,
+  pageId: string,
+  options: RasterizedPaperPageSourcePayloadOptions,
+  publish: (payload: FlattenedPaperPageSourcePayload) => Promise<T>,
+): Promise<T> {
+  const payload = await buildRasterizedPaperPageSourcePayload(document, pageId, options);
+  return publish(payload);
 }
 
 export async function rasterizeFlattenedPaperPageToPng(

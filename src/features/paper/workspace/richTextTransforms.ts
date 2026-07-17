@@ -323,7 +323,8 @@ export interface RichEditorCommitDecision {
 /** Mirrors src/lib/paperRichText.ts's private (unexported) RUN_STYLE_KEYS list — the run-level fields that
  *  count as a real style override, kept in sync by hand since it isn't exported for reuse. */
 const RUN_FORMATTING_KEYS: Array<keyof PaperTextRun> = [
-  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontKerning', 'underline', 'strike',
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
+  'fontKerning', 'underline', 'strike',
   'color', 'highlight', 'tracking', 'smallCaps', 'numericStyle', 'textOrientation', 'emphasis', 'vertAlign', 'link',
 ];
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
 
 interface ElectronPaperPdfExportModule {
@@ -92,7 +92,7 @@ describe('Electron Paper PDF export helpers', () => {
 
   it('requires every managed alias in a native PDF payload instead of accepting font readiness alone', async () => {
     const { buildPaperPdfRenderReadyScript } = await loadPaperPdfExportModule();
-    const encoded = Buffer.from(JSON.stringify({ version: 1, faces: [{ identity: 'face-a', familyAlias: 'exact-a', weight: 400, style: 'normal', stretchPercent: 100 }] })).toString('base64url');
+    const encoded = Buffer.from(JSON.stringify({ version: 1, faces: [{ identity: 'face-a', familyAlias: 'exact-a', postscriptName: 'ExactA-Regular', weight: 400, style: 'normal', stretchPercent: 100, format: 'truetype', collectionIndex: 0 }] })).toString('base64url');
     const script = buildPaperPdfRenderReadyScript({ fontTimeoutMs: 5, frameTimeoutMs: 1, imageTimeoutMs: 1 });
     await expect(runInNewContext(script, {
       Array, atob, document: {
@@ -100,5 +100,22 @@ describe('Electron Paper PDF export helpers', () => {
         fonts: { ready: Promise.resolve(), load: async () => [{ family: 'human-family', status: 'loaded' }], check: () => true }, images: [],
       }, Promise, requestAnimationFrame: () => undefined, setTimeout,
     })).rejects.toThrow(/requested identity/i);
+  });
+
+  it('rejects the old collection-member-zero masquerade before native PDF paint', async () => {
+    const { buildPaperPdfRenderReadyScript } = await loadPaperPdfExportModule();
+    const encoded = Buffer.from(JSON.stringify({ version: 1, faces: [{
+      identity: 'collection-zero', familyAlias: 'exact-collection', postscriptName: 'Collection-Member-Zero',
+      weight: 400, style: 'normal', stretchPercent: 100, format: 'collection', collectionIndex: 0,
+    }] })).toString('base64url');
+    const load = vi.fn(async () => [{ family: 'exact-collection', status: 'loaded' }]);
+    const script = buildPaperPdfRenderReadyScript({ fontTimeoutMs: 5, frameTimeoutMs: 1, imageTimeoutMs: 1 });
+    await expect(runInNewContext(script, {
+      Array, atob, document: {
+        documentElement: { innerHTML: `signal-loom-managed-font-manifest:${encoded}` },
+        fonts: { ready: Promise.resolve(), load, check: () => true }, images: [],
+      }, Promise, requestAnimationFrame: () => undefined, setTimeout,
+    })).rejects.toThrow(/collection member paint is blocked|standalone/i);
+    expect(load).not.toHaveBeenCalled();
   });
 });

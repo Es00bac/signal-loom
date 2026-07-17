@@ -1,6 +1,11 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { paperFontStyleFromCss, paperManagedFontFamilyForLivePaint } from '../../../lib/paperExactManagedFonts';
+import {
+  collectExactPaperManagedFaces,
+  paperFontStyleFromCss,
+  paperManagedFontFamilyForLivePaint,
+  requestedExactPaperManagedFace,
+} from '../../../lib/paperExactManagedFonts';
 import {
   AlertTriangle,
   BookOpen,
@@ -57,7 +62,7 @@ import { useImageEditorStore } from '../../../store/imageEditorStore';
 import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
 import { usePaperStore } from '../../../store/paperStore';
-import { PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
+import { ensurePaperImportedFontRegistered, PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
 import { PaperBundledFontFaceBrowser, PaperBundledFontPicker } from './PaperBundledFontPicker';
@@ -89,10 +94,8 @@ import {
   resolvePaperPageInheritedGuides,
 } from '../../../lib/paperDocument';
 import {
-  buildFlattenedPaperPageSourcePayload,
-  buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
   imageSourceToDataUrl,
-  rasterizeFlattenedPaperPageToPng,
+  publishRasterizedPaperPageSourcePayload,
 } from '../../../lib/paperPageFlattenExport';
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
@@ -197,8 +200,10 @@ import {
 import {
   applyTypographyPatchToDomSelection,
   applyTypographyToDomSelection,
+  FACE_SELECTING_TYPOGRAPHY_KEYS,
   registerPaperRichEditorSession,
   resolvePaperRichEditorTypographyUpdate,
+  type PaperRichEditorSession,
 } from './paperRichEditorSession';
 import { findPaperMatches, type PaperFindOptions } from '../../../lib/paperFindChange';
 import { resolvePaperFolioText } from '../../../lib/paperFolios';
@@ -405,6 +410,7 @@ import type {
   PaperGuide,
   PaperManagedFontStyle,
   PaperLineBreak,
+  PaperManagedFontFace,
   PaperNumericStyle,
   PaperPage,
   PaperPagePreset,
@@ -3497,27 +3503,11 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
   ): Promise<SourceBinLibraryItem> => {
     const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
     const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
-    const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exact.document, pageId, {
+    const item = await publishRasterizedPaperPageSourcePayload(exact.document, pageId, {
+      ...options,
       resolveImageSrc: (src) => imageSourceToDataUrl(src),
       fontFaceCss: exact.fontFaceCss,
-    });
-    let dataUrl = svgExport.dataUrl;
-    let mimeType: string = svgExport.mimeType;
-
-    try {
-      const rasterExport = await rasterizeFlattenedPaperPageToPng(svgExport);
-      dataUrl = rasterExport.dataUrl;
-      mimeType = rasterExport.mimeType;
-    } catch {
-      dataUrl = svgExport.dataUrl;
-      mimeType = svgExport.mimeType;
-    }
-
-    const item = await addSourceAssetItem(buildFlattenedPaperPageSourcePayload(exact.document, pageId, {
-      ...options,
-      dataUrl,
-      mimeType,
-    }));
+    }, addSourceAssetItem);
     setSourceSidebarOpen(true);
     return item;
   }, [addSourceAssetItem, document, setSourceSidebarOpen, sourceItems]);
@@ -8615,6 +8605,7 @@ function PaperFrameView({
                 displayText={displayText}
                 frame={frame}
                 isEditing={textEditing}
+                managedFonts={managedTextDocument.importedFonts}
                 onBeginEdit={beginTextEdit}
                 onCancel={cancelTextEdit}
                 onCommit={commitTextEdit}
@@ -9189,6 +9180,7 @@ function PaperWrapFloats({ spacers, zoom }: { spacers: PaperWrapSpacer[]; zoom: 
 
 function PaperInlineText({
   frame,
+  managedFonts,
   displayText,
   wrapSpacers = [],
   isEditing,
@@ -9199,6 +9191,7 @@ function PaperInlineText({
   zoom,
 }: {
   frame: PaperFrame;
+  managedFonts: readonly PaperManagedFontFace[] | undefined;
   displayText?: string;
   wrapSpacers?: PaperWrapSpacer[];
   isEditing: boolean;
@@ -9236,6 +9229,7 @@ function PaperInlineText({
         baseStyle={editorStyle}
         className={`${className} rounded border border-cyan-400/80 p-1 shadow-[0_0_0_2px_rgba(8,145,178,0.18)] outline-none`}
         frame={frame}
+        managedFonts={managedFonts}
         onCancel={onCancel}
         onCommit={onCommit}
         zoom={zoom}
@@ -9823,6 +9817,7 @@ function PaperRichEditableText({
   baseStyle,
   className,
   frame,
+  managedFonts,
   onCancel,
   onCommit,
   zoom,
@@ -9830,6 +9825,7 @@ function PaperRichEditableText({
   baseStyle: React.CSSProperties;
   className: string;
   frame: PaperFrame;
+  managedFonts: readonly PaperManagedFontFace[] | undefined;
   onCancel: () => void;
   onCommit: (text: string, richText?: PaperRichParagraph[]) => void;
   zoom: number;
@@ -9843,19 +9839,80 @@ function PaperRichEditableText({
   const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number } | null>(null);
   const [fontMenuOpen, setFontMenuOpen] = useState(false);
   const [advancedTypeOpen, setAdvancedTypeOpen] = useState(false);
+  const managedFacePlan = useMemo(() => {
+    try {
+      const faces = collectExactPaperManagedFaces([frame], managedFonts);
+      // Empty frames still inherit their frame typography when the first character is typed, so authenticate
+      // that exact face before opening the contentEditable even though the output collector skips empty text.
+      const inheritedFace = requestedExactPaperManagedFace(frame.typography, managedFonts ?? []);
+      if (inheritedFace && !faces.some((face) => face.id === inheritedFace.id)) faces.push(inheritedFace);
+      faces.sort((left, right) => left.id.localeCompare(right.id));
+      return { faces, error: undefined };
+    } catch (error) {
+      return { faces: [] as PaperManagedFontFace[], error: error instanceof Error ? error : new Error('Exact managed-font selection failed.') };
+    }
+  }, [frame, managedFonts]);
+  const managedFaceKey = useMemo(() => managedFacePlan.faces.map((face) => [
+    face.id,
+    face.fontAsset.sha256,
+    face.weight,
+    face.style,
+    face.obliqueAngleDeg,
+    face.stretchPercent,
+    face.collectionIndex,
+    face.variationSettings,
+  ]).map((entry) => JSON.stringify(entry)).join('|'), [managedFacePlan.faces]);
+  const [managedFaceAuthentication, setManagedFaceAuthentication] = useState<{
+    key: string;
+    status: 'loading' | 'ready' | 'error';
+    error?: Error;
+  }>({ key: '', status: 'loading' });
+  const managedFacesReady = !managedFacePlan.error && (
+    managedFacePlan.faces.length === 0
+    || (managedFaceAuthentication.key === managedFaceKey && managedFaceAuthentication.status === 'ready')
+  );
+  const managedFaceError = managedFacePlan.error
+    ?? (managedFaceAuthentication.key === managedFaceKey && managedFaceAuthentication.status === 'error'
+      ? managedFaceAuthentication.error
+      : undefined);
   const { t, tBoth } = useI18n();
 
   const base = useMemo(
-    () => createRichEditorBase(frame.typography, openingZoom),
-    [frame.typography, openingZoom],
+    () => createRichEditorBase(frame.typography, openingZoom, managedFonts),
+    [frame.typography, managedFonts, openingZoom],
   );
 
   useEffect(() => {
+    if (managedFacePlan.error || managedFacePlan.faces.length === 0) return undefined;
+    let active = true;
+    void Promise.all(managedFacePlan.faces.map((face) => ensurePaperImportedFontRegistered(face)))
+      .then(() => {
+        if (active) setManagedFaceAuthentication({ key: managedFaceKey, status: 'ready' });
+      })
+      .catch((error) => {
+        if (active) setManagedFaceAuthentication({
+          key: managedFaceKey,
+          status: 'error',
+          error: error instanceof Error ? error : new Error('Exact managed-font authentication failed.'),
+        });
+      });
+    return () => { active = false; };
+    // managedFaceKey is the complete immutable identity of the captured faces; an equivalent frame rerender
+    // must not tear down an active editor just because collectExactPaperManagedFaces returned a new array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [managedFaceKey, managedFacePlan.error]);
+
+  useEffect(() => {
+    if (!managedFacesReady) return undefined;
     const editor = editorRef.current;
     if (!editor) return;
     // A plain frame (no richText yet) is lifted into a single-run seed here purely for the editor's initial
     // DOM — commit() below only persists that promotion if the user actually applies real formatting.
-    editor.innerHTML = richTextToEditorHtml(ensureRichTextForTransform(frame.richText, frame.text ?? ''), openingZoom);
+    editor.innerHTML = richTextToEditorHtml(
+      ensureRichTextForTransform(frame.richText, frame.text ?? ''),
+      openingZoom,
+      { typography: frame.typography, managedFonts },
+    );
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* older engines */ }
     editor.focus();
     const range = document.createRange();
@@ -9876,7 +9933,7 @@ function PaperRichEditableText({
     document.addEventListener('selectionchange', onSelectionChange);
     return () => document.removeEventListener('selectionchange', onSelectionChange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [managedFacesReady]);
 
   const restoreSelection = () => {
     const editor = editorRef.current;
@@ -9908,38 +9965,72 @@ function PaperRichEditableText({
       if (url?.trim()) runCommand('createLink', url.trim());
     })();
   };
-  const applySelectionTypographyPatch = (patch: Parameters<typeof applyTypographyPatchToDomSelection>[2]): boolean => {
+  const applySelectionTypographyPatchNow = (
+    patch: Parameters<typeof applyTypographyPatchToDomSelection>[2],
+    paintFonts: readonly PaperManagedFontFace[] | undefined = managedFonts,
+  ): boolean => {
     const editor = editorRef.current;
     if (!editor) return false;
-    const applied = applyTypographyPatchToDomSelection(editor, savedRangeRef.current, patch, openingZoom);
+    const managedPaint = { typography: frame.typography, managedFonts: paintFonts };
+    const applied = applyTypographyPatchToDomSelection(editor, savedRangeRef.current, patch, openingZoom, managedPaint);
     if (applied) {
       savedRangeRef.current = applied.range.cloneRange();
       return true;
     }
     const current = serializeRichEditor(editor, base);
     const richText = applyTypographyPatchToRichText(current, patch) ?? current;
-    editor.innerHTML = richTextToEditorHtml(richText, openingZoom);
+    editor.innerHTML = richTextToEditorHtml(richText, openingZoom, managedPaint);
     const caret = document.createRange();
     caret.selectNodeContents(editor);
     caret.collapse(false);
     savedRangeRef.current = caret;
     return true;
   };
+  const applySelectionTypographyPatch = (
+    patch: Parameters<typeof applyTypographyPatchToDomSelection>[2],
+    paintFonts: readonly PaperManagedFontFace[] | undefined = managedFonts,
+  ): boolean | Promise<boolean> => {
+    if (!FACE_SELECTING_TYPOGRAPHY_KEYS.some((key) => key in patch)) {
+      return applySelectionTypographyPatchNow(patch, paintFonts);
+    }
+    try {
+      const exactFace = requestedExactPaperManagedFace({ ...frame.typography, ...patch }, paintFonts ?? []);
+      if (!exactFace) return applySelectionTypographyPatchNow(patch, paintFonts);
+      return ensurePaperImportedFontRegistered(exactFace)
+        .then(() => applySelectionTypographyPatchNow(patch, paintFonts))
+        .catch(async (error) => {
+          await showAlertDialog({
+            title: 'Exact Font Edit Blocked',
+            message: error instanceof Error ? error.message : 'The requested exact face could not be authenticated, so the text was not changed.',
+            tone: 'danger',
+          });
+          return false;
+        });
+    } catch (error) {
+      return showAlertDialog({
+        title: 'Exact Font Edit Blocked',
+        message: error instanceof Error ? error.message : 'The requested exact face could not be resolved, so the text was not changed.',
+        tone: 'danger',
+      }).then(() => false);
+    }
+  };
   const applyFontSizePt = (pt: number) => {
     applySelectionTypographyPatch({ fontSizePt: pt });
   };
-  const applyBundledFontFace = (familyName: string, face: { weight: number; style: PaperManagedFontStyle; stretchPercent: number; axes: Record<string, { default: number }> }) => {
+  const applyBundledFontFace = async (familyName: string, face: { id: string; weight: number; style: PaperManagedFontStyle; stretchPercent: number; axes: Record<string, { default: number }> }) => {
+    const currentFonts = usePaperStore.getState().document.importedFonts;
+    const installed = currentFonts?.find((candidate) => candidate.id === `bundled-${face.id}`);
     const variationSettings = Object.keys(face.axes).length
       ? Object.fromEntries(Object.entries(face.axes).map(([tag, axis]) => [tag, axis.default]))
       : undefined;
-    applySelectionTypographyPatch({
+    const patch: Partial<PaperTypography> = {
       fontFamily: familyName,
       fontWeight: String(face.weight),
-      fontStyle: face.style === 'oblique' ? 'oblique 14deg' : face.style,
+      fontStyle: face.style === 'oblique' ? `oblique ${installed?.obliqueAngleDeg ?? 14}deg` : face.style,
       fontStretch: `${face.stretchPercent}%`,
       ...(variationSettings ? { fontVariationSettings: variationSettings } : {}),
-    });
-    setFontMenuOpen(false);
+    };
+    if (await applySelectionTypographyPatch(patch, currentFonts)) setFontMenuOpen(false);
   };
   // Wrap the selection in Japanese inline notation (furigana 語《》 or emphasis 《《語》》). The notation is
   // inserted as plain text — it round-trips through the frame text and renders as <ruby>/圏点 in the non-editing
@@ -10012,32 +10103,60 @@ function PaperRichEditableText({
     onCancel();
   };
 
-  useEffect(() => registerPaperRichEditorSession(frame.id, {
-    applyTypography: (previous, next) => {
-      const editor = editorRef.current;
-      if (!editor || finishedRef.current) return null;
-      const applied = applyTypographyToDomSelection(editor, savedRangeRef.current, previous, next, openingZoom);
-      if (applied) {
-        savedRangeRef.current = applied.range.cloneRange();
-        const richText = serializeRichEditor(editor, base);
-        return { richText, text: flattenPaperRichText(richText) };
-      }
+  useEffect(() => {
+    if (!managedFacesReady) return undefined;
+    return registerPaperRichEditorSession(frame.id, {
+      applyTypography: (previous, next) => {
+        const patch = changedRichTypographyPatch(previous, next);
+        const applyAuthenticatedUpdate = (): ReturnType<PaperRichEditorSession['applyTypography']> => {
+          const editor = editorRef.current;
+          if (!editor || finishedRef.current) return null;
+          const currentFonts = usePaperStore.getState().document.importedFonts;
+          const applied = applyTypographyToDomSelection(
+            editor,
+            savedRangeRef.current,
+            previous,
+            next,
+            openingZoom,
+            { typography: previous, managedFonts: currentFonts },
+          );
+          if (applied) {
+            savedRangeRef.current = applied.range.cloneRange();
+            const richText = serializeRichEditor(editor, base);
+            return { richText, text: flattenPaperRichText(richText) };
+          }
 
-      // A caret-only character edit means "format the frame" (the same fallback as the Inspector when the
-      // editor is closed). Rewrite the uncontrolled DOM from the synchronized model immediately so a later
-      // blur cannot serialize stale spans back over the Inspector change.
-      const patch = changedRichTypographyPatch(previous, next);
-      if (!Object.keys(patch).length) return null;
-      const current = serializeRichEditor(editor, base);
-      const richText = applyTypographyPatchToRichText(current, patch) ?? current;
-      editor.innerHTML = richTextToEditorHtml(richText, openingZoom);
-      const caret = document.createRange();
-      caret.selectNodeContents(editor);
-      caret.collapse(false);
-      savedRangeRef.current = caret;
-      return { richText, text: flattenPaperRichText(richText) };
-    },
-  }), [base, frame.id, openingZoom]);
+          // A caret-only character edit means "format the frame" (the same fallback as the Inspector when the
+          // editor is closed). Rewrite the uncontrolled DOM from the synchronized model immediately so a later
+          // blur cannot serialize stale spans back over the Inspector change.
+          if (!Object.keys(patch).length) return null;
+          const current = serializeRichEditor(editor, base);
+          const richText = applyTypographyPatchToRichText(current, patch) ?? current;
+          editor.innerHTML = richTextToEditorHtml(
+            richText,
+            openingZoom,
+            { typography: next, managedFonts: currentFonts },
+          );
+          const caret = document.createRange();
+          caret.selectNodeContents(editor);
+          caret.collapse(false);
+          savedRangeRef.current = caret;
+          return { richText, text: flattenPaperRichText(richText) };
+        };
+
+        if (!FACE_SELECTING_TYPOGRAPHY_KEYS.some((key) => key in patch)) return applyAuthenticatedUpdate();
+        try {
+          const currentFonts = usePaperStore.getState().document.importedFonts ?? [];
+          const exactFace = requestedExactPaperManagedFace(next, currentFonts);
+          return exactFace
+            ? ensurePaperImportedFontRegistered(exactFace).then(applyAuthenticatedUpdate)
+            : applyAuthenticatedUpdate();
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      },
+    });
+  }, [base, frame.id, managedFacesReady, openingZoom]);
 
   useEffect(() => {
     const preserveSelector = '[data-paper-rich-inspector="true"], [data-advanced-color-picker-panel="true"], [data-text-input-dialog="true"]';
@@ -10056,6 +10175,28 @@ function PaperRichEditableText({
     document.addEventListener('pointerdown', onPointerDown, true);
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
   });
+
+  if (!managedFacesReady) {
+    return (
+      <div
+        className={`${className} flex items-center justify-center p-3`}
+        data-paper-rich-editor-font-gate={managedFaceError ? 'error' : 'loading'}
+        style={baseStyle}
+      >
+        <div className="max-w-md rounded border border-rose-300/30 bg-slate-950/95 p-3 text-xs text-slate-100 shadow-xl">
+          <div className="font-semibold">{managedFaceError ? 'Exact managed font unavailable' : 'Verifying exact managed font…'}</div>
+          <div className="mt-1 text-slate-300">
+            {managedFaceError?.message ?? 'The editor will open after the requested face identity is authenticated.'}
+          </div>
+          {managedFaceError ? (
+            <button className="mt-2 rounded border border-slate-500 px-2 py-1 hover:bg-slate-800" onClick={onCancel} type="button">
+              Close editor
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   const toolbar = toolbarPos && typeof document !== 'undefined'
     ? createPortal(
@@ -10126,7 +10267,7 @@ function PaperRichEditableText({
             className="h-5 w-6"
             label="Selected text colour"
             onChange={(color) => {
-              if (!applySelectionTypographyPatch({ color })) runCommand('foreColor', color);
+              if (applySelectionTypographyPatch({ color }) === false) runCommand('foreColor', color);
             }}
             title="Text colour"
             value={cssColorToPickerValue(frame.typography.color)}
@@ -10879,7 +11020,16 @@ function PaperInspector({
     || importedFontFamilies.includes(selectedFontFamily);
   const applyFrameTypography = (typography: PaperFrame['typography']) => {
     if (!frame) return;
-    onUpdateFrame(resolvePaperRichEditorTypographyUpdate(frame.id, frame.typography, typography, frame.richText));
+    const resolved = resolvePaperRichEditorTypographyUpdate(frame.id, frame.typography, typography, frame.richText);
+    if (!(resolved instanceof Promise)) {
+      onUpdateFrame(resolved);
+      return;
+    }
+    void resolved.then(onUpdateFrame).catch((error) => showAlertDialog({
+      title: 'Exact Font Edit Blocked',
+      message: error instanceof Error ? error.message : 'The requested exact face could not be authenticated, so the typography was not changed.',
+      tone: 'danger',
+    }));
   };
   const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
   const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'

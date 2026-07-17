@@ -5,6 +5,8 @@ import {
   assertNoConflictingPaperManagedFontDescriptors,
   buildExactPaperManagedFontCss,
   collectExactPaperManagedFaces,
+  PaperExactManagedFontError,
+  paperManagedFontCssSource,
   paperFontStyleDescriptor,
   paperManagedFontFamilyForLivePaint,
   readPaperManagedFontManifest,
@@ -34,24 +36,37 @@ describe('exact managed Paper font identities', () => {
   });
 
   it('blocks a hostile unrelated returned face before paint', async () => {
+    const css = await buildExactPaperManagedFontCss([face({ style: 'normal', obliqueAngleDeg: undefined, stretchPercent: 100 })], async () => Uint8Array.from([1, 2, 3]));
     const fonts = {
       ready: Promise.resolve(),
       load: async () => new Set([{ family: 'not-the-requested-alias', status: 'loaded' }]),
       check: () => true,
     };
-    await expect(verifyExactPaperManagedFontReadiness({ fonts } as unknown as Document, '/* signal-loom-managed-font-manifest:eyJ2ZXJzaW9uIjoxLCJmYWNlcyI6W3siaWRlbnRpdHkiOiJmIiwgImZhbWlseUFsaWFzIjoic2xvb20tbWFuYWdlZC1mIiwid2VpZ2h0Ijo0MDAsInN0eWxlIjoibm9ybWFsIiwic3RyZXRjaFBlcmNlbnQiOjEwMH1dfQ */ @font-face{}')).rejects.toThrow(/requested identity/i);
+    await expect(verifyExactPaperManagedFontReadiness({ fonts } as unknown as Document, css)).rejects.toThrow(/requested identity/i);
   });
 
-  it('keeps a collection member and optical-size coordinate in the exact browser payload', async () => {
-    const variableCollection = face({
-      id: 'collection-opsz', format: 'collection', collectionIndex: 1,
+  it.each([
+    ['selected nonzero member', { collectionIndex: 1, postscriptName: 'ManagedSerif-Oblique' }],
+    ['old member-zero masquerade', { collectionIndex: 0, postscriptName: 'ManagedSerif-Oblique' }],
+    ['nonexistent named member', { collectionIndex: 9, postscriptName: 'No-Such-PostScript-Name' }],
+  ])('fails closed for a collection source before CSS paint: %s', async (_label, overrides) => {
+    const collection = face({ id: 'collection-face', format: 'collection', ...overrides });
+    expect(() => paperManagedFontCssSource(collection, Uint8Array.from([1, 2, 3])))
+      .toThrow(PaperExactManagedFontError);
+    await expect(buildExactPaperManagedFontCss([collection], async () => Uint8Array.from([1, 2, 3])))
+      .rejects.toThrow(/Collection member|standalone/i);
+  });
+
+  it('records standalone format and exact variable coordinates in the authenticated manifest', async () => {
+    const variable = face({
+      id: 'variable', format: 'truetype', collectionIndex: 0,
       variableAxes: { opsz: { min: 8, default: 12, max: 72 } },
       variationSettings: { opsz: 18 },
     });
-    const css = await buildExactPaperManagedFontCss([variableCollection], async () => Uint8Array.from([1, 2, 3]));
-    expect(css).toContain('format("collection")');
-    expect(css).toContain('#ManagedSerif-Oblique');
-    expect(readPaperManagedFontManifest(css)?.faces[0]).toMatchObject({ postscriptName: 'ManagedSerif-Oblique', collectionIndex: 1, variationSettings: { opsz: 18 } });
+    const css = await buildExactPaperManagedFontCss([variable], async () => Uint8Array.from([1, 2, 3]));
+    expect(css).not.toContain('format("collection")');
+    expect(css).not.toContain('#ManagedSerif-Oblique');
+    expect(readPaperManagedFontManifest(css)?.faces[0]).toMatchObject({ format: 'truetype', collectionIndex: 0, variationSettings: { opsz: 18 } });
   });
 
   it('rejects conflicting descriptor bytes before a registration order can choose one', () => {
@@ -63,6 +78,6 @@ describe('exact managed Paper font identities', () => {
   it('maps live managed paint to its registered alias and blocks an unmatched descriptor', () => {
     const exact = face();
     expect(paperManagedFontFamilyForLivePaint({ ...frame().typography, fontWeight: '900' }, [exact])).toContain('sloom-managed-oblique-12');
-    expect(paperManagedFontFamilyForLivePaint({ ...frame().typography, fontWeight: '400' }, [exact])).toBe('sloom-managed-font-blocked');
+    expect(paperManagedFontFamilyForLivePaint({ ...frame().typography, fontWeight: '400' }, [exact])).toBe('"sloom-managed-font-blocked"');
   });
 });

@@ -1,10 +1,32 @@
-import { describe, expect, it } from 'vitest';
-import { addPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup } from './paperDocument';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { addFrameToPaperPage, addPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup } from './paperDocument';
 import {
   buildPaperStoryboardPageAssetLabel,
   buildPaperStoryboardPageDescriptors,
   buildPaperStoryboardSourceKey,
+  publishPaperStoryboardPageSourcePayloads,
 } from './paperVideoAssets';
+import type { PaperManagedFontFace } from '../types/paper';
+import {
+  aliasPaperDocumentManagedFontFamilies,
+  buildExactPaperManagedFontCss,
+  PaperExactManagedFontError,
+} from './paperExactManagedFonts';
+
+afterEach(() => {
+  Reflect.deleteProperty(document, 'fonts');
+});
+
+function exactStoryboardFace(): PaperManagedFontFace {
+  const sha256 = 'd'.repeat(64);
+  return {
+    id: 'storyboard-exact', familyId: 'storyboard-exact', familyName: 'Storyboard Exact', postscriptName: 'StoryboardExact-Regular',
+    weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0, variableAxes: {}, unicodeRanges: [],
+    format: 'truetype', fontAsset: { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength: 3 },
+    embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {},
+  };
+}
 
 describe('paperVideoAssets', () => {
   it('describes every Paper page as a stable storyboard image asset', () => {
@@ -54,5 +76,30 @@ describe('paperVideoAssets', () => {
     expect(buildPaperStoryboardSourceKey(document, document.pages[0].id, { includeBleed: true })).toBe(
       `paper-page:${document.id}:${document.pages[0].id}:371x671:bleed`,
     );
+  });
+
+  it('prepares every Video storyboard raster before publishing and leaves zero assets when exact readiness rejects', async () => {
+    const managed = exactStoryboardFace();
+    let documentWithText = createDefaultPaperDocument({ title: 'Exact Video Boards' });
+    documentWithText = addFrameToPaperPage(documentWithText, documentWithText.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 80, heightMm: 20, text: 'Exact storyboard',
+      typography: { fontFamily: managed.familyName, fontWeight: '400' },
+    }).document;
+    documentWithText = addPaperPage(documentWithText);
+    documentWithText.importedFonts = [managed];
+    const outputDocument = aliasPaperDocumentManagedFontFamilies(documentWithText);
+    const css = await buildExactPaperManagedFontCss([managed], async () => Uint8Array.from([1, 2, 3]));
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { ready: Promise.resolve(), load: async () => new Set(), check: () => false },
+    });
+    const publish = vi.fn(async () => ({ id: 'must-not-exist' }));
+
+    await expect(publishPaperStoryboardPageSourcePayloads(
+      outputDocument,
+      { fontFaceCss: css },
+      publish,
+    )).rejects.toBeInstanceOf(PaperExactManagedFontError);
+    expect(publish).not.toHaveBeenCalled();
   });
 });

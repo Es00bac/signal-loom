@@ -9,13 +9,31 @@ import {
   buildFlattenedPaperPageSvgExport,
   buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
   getPaperPageExportDimensions,
+  publishRasterizedPaperPageSourcePayload,
   rasterizeFlattenedPaperPageToPng,
 } from './paperPageFlattenExport';
 import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
+import type { PaperManagedFontFace } from '../types/paper';
+import {
+  aliasPaperDocumentManagedFontFamilies,
+  buildExactPaperManagedFontCss,
+  PaperExactManagedFontError,
+  readPaperManagedFontManifest,
+} from './paperExactManagedFonts';
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+function exactFace(): PaperManagedFontFace {
+  const sha256 = 'c'.repeat(64);
+  return {
+    id: 'source-exact', familyId: 'source-exact', familyName: 'Source Exact', postscriptName: 'SourceExact-Regular',
+    weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0, variableAxes: {}, unicodeRanges: [],
+    format: 'truetype', fontAsset: { id: `sha256:${sha256}`, sha256, mimeType: 'font/ttf', byteLength: 3 },
+    embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {},
+  };
+}
 
 describe('paperPageFlattenExport', () => {
   it('decodes flattened SVGs from their data URL so foreignObject canvases stay origin-clean', async () => {
@@ -75,17 +93,65 @@ describe('paperPageFlattenExport', () => {
   it('blocks an isolated SVG before decode when an exact managed alias did not load', async () => {
     const image = vi.fn();
     vi.stubGlobal('Image', class { decoding = ''; set src(_value: string) { image(); } decode() { return Promise.resolve(); } });
-    const css = '/* signal-loom-managed-font-manifest:eyJ2ZXJzaW9uIjoxLCJmYWNlcyI6W3siaWRlbnRpdHkiOiJmIiwgImZhbWlseUFsaWFzIjoic2xvb20tbWFuYWdlZC1mIiwgInBvc3RzY3JpcHROYW1lIjoiRiIsICJ3ZWlnaHQiOjQwMCwic3R5bGUiOiJub3JtYWwiLCJzdHJldGNoUGVyY2VudCI6MTAwLCJjb2xsZWN0aW9uSW5kZXgiOjB9XX0 */ @font-face{}';
+    const css = await buildExactPaperManagedFontCss([exactFace()], async () => Uint8Array.from([1, 2, 3]));
+    const alias = readPaperManagedFontManifest(css)?.faces[0].familyAlias;
     const browserDocument = {
       fonts: { ready: Promise.resolve(), load: async () => new Set(), check: () => false },
       createElement: vi.fn(),
     } as unknown as Document;
     await expect(rasterizeFlattenedPaperPageToPng({
       pageId: 'page-1', pageNumber: 1, label: 'Exact page', mimeType: 'image/svg+xml',
-      svg: `<svg><style>${css}</style><text>sloom-managed-f</text></svg>`, dataUrl: 'data:image/svg+xml,exact', exactManagedFontCss: css,
+      svg: `<svg><style>${css}</style><text>${alias}</text></svg>`, dataUrl: 'data:image/svg+xml,exact', exactManagedFontCss: css,
       widthMm: 10, heightMm: 10, widthPx: 10, heightPx: 10, scale: 1, includeBleed: false,
     }, browserDocument)).rejects.toThrow(/requested identity|did not load/i);
     expect(image).not.toHaveBeenCalled();
+  });
+
+  it('keeps Source Library publication side-effect free when exact readiness rejects', async () => {
+    const managed = exactFace();
+    let sourceDocument = createDefaultPaperDocument({ title: 'Exact Source' });
+    sourceDocument = addFrameToPaperPage(sourceDocument, sourceDocument.pages[0].id, {
+      kind: 'text', xMm: 10, yMm: 10, widthMm: 60, heightMm: 20, text: 'Exact source asset',
+      typography: { fontFamily: managed.familyName, fontWeight: '400' },
+    }).document;
+    sourceDocument.importedFonts = [managed];
+    const outputDocument = aliasPaperDocumentManagedFontFamilies(sourceDocument);
+    const css = await buildExactPaperManagedFontCss([managed], async () => Uint8Array.from([1, 2, 3]));
+    const browserDocument = {
+      fonts: { ready: Promise.resolve(), load: async () => new Set(), check: () => false },
+      createElement: vi.fn(),
+    } as unknown as Document;
+    const publish = vi.fn(async () => ({ id: 'must-not-exist' }));
+
+    await expect(publishRasterizedPaperPageSourcePayload(
+      outputDocument,
+      outputDocument.pages[0].id,
+      { fontFaceCss: css, browserDocument },
+      publish,
+    )).rejects.toBeInstanceOf(PaperExactManagedFontError);
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('returns a typed actionable error and publishes nothing when page SVG decode rejects', async () => {
+    vi.stubGlobal('Image', class {
+      decoding = '';
+      src = '';
+      decode() { return Promise.reject(new Error('hostile SVG decode')); }
+    });
+    const outputDocument = createDefaultPaperDocument({ title: 'Decode Failure' });
+    const publish = vi.fn(async () => ({ id: 'must-not-exist' }));
+
+    await expect(publishRasterizedPaperPageSourcePayload(
+      outputDocument,
+      outputDocument.pages[0].id,
+      { browserDocument: { createElement: vi.fn() } as unknown as Document },
+      publish,
+    )).rejects.toMatchObject({
+      name: 'PaperPageOutputError',
+      code: 'PAPER_PAGE_OUTPUT_FAILED',
+      message: expect.stringMatching(/no Source Library or Video asset was published.*hostile SVG decode/i),
+    });
+    expect(publish).not.toHaveBeenCalled();
   });
 
   it('escapes quoted font-family values so the flattened SVG stays valid XML', () => {

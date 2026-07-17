@@ -9,7 +9,8 @@ const VERT_ALIGNS: PaperTextVertAlign[] = ['baseline', 'super', 'sub'];
 
 /** The style fields of a run (everything except its text), compared to merge adjacent identical runs. */
 const RUN_STYLE_KEYS: Array<keyof PaperTextRun> = [
-  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontKerning', 'underline', 'strike',
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
+  'fontKerning', 'underline', 'strike',
   'color', 'highlight', 'tracking', 'smallCaps', 'numericStyle', 'textOrientation', 'emphasis', 'vertAlign', 'link',
 ];
 
@@ -33,7 +34,18 @@ function normalizeRun(input: unknown): PaperTextRun {
   if (leadingPt != null) run.leadingPt = leadingPt;
   const fontWeight = cleanString(raw.fontWeight);
   if (fontWeight) run.fontWeight = fontWeight;
-  if (raw.fontStyle === 'italic' || raw.fontStyle === 'normal') run.fontStyle = raw.fontStyle;
+  if (raw.fontStyle === 'italic' || raw.fontStyle === 'normal'
+    || (typeof raw.fontStyle === 'string' && /^oblique(?:\s+-?(?:\d+(?:\.\d+)?|\.\d+)deg)?$/i.test(raw.fontStyle.trim()))) {
+    run.fontStyle = raw.fontStyle.trim().toLowerCase() as PaperTextRun['fontStyle'];
+  }
+  const fontStretch = cleanString(raw.fontStretch);
+  if (fontStretch) run.fontStretch = fontStretch;
+  if (raw.fontVariationSettings && typeof raw.fontVariationSettings === 'object' && !Array.isArray(raw.fontVariationSettings)) {
+    const entries = Object.entries(raw.fontVariationSettings as Record<string, unknown>)
+      .filter((entry): entry is [string, number] => /^[ -~]{4}$/.test(entry[0]) && typeof entry[1] === 'number' && Number.isFinite(entry[1]))
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (entries.length > 0) run.fontVariationSettings = Object.fromEntries(entries);
+  }
   if (raw.fontKerning === 'auto' || raw.fontKerning === 'normal' || raw.fontKerning === 'none') run.fontKerning = raw.fontKerning;
   if (raw.underline === true) run.underline = true;
   if (raw.strike === true) run.strike = true;

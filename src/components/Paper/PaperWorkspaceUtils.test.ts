@@ -482,14 +482,14 @@ describe('PaperWorkspaceUtils export', () => {
     vi.unstubAllGlobals();
   });
 
-  it('rebuilds a native vector PDF request with the same exact alias and byte payload as browser print', async () => {
+  it('rebuilds a native vector PDF request with the same standalone exact alias and byte payload as browser print', async () => {
     const record = await createBinaryAssetRecord(Uint8Array.from([1, 2, 3]), { mimeType: 'font/ttf' });
     const fontAsset = await paperAssetRepository.put(record);
     let doc = createDefaultPaperDocument({ title: 'Exact Native PDF' });
     const face: PaperManagedFontFace = {
-      id: 'native-collection-opsz', familyId: 'native proof family', familyName: 'Native Proof Family', postscriptName: 'NativeProof-Oblique',
-      weight: 400, style: 'oblique', obliqueAngleDeg: 11, stretchPercent: 87.5, collectionIndex: 1,
-      variableAxes: { opsz: { min: 8, default: 12, max: 72 } }, variationSettings: { opsz: 18 }, unicodeRanges: [], format: 'collection', fontAsset,
+      id: 'native-variable-opsz', familyId: 'native proof family', familyName: 'Native Proof Family', postscriptName: 'NativeProof-Oblique',
+      weight: 400, style: 'oblique', obliqueAngleDeg: 11, stretchPercent: 87.5, collectionIndex: 0,
+      variableAxes: { opsz: { min: 8, default: 12, max: 72 } }, variationSettings: { opsz: 18 }, unicodeRanges: [], format: 'truetype', fontAsset,
       embeddability: 'installable', canSubset: true, source: { kind: 'user-import' }, license: {},
     };
     doc = addFrameToPaperPage(doc, doc.pages[0].id, {
@@ -506,8 +506,8 @@ describe('PaperWorkspaceUtils export', () => {
 
     const request = exportPaperPdf.mock.calls[0][0];
     expect(request.html).toContain('signal-loom-managed-font-manifest:');
-    expect(request.html).toContain('format("collection")');
-    expect(request.html).toContain('sloom-managed-native-collection-opsz');
+    expect(request.html).not.toContain('format("collection")');
+    expect(request.html).toContain('sloom-managed-native-variable-opsz');
     vi.unstubAllGlobals();
   });
 

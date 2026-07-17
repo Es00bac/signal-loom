@@ -1,4 +1,15 @@
-import type { PaperParagraphBorderEdge, PaperParagraphBorders, PaperRichParagraph, PaperTextRun, PaperTypography } from '../types/paper';
+import type { PaperManagedFontFace, PaperParagraphBorderEdge, PaperParagraphBorders, PaperRichParagraph, PaperTextRun, PaperTypography } from '../types/paper';
+import {
+  effectivePaperRunTypography,
+  PAPER_MANAGED_FONT_BLOCKED_FAMILY,
+  paperFontObliqueAngleFromCss,
+  paperFontStretchFromCss,
+  paperFontStyleDescriptor,
+  paperFontStyleFromCss,
+  paperManagedFontFamilyAlias,
+  paperManagedFontFamilyForLivePaint,
+} from './paperExactManagedFonts';
+import { paperFontVariationSettingsEqual } from './paperManagedFonts';
 import { normalizePaperRichText } from './paperRichText';
 
 const MM_TO_PX = 3.7795;
@@ -14,12 +25,35 @@ function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** Canonical CSS text for exact variable-font coordinates ("normal" when empty). */
+export function paperFontVariationSettingsToCss(value: Record<string, number> | undefined): string {
+  const entries = Object.entries(value ?? {}).filter(([tag, coordinate]) => /^[ -~]{4}$/.test(tag) && Number.isFinite(coordinate));
+  if (!entries.length) return 'normal';
+  return entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([tag, coordinate]) => `"${tag}" ${coordinate}`)
+    .join(', ');
+}
+
+/** Parse a computed/inline font-variation-settings value back into exact coordinates. */
+export function paperFontVariationSettingsFromCss(value: string | null | undefined): Record<string, number> | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === 'normal') return undefined;
+  const output: Record<string, number> = {};
+  for (const match of trimmed.matchAll(/["']([ -~]{4})["']\s+(-?(?:\d+(?:\.\d+)?|\.\d+))/g)) {
+    output[match[1]] = Number(match[2]);
+  }
+  return Object.keys(output).length ? output : undefined;
+}
+
 /** Inline CSS for one run — only the properties it overrides (the editor container carries the defaults). */
 export function runInlineCss(run: PaperTextRun, zoom: number): string {
   const parts: string[] = [];
   if (run.fontFamily) parts.push(`font-family:${run.fontFamily}`);
   if (run.fontWeight) parts.push(`font-weight:${run.fontWeight}`);
   if (run.fontStyle) parts.push(`font-style:${run.fontStyle}`);
+  if (run.fontStretch) parts.push(`font-stretch:${run.fontStretch}`);
+  if (run.fontVariationSettings) parts.push(`font-variation-settings:${paperFontVariationSettingsToCss(run.fontVariationSettings)}`);
   if (run.fontKerning) parts.push(`font-kerning:${run.fontKerning}`);
   if (run.color) parts.push(`color:${run.color}`);
   if (run.highlight) parts.push(`background-color:${run.highlight}`);
@@ -145,18 +179,62 @@ function paragraphAttrsFromElement(el: HTMLElement): Partial<PaperRichParagraph>
   return p;
 }
 
+export interface RichEditorManagedPaintContext {
+  /** Frame typography the runs inherit from, so per-run exact faces resolve with the correct descriptor. */
+  typography: PaperTypography;
+  /** Document managed faces; a managed run paints its VERIFIED alias (or the blocked family), never the human name. */
+  managedFonts: readonly PaperManagedFontFace[] | undefined;
+}
+
+/**
+ * Editor paint identity for an effective typography whose family is managed: the CSS family to paint is the
+ * registered exact alias (or the blocked sentinel), while `data-paper-font-family` keeps the durable human
+ * family and `data-paper-font-style` keeps an authored oblique descriptor that computed styles cannot
+ * round-trip in every engine. Returns undefined when the effective family is not managed.
+ */
+export function managedEditorPaintForTypography(
+  effective: PaperTypography,
+  managedFonts: readonly PaperManagedFontFace[] | undefined,
+): { paintFamily: string; sourceFamily: string } | undefined {
+  if (!managedFonts?.length) return undefined;
+  const paintFamily = paperManagedFontFamilyForLivePaint(effective, managedFonts);
+  if (!paintFamily) return undefined;
+  return { paintFamily, sourceFamily: effective.fontFamily };
+}
+
+function managedRunEditorPaint(run: PaperTextRun, context: RichEditorManagedPaintContext | undefined): { paintFamily: string; sourceFamily: string } | undefined {
+  if (!context) return undefined;
+  return managedEditorPaintForTypography(effectivePaperRunTypography(context.typography, run), context.managedFonts);
+}
+
+function authoredObliqueDescriptor(fontStyle: string | undefined): string | undefined {
+  return fontStyle && paperFontStyleFromCss(fontStyle) === 'oblique'
+    ? paperFontStyleDescriptor('oblique', paperFontObliqueAngleFromCss(fontStyle))
+    : undefined;
+}
+
 /** Build the contentEditable's initial HTML: one block per paragraph, one styled span per run. List markers
  * render as a non-editable prefix so they survive editing and round-trip back to `listMarker`. */
-export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: number): string {
+export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: number, managedPaint?: RichEditorManagedPaintContext): string {
   if (!paragraphs.length) return '<div><br></div>';
   return paragraphs
     .map((paragraph) => {
       const runsHtml = paragraph.runs.length && paragraph.runs.some((run) => run.text)
         ? paragraph.runs
             .map((run) => {
+              const managed = managedRunEditorPaint(run, managedPaint);
               const css = runInlineCss(run, zoom);
+              const paintCss = managed
+                ? [`font-family:${managed.paintFamily}`, ...css.split(';').filter((part) => part && !part.startsWith('font-family:'))].join(';')
+                : css;
+              const oblique = authoredObliqueDescriptor(run.fontStyle);
+              const attrs = [
+                paintCss ? ` style="${escapeHtml(paintCss)}"` : '',
+                managed ? ` data-paper-font-family="${escapeHtml(managed.sourceFamily)}"` : '',
+                oblique ? ` data-paper-font-style="${escapeHtml(oblique)}"` : '',
+              ].join('');
               const text = escapeHtml(run.text).replace(/ {2,}/g, (match) => '\u00a0'.repeat(match.length));
-              const span = css ? `<span style="${css}">${text}</span>` : `<span>${text}</span>`;
+              const span = `<span${attrs}>${text}</span>`;
               return run.link ? `<a href="${escapeHtml(run.link)}">${span}</a>` : span;
             })
             .join('')
@@ -192,12 +270,16 @@ export interface RichEditorBase {
   leadingPx?: number;
   fontWeight?: string;
   fontStyle?: PaperTypography['fontStyle'];
+  fontStretch?: string;
+  fontVariationSettings?: Record<string, number>;
   fontKerning?: 'auto' | 'normal' | 'none';
   tracking?: number;
   smallCaps?: boolean;
   numericStyle?: 'normal' | 'oldstyle' | 'lining' | 'tabular';
   textOrientation?: 'mixed' | 'upright';
   emphasis?: 'none' | 'dot' | 'open-dot' | 'sesame' | 'circle';
+  /** Managed faces let serialization map a painted exact alias back to its durable human family. */
+  managedFonts?: readonly PaperManagedFontFace[];
   zoom: number;
 }
 
@@ -205,7 +287,7 @@ export interface RichEditorBase {
  * Build the conversion base for one rich-editor session. The DOM is seeded in pixel units when the session
  * opens, so it must also be serialized against that same opening scale even when the canvas zoom changes.
  */
-export function createRichEditorBase(typography: PaperTypography, openingZoom: number): RichEditorBase {
+export function createRichEditorBase(typography: PaperTypography, openingZoom: number, managedFonts?: readonly PaperManagedFontFace[]): RichEditorBase {
   return {
     colorHex: (typography.color || '#111827').toLowerCase(),
     fontFamily: typography.fontFamily,
@@ -213,12 +295,15 @@ export function createRichEditorBase(typography: PaperTypography, openingZoom: n
     leadingPx: typography.leadingPt * PT_TO_PX * openingZoom,
     fontWeight: typography.fontWeight,
     fontStyle: typography.fontStyle,
+    fontStretch: typography.fontStretch,
+    fontVariationSettings: typography.fontVariationSettings,
     fontKerning: typography.fontKerning,
     tracking: typography.tracking,
     smallCaps: typography.smallCaps,
     numericStyle: typography.numericStyle,
     textOrientation: typography.textOrientation,
     emphasis: typography.emphasis,
+    managedFonts,
     zoom: openingZoom,
   };
 }
@@ -243,13 +328,41 @@ function emphasisFromCss(value: string): RichEditorBase['emphasis'] {
   return 'none';
 }
 
+/** Canonical descriptor ('normal' | 'italic' | 'oblique <angle>deg') for run/base font-style comparison. */
+function canonicalFontStyleDescriptor(value: string | undefined): string {
+  const style = paperFontStyleFromCss(value);
+  return paperFontStyleDescriptor(style, paperFontObliqueAngleFromCss(value));
+}
+
 /** Turn one text node's effective computed style into a run carrying only what differs from the base. */
-function runFromComputedStyle(text: string, style: CSSStyleDeclaration, base: RichEditorBase): PaperTextRun {
+function runFromComputedStyle(
+  text: string,
+  style: CSSStyleDeclaration,
+  base: RichEditorBase,
+  readSpanData: (attribute: string) => string | undefined,
+): PaperTextRun {
   const run: PaperTextRun = { text };
   const weight = /^\d+$/.test(style.fontWeight) ? style.fontWeight : style.fontWeight === 'bold' ? '700' : '400';
   if (weight !== (base.fontWeight ?? '400')) run.fontWeight = weight;
-  const fontStyle = style.fontStyle === 'italic' || style.fontStyle === 'oblique' ? 'italic' : 'normal';
-  if (fontStyle !== (base.fontStyle ?? 'normal')) run.fontStyle = fontStyle;
+  // Computed font-style loses the exact authored oblique angle in some engines (and drops `oblique <angle>`
+  // entirely in jsdom); the span's data-paper-font-style mirror carries the durable descriptor. Computed
+  // 'italic'/'normal' still wins so an execCommand italic inside an oblique span serializes what it paints.
+  let fontStyleCss: string | undefined = style.fontStyle || undefined;
+  if (!fontStyleCss || paperFontStyleFromCss(fontStyleCss) === 'oblique') {
+    const authored = readSpanData('data-paper-font-style');
+    if (authored && (!fontStyleCss || paperFontStyleFromCss(authored) === 'oblique')) fontStyleCss = authored;
+  }
+  const fontStyle = canonicalFontStyleDescriptor(fontStyleCss);
+  if (fontStyle !== canonicalFontStyleDescriptor(base.fontStyle)) run.fontStyle = fontStyle as PaperTextRun['fontStyle'];
+  const stretchCss = style.fontStretch || style.getPropertyValue('font-stretch');
+  if (stretchCss) {
+    const stretchPercent = paperFontStretchFromCss(stretchCss);
+    if (stretchPercent !== paperFontStretchFromCss(base.fontStretch)) run.fontStretch = `${stretchPercent}%`;
+  }
+  const variation = paperFontVariationSettingsFromCss(style.getPropertyValue('font-variation-settings'));
+  if (variation && !paperFontVariationSettingsEqual(variation, base.fontVariationSettings)) {
+    run.fontVariationSettings = variation;
+  }
   const fontKerning = style.fontKerning === 'none' || style.fontKerning === 'normal' ? style.fontKerning : 'auto';
   if (fontKerning !== (base.fontKerning ?? 'auto')) run.fontKerning = fontKerning;
   const decoration = style.textDecorationLine || style.textDecoration || '';
@@ -263,8 +376,17 @@ function runFromComputedStyle(text: string, style: CSSStyleDeclaration, base: Ri
   if (hex && hex !== base.colorHex.toLowerCase()) run.color = hex;
   const highlight = cssColorToHex(style.backgroundColor);
   if (highlight) run.highlight = highlight;
-  if (style.fontFamily && normalizedFontFamily(style.fontFamily) !== normalizedFontFamily(base.fontFamily)) {
-    run.fontFamily = normalizedFontFamily(style.fontFamily);
+  // A painted managed ALIAS maps back to its durable human family; the alias itself must never persist
+  // into the document model. An alias that no longer resolves (face removed) and the blocked sentinel
+  // recover the authored human family from the span's data-paper-font-family mirror instead.
+  const rawFamily = style.fontFamily ? normalizedFontFamily(style.fontFamily) : '';
+  const aliasOwner = rawFamily ? base.managedFonts?.find((face) => paperManagedFontFamilyAlias(face) === rawFamily) : undefined;
+  let family = aliasOwner ? aliasOwner.familyName : rawFamily;
+  if (!aliasOwner && (rawFamily === PAPER_MANAGED_FONT_BLOCKED_FAMILY || rawFamily.startsWith('sloom-managed-'))) {
+    family = readSpanData('data-paper-font-family') ?? '';
+  }
+  if (family && family !== normalizedFontFamily(base.fontFamily)) {
+    run.fontFamily = family;
   }
   const px = parseFloat(style.fontSize);
   if (Number.isFinite(px) && Math.abs(px - base.fontSizePx) > 0.5 && run.vertAlign == null) {
@@ -308,7 +430,11 @@ export function serializeRichEditor(root: HTMLElement, base: RichEditorBase): Pa
     if (!current) startParagraph();
     const parent = node.parentElement;
     const style = parent ? getComputedStyle(parent) : null;
-    const run: PaperTextRun = style ? runFromComputedStyle(text, style, base) : { text };
+    const readSpanData = (attribute: string): string | undefined => {
+      const owner = parent?.closest(`[${attribute}]`);
+      return owner && root.contains(owner) ? owner.getAttribute(attribute) ?? undefined : undefined;
+    };
+    const run: PaperTextRun = style ? runFromComputedStyle(text, style, base, readSpanData) : { text };
     const link = parent?.closest('a[href]')?.getAttribute('href');
     if (link) run.link = link;
     current!.push(run);

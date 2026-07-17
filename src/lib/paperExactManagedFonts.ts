@@ -4,7 +4,14 @@ import { normalizeFamilyName } from './paperFontLibrary';
 import { canonicalPaperFontObliqueAngle, canUseManagedFontForProduction, normalizePaperFontFamilyId, normalizePaperFontStretch, normalizePaperFontVariationSettings, selectManagedFontFace } from './paperManagedFonts';
 
 /** Failure here is deliberately terminal for browser/raster/print output: fallback paint lies. */
-export class PaperExactManagedFontError extends Error {}
+export class PaperExactManagedFontError extends Error {
+  readonly code = 'PAPER_EXACT_MANAGED_FONT_UNAVAILABLE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaperExactManagedFontError';
+  }
+}
 
 export function paperFontStyleFromCss(value: string | undefined): PaperManagedFontStyle {
   const normalized = value?.trim().toLowerCase() ?? '';
@@ -37,10 +44,10 @@ export function paperFontStretchFromCss(value: string | undefined): number {
   return normalized in keyword ? keyword[normalized] : normalizePaperFontStretch(/^(-?(?:\d+(?:\.\d+)?|\.\d+))%$/.test(normalized) ? Number(normalized.slice(0, -1)) : undefined);
 }
 
-export function effectivePaperFrameTypography(frame: PaperFrame, run?: PaperTextRun): PaperTypography {
-  const inheritedWeight = paperFontWeightFromCss(frame.typography.fontWeight);
+export function effectivePaperRunTypography(typography: PaperTypography, run?: PaperTextRun): PaperTypography {
+  const inheritedWeight = paperFontWeightFromCss(typography.fontWeight);
   return {
-    ...frame.typography,
+    ...typography,
     ...(run?.fontFamily !== undefined ? { fontFamily: run.fontFamily } : {}),
     ...(run?.fontWeight !== undefined ? { fontWeight: String(paperFontWeightFromCss(run.fontWeight, inheritedWeight)) } : {}),
     ...(run?.fontStyle !== undefined ? { fontStyle: run.fontStyle } : {}),
@@ -49,13 +56,23 @@ export function effectivePaperFrameTypography(frame: PaperFrame, run?: PaperText
   };
 }
 
+export function effectivePaperFrameTypography(frame: PaperFrame, run?: PaperTextRun): PaperTypography {
+  return effectivePaperRunTypography(frame.typography, run);
+}
+
 export function paperFrameTextStyles(frame: PaperFrame): Array<{ text: string; typography: PaperTypography }> {
   if (!['text', 'caption', 'speechBubble', 'thoughtBubble'].includes(frame.kind)) return [];
   if (frame.richText?.length) return frame.richText.flatMap((paragraph) => paragraph.runs.map((run) => ({ text: run.text, typography: effectivePaperFrameTypography(frame, run) }))).filter(({ text }) => text.trim().length > 0);
   return frame.text?.trim() ? [{ text: frame.text, typography: frame.typography }] : [];
 }
 
-function requestedFace(typography: PaperTypography, fonts: readonly PaperManagedFontFace[]): PaperManagedFontFace | undefined {
+/**
+ * Resolve the exact managed face this typography requests for BROWSER text paint, or undefined when the
+ * family is not managed. Throws typed errors for every unverifiable outcome, including TTC/OTC members:
+ * CSS font sources cannot prove which collection member an engine loads (Chromium ignores PostScript-name
+ * fragments and always decodes member zero), so browser-painted collection members are unsupported.
+ */
+export function requestedExactPaperManagedFace(typography: PaperTypography, fonts: readonly PaperManagedFontFace[]): PaperManagedFontFace | undefined {
   const rawFamily = typography.fontFamily ?? '';
   const whole = normalizePaperFontFamilyId(rawFamily);
   const fallback = normalizePaperFontFamilyId(normalizeFamilyName(rawFamily));
@@ -71,8 +88,26 @@ function requestedFace(typography: PaperTypography, fonts: readonly PaperManaged
   });
   if (selection.status === 'ambiguous-face') throw new PaperExactManagedFontError(`Managed family "${rawFamily}" has conflicting byte identities for the requested descriptor (${selection.faceIds.join(', ')}).`);
   if (selection.status !== 'selected') throw new PaperExactManagedFontError(`Managed family "${rawFamily}" has no exact requested face; fallback paint is blocked.`);
+  assertBrowserPaintablePaperManagedFace(selection.face);
   if (!canUseManagedFontForProduction(selection.face).allowed) throw new PaperExactManagedFontError(`Managed face "${rawFamily}" is not authorized for production output.`);
   return selection.face;
+}
+
+/** Browser paint/raster/export cannot verify a collection member; fail before any CSS source is emitted. */
+export function assertBrowserPaintablePaperManagedFace(face: PaperManagedFontFace): void {
+  if (face.format === 'collection') {
+    throw new PaperExactManagedFontError(
+      `Managed face "${face.familyName}" (${face.postscriptName}) is a TrueType/OpenType Collection member; browser text cannot verify which member an engine loads, so exact paint is blocked. Extract the face to a standalone .ttf/.otf and re-import it.`,
+    );
+  }
+}
+
+/** Nonexistent-on-purpose family painted while an exact managed face is unresolvable or unregistered. */
+export const PAPER_MANAGED_FONT_BLOCKED_FAMILY = 'sloom-managed-font-blocked';
+
+/** A single CSS family token. Quoting is required because digest-derived aliases may not parse as idents. */
+export function paperManagedFontFamilyCssValue(family: string): string {
+  return `"${family.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
 }
 
 /** Live browser paint may use only the digest-derived alias for a managed family. */
@@ -83,10 +118,10 @@ export function paperManagedFontFamilyForLivePaint(typography: PaperTypography, 
   const fallback = normalizePaperFontFamilyId(normalizeFamilyName(rawFamily));
   if (!all.some((face) => normalizePaperFontFamilyId(face.familyName) === whole || normalizePaperFontFamilyId(face.familyName) === fallback)) return undefined;
   try {
-    const face = requestedFace(typography, all);
-    return face ? paperManagedFontFamilyAlias(face) : 'sloom-managed-font-blocked';
+    const face = requestedExactPaperManagedFace(typography, all);
+    return paperManagedFontFamilyCssValue(face ? paperManagedFontFamilyAlias(face) : PAPER_MANAGED_FONT_BLOCKED_FAMILY);
   } catch {
-    return 'sloom-managed-font-blocked';
+    return paperManagedFontFamilyCssValue(PAPER_MANAGED_FONT_BLOCKED_FAMILY);
   }
 }
 
@@ -94,7 +129,7 @@ export function collectExactPaperManagedFaces(frames: readonly PaperFrame[], fon
   const all = fonts ?? [];
   const output = new Map<string, PaperManagedFontFace>();
   for (const frame of frames) for (const style of paperFrameTextStyles(frame)) {
-    const face = requestedFace(style.typography, all);
+    const face = requestedExactPaperManagedFace(style.typography, all);
     if (face) output.set(face.id, face);
   }
   return [...output.values()].sort((left, right) => left.id.localeCompare(right.id));
@@ -121,7 +156,7 @@ export function paperManagedFontFamilyAlias(face: PaperManagedFontFace): string 
 
 function aliasFrame(frame: PaperFrame, fonts: readonly PaperManagedFontFace[]): PaperFrame {
   const alias = (typography: PaperTypography) => {
-    const face = requestedFace(typography, fonts);
+    const face = requestedExactPaperManagedFace(typography, fonts);
     return face ? { ...typography, fontFamily: paperManagedFontFamilyAlias(face) } : typography;
   };
   return {
@@ -139,21 +174,38 @@ export function aliasPaperDocumentManagedFontFamilies(document: PaperDocument): 
   return { ...document, pages: document.pages.map((page) => ({ ...page, frames: page.frames.map((frame) => aliasFrame(frame, fonts)) })), parentPages: document.parentPages.map((page) => ({ ...page, frames: page.frames.map((frame) => aliasFrame(frame, fonts)) })) };
 }
 
-export interface PaperManagedFontManifestFace { identity: string; familyAlias: string; postscriptName: string; weight: number; style: PaperManagedFontStyle; obliqueAngleDeg?: number; stretchPercent: number; collectionIndex: number; variationSettings?: Record<string, number>; }
+export interface PaperManagedFontManifestFace { identity: string; familyAlias: string; postscriptName: string; weight: number; style: PaperManagedFontStyle; obliqueAngleDeg?: number; stretchPercent: number; format: PaperManagedFontFace['format']; collectionIndex: number; variationSettings?: Record<string, number>; }
 export interface PaperManagedFontManifest { version: 1; faces: PaperManagedFontManifestFace[]; }
+
+function paperManagedFontManifestFaceFor(face: PaperManagedFontFace): PaperManagedFontManifestFace {
+  const variationSettings = normalizePaperFontVariationSettings(face.variationSettings, face.variableAxes);
+  return {
+    identity: `${face.id}:${face.fontAsset.sha256}:${face.postscriptName}:${face.collectionIndex}:${JSON.stringify(variationSettings ?? {})}`,
+    familyAlias: paperManagedFontFamilyAlias(face),
+    postscriptName: face.postscriptName,
+    weight: face.weight,
+    style: face.style,
+    ...(face.style === 'oblique' ? { obliqueAngleDeg: canonicalPaperFontObliqueAngle(face.style, face.obliqueAngleDeg) } : {}),
+    stretchPercent: face.stretchPercent,
+    format: face.format,
+    collectionIndex: face.collectionIndex,
+    ...(variationSettings ? { variationSettings } : {}),
+  };
+}
 const manifestPrefix = 'signal-loom-managed-font-manifest:';
 
 function cssString(value: string): string { return `"${[...value].map((char) => `\\${char.codePointAt(0)!.toString(16)} `).join('')}"`; }
 function base64(bytes: Uint8Array): string { let output = ''; for (let index = 0; index < bytes.length; index += 0x8000) output += String.fromCharCode(...bytes.subarray(index, index + 0x8000)); return btoa(output); }
 
 /**
- * CSS Fonts selects a TTC/OTC member through the PostScript-name fragment. Merely declaring
- * `format("collection")` leaves member selection implementation-defined, which can silently
- * paint collection member zero instead of the document's recorded `collectionIndex`.
+ * Standalone faces only. The PostScript-name URL fragment the CSS Fonts spec describes for TTC/OTC member
+ * selection is NOT a usable proof: Chromium ignores it and decodes member zero for any fragment, including
+ * nonexistent members, so a collection source would silently paint the wrong face. Collections are rejected
+ * as unsupported for browser paint instead of being declared with an unverifiable member.
  */
 export function paperManagedFontCssSource(face: PaperManagedFontFace, bytes: Uint8Array): string {
-  const member = face.format === 'collection' ? `#${encodeURIComponent(face.postscriptName)}` : '';
-  return `url(data:${face.fontAsset.mimeType};base64,${base64(bytes)}${member})${face.format === 'collection' ? ' format("collection")' : ''}`;
+  assertBrowserPaintablePaperManagedFace(face);
+  return `url(data:${face.fontAsset.mimeType};base64,${base64(bytes)})`;
 }
 
 export async function buildExactPaperManagedFontCss(faces: readonly PaperManagedFontFace[], load: (ref: BinaryAssetRef) => Promise<Uint8Array>): Promise<string> {
@@ -165,34 +217,76 @@ export async function buildExactPaperManagedFontCss(faces: readonly PaperManaged
     const source = paperManagedFontCssSource(face, bytes);
     rules.push(`@font-face{font-family:${cssString(paperManagedFontFamilyAlias(face))};font-weight:${face.weight};font-style:${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)};font-stretch:${face.stretchPercent}%;src:${source};}`);
   }
-  const manifest: PaperManagedFontManifest = { version: 1, faces: faces.map((face) => {
-    const variationSettings = normalizePaperFontVariationSettings(face.variationSettings, face.variableAxes);
-    return { identity: `${face.id}:${face.fontAsset.sha256}:${face.postscriptName}:${face.collectionIndex}:${JSON.stringify(variationSettings ?? {})}`, familyAlias: paperManagedFontFamilyAlias(face), postscriptName: face.postscriptName, weight: face.weight, style: face.style, ...(face.style === 'oblique' ? { obliqueAngleDeg: canonicalPaperFontObliqueAngle(face.style, face.obliqueAngleDeg) } : {}), stretchPercent: face.stretchPercent, collectionIndex: face.collectionIndex, ...(variationSettings ? { variationSettings } : {}) };
-  }) };
+  const manifest: PaperManagedFontManifest = { version: 1, faces: faces.map(paperManagedFontManifestFaceFor) };
   return `/* ${manifestPrefix}${btoa(JSON.stringify(manifest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')} */\n${rules.join('\n')}`;
 }
 
 export function readPaperManagedFontManifest(css: string | undefined): PaperManagedFontManifest | undefined {
   const encoded = css?.match(new RegExp(`/\\*\\s*${manifestPrefix}([A-Za-z0-9_-]+)\\s*\\*/`))?.[1];
   if (!encoded) return undefined;
-  try { const parsed = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/'))) as PaperManagedFontManifest; return parsed.version === 1 && Array.isArray(parsed.faces) ? parsed : undefined; } catch { return undefined; }
+  try {
+    const parsed = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/'))) as Partial<PaperManagedFontManifest>;
+    if (parsed.version !== 1 || !Array.isArray(parsed.faces)) return undefined;
+    const valid = parsed.faces.every((face) => face
+      && typeof face.identity === 'string'
+      && typeof face.familyAlias === 'string'
+      && typeof face.postscriptName === 'string'
+      && Number.isFinite(face.weight)
+      && (face.style === 'normal' || face.style === 'italic' || face.style === 'oblique')
+      && Number.isFinite(face.stretchPercent)
+      && (face.format === 'truetype' || face.format === 'opentype-cff' || face.format === 'collection')
+      && Number.isInteger(face.collectionIndex)
+      && face.collectionIndex >= 0);
+    return valid ? parsed as PaperManagedFontManifest : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function paperManagedFontDescriptor(face: PaperManagedFontManifestFace): string { return `${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)} ${face.weight} ${face.stretchPercent}% 16px "${face.familyAlias}"`; }
+
+const VERIFY_SAMPLE_TEXT = 'WMWMWMiiiii012345';
+
+function boundedFontFaceVerification(target: Document, timeoutMs: number) {
+  const fonts = target.fonts;
+  if (!fonts?.ready || typeof fonts.load !== 'function' || typeof fonts.check !== 'function') throw new PaperExactManagedFontError('Browser does not expose requested-face verification.');
+  const bounded = <T,>(promise: Promise<T>, label: string) => new Promise<T>((resolve, reject) => { const timer = globalThis.setTimeout(() => reject(new PaperExactManagedFontError(`${label} timed out.`)), timeoutMs); promise.then((value) => { globalThis.clearTimeout(timer); resolve(value); }, reject); });
+  return { fonts, bounded };
+}
+
+async function verifyRequestedFaceLoaded(
+  fonts: FontFaceSet,
+  face: PaperManagedFontManifestFace,
+  bounded: <T>(promise: Promise<T>, label: string) => Promise<T>,
+): Promise<void> {
+  if (face.format === 'collection' || face.collectionIndex !== 0) {
+    throw new PaperExactManagedFontError(`Managed face ${face.identity} selects a TrueType/OpenType Collection member; Chromium cannot authenticate that member, so exact paint is blocked. Extract it to a standalone .ttf/.otf and re-import it.`);
+  }
+  const descriptor = paperManagedFontDescriptor(face);
+  const loaded = await bounded(Promise.resolve(fonts.load(descriptor, VERIFY_SAMPLE_TEXT)), `Managed face ${face.identity}`);
+  const exact = [...loaded].some((candidate) => candidate.family === face.familyAlias && candidate.status === 'loaded');
+  if (!exact || !fonts.check(descriptor, VERIFY_SAMPLE_TEXT)) throw new PaperExactManagedFontError(`Managed face did not load with its requested identity: ${face.identity}.`);
+}
 
 /** Bounded requested-identity verification. A hostile unrelated FontFace return cannot satisfy this. */
 export async function verifyExactPaperManagedFontReadiness(target: Document, css: string | undefined, timeoutMs = 2500): Promise<void> {
   if (!css?.includes('@font-face')) return;
   const manifest = readPaperManagedFontManifest(css);
   if (!manifest) throw new PaperExactManagedFontError('Managed font payload has no exact identity manifest.');
-  const fonts = target.fonts;
-  if (!fonts?.ready || typeof fonts.load !== 'function' || typeof fonts.check !== 'function') throw new PaperExactManagedFontError('Browser does not expose requested-face verification.');
-  const bounded = <T,>(promise: Promise<T>, label: string) => new Promise<T>((resolve, reject) => { const timer = globalThis.setTimeout(() => reject(new PaperExactManagedFontError(`${label} timed out.`)), timeoutMs); promise.then((value) => { globalThis.clearTimeout(timer); resolve(value); }, reject); });
+  const { fonts, bounded } = boundedFontFaceVerification(target, timeoutMs);
   await bounded(Promise.resolve(fonts.ready), 'Managed font readiness');
   for (const face of manifest.faces) {
-    const descriptor = paperManagedFontDescriptor(face);
-    const loaded = await bounded(Promise.resolve(fonts.load(descriptor, 'WMWMWMiiiii012345')), `Managed face ${face.identity}`);
-    const exact = [...loaded].some((candidate) => candidate.family === face.familyAlias && candidate.status === 'loaded');
-    if (!exact || !fonts.check(descriptor, 'WMWMWMiiiii012345')) throw new PaperExactManagedFontError(`Managed face did not load with its requested identity: ${face.identity}.`);
+    await verifyRequestedFaceLoaded(fonts, face, bounded);
   }
+}
+
+/**
+ * Bounded single-face authentication for the LIVE editor: the exact registered alias must load with its
+ * requested identity before the editor may paint or commit the face. Same proof as export readiness.
+ */
+export async function verifyExactPaperManagedFaceRegistration(target: Document, face: PaperManagedFontFace, timeoutMs = 2500): Promise<void> {
+  assertBrowserPaintablePaperManagedFace(face);
+  const { fonts, bounded } = boundedFontFaceVerification(target, timeoutMs);
+  await bounded(Promise.resolve(fonts.ready), 'Managed font readiness');
+  await verifyRequestedFaceLoaded(fonts, paperManagedFontManifestFaceFor(face), bounded);
 }

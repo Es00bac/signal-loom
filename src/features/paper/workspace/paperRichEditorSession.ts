@@ -1,3 +1,9 @@
+import {
+  managedEditorPaintForTypography,
+  paperFontVariationSettingsToCss,
+  type RichEditorManagedPaintContext,
+} from '../../../lib/paperRichTextDom';
+import { paperFontObliqueAngleFromCss, paperFontStyleDescriptor, paperFontStyleFromCss } from '../../../lib/paperExactManagedFonts';
 import type { PaperRichParagraph, PaperTypography } from '../../../types/paper';
 import {
   changedRichTypographyPatch,
@@ -15,7 +21,15 @@ export interface PaperRichEditorApplyResult {
 }
 
 export interface PaperRichEditorSession {
-  applyTypography: (previous: PaperTypography, next: PaperTypography) => PaperRichEditorApplyResult | null;
+  /**
+   * A promise is returned when the edit selects an exact managed face: the live editor must authenticate
+   * the registered face before painting or committing it, and a rejection means the edit was refused with
+   * no DOM or document change.
+   */
+  applyTypography: (
+    previous: PaperTypography,
+    next: PaperTypography,
+  ) => PaperRichEditorApplyResult | null | Promise<PaperRichEditorApplyResult | null>;
 }
 
 const sessions = new Map<string, PaperRichEditorSession>();
@@ -31,33 +45,54 @@ export function applyTypographyToActiveRichEditor(
   frameId: string,
   previous: PaperTypography,
   next: PaperTypography,
-): PaperRichEditorApplyResult | null {
+): PaperRichEditorApplyResult | null | Promise<PaperRichEditorApplyResult | null> {
   return sessions.get(frameId)?.applyTypography(previous, next) ?? null;
+}
+
+export interface PaperRichEditorTypographyUpdate {
+  typography: PaperTypography;
+  text?: string;
+  richText: PaperRichParagraph[] | undefined;
 }
 
 /**
  * Preserve the frame-level typography alongside any retained rich-editor transaction. Some properties, such
  * as writingMode, belong to the frame rather than a run or paragraph; dropping this half of the transaction
  * makes an active selection appear to accept vertical writing while silently retaining the old direction.
+ * Returns a promise when the active editor must first authenticate an exact managed face; a rejected promise
+ * means the whole update was refused and nothing may be committed.
  */
 export function resolvePaperRichEditorTypographyUpdate(
   frameId: string,
   previous: PaperTypography,
   next: PaperTypography,
   currentRichText: PaperRichParagraph[] | undefined,
-): { typography: PaperTypography; text?: string; richText: PaperRichParagraph[] | undefined } {
-  const live = applyTypographyToActiveRichEditor(frameId, previous, next);
-  if (live) return { typography: next, text: live.text, richText: live.richText };
-  return {
+): PaperRichEditorTypographyUpdate | Promise<PaperRichEditorTypographyUpdate> {
+  const fallback = (): PaperRichEditorTypographyUpdate => ({
     typography: next,
     richText: synchronizeRichTextWithTypographyChange(currentRichText, previous, next),
-  };
+  });
+  const live = applyTypographyToActiveRichEditor(frameId, previous, next);
+  if (live && typeof (live as Promise<PaperRichEditorApplyResult | null>).then === 'function') {
+    return (live as Promise<PaperRichEditorApplyResult | null>).then((result) => (result
+      ? { typography: next, text: result.text, richText: result.richText }
+      : fallback()));
+  }
+  const applied = live as PaperRichEditorApplyResult | null;
+  if (applied) return { typography: next, text: applied.text, richText: applied.richText };
+  return fallback();
 }
 
 const CHARACTER_KEYS = new Set<RichTypographyKey>([
-  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'fontKerning', 'color', 'tracking', 'smallCaps',
+  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
+  'fontKerning', 'color', 'tracking', 'smallCaps',
   'numericStyle', 'textOrientation', 'emphasis',
 ]);
+
+/** Typography keys that change which exact managed face the text requests. */
+export const FACE_SELECTING_TYPOGRAPHY_KEYS = [
+  'fontFamily', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
+] as const satisfies readonly RichTypographyKey[];
 
 const PARAGRAPH_KEYS = new Set<RichTypographyKey>([
   'align', 'alignLast', 'leadingPt', 'hyphenate', 'lineBreak', 'lineBreakStrict', 'firstLineIndentMm',
@@ -139,12 +174,35 @@ function applyCharacterPatch(
   range: Range,
   patch: Partial<PaperTypography>,
   zoom: number,
+  managedPaint?: RichEditorManagedPaintContext,
 ): Range | null {
+  const touchesFace = FACE_SELECTING_TYPOGRAPHY_KEYS.some((key) => key in patch);
+  // The DOM paints the VERIFIED exact alias for a managed family (never the human name); the span keeps
+  // the durable human family in data-paper-font-family so serialization restores the document identity.
+  const managed = managedPaint && touchesFace
+    ? managedEditorPaintForTypography({ ...managedPaint.typography, ...patch }, managedPaint.managedFonts)
+    : undefined;
   return wrapSelectedText(editor, range, (span) => {
-    if ('fontFamily' in patch) span.style.fontFamily = patch.fontFamily ?? '';
+    if (managed) {
+      span.style.fontFamily = managed.paintFamily;
+      span.dataset.paperFontFamily = managed.sourceFamily;
+    } else if ('fontFamily' in patch) {
+      span.style.fontFamily = patch.fontFamily ?? '';
+    }
     if ('fontSizePt' in patch) span.style.fontSize = `${((patch.fontSizePt ?? 0) * PT_TO_PX * zoom).toFixed(2)}px`;
     if ('fontWeight' in patch) span.style.fontWeight = patch.fontWeight ?? '400';
-    if ('fontStyle' in patch) span.style.fontStyle = patch.fontStyle ?? 'normal';
+    if ('fontStyle' in patch) {
+      const value = patch.fontStyle ?? 'normal';
+      span.style.fontStyle = value;
+      // Mirror an authored oblique descriptor: computed styles drop `oblique <angle>` in some engines.
+      if (paperFontStyleFromCss(value) === 'oblique') {
+        span.dataset.paperFontStyle = paperFontStyleDescriptor('oblique', paperFontObliqueAngleFromCss(value));
+      } else {
+        delete span.dataset.paperFontStyle;
+      }
+    }
+    if ('fontStretch' in patch) span.style.fontStretch = patch.fontStretch ?? '';
+    if ('fontVariationSettings' in patch) span.style.setProperty('font-variation-settings', paperFontVariationSettingsToCss(patch.fontVariationSettings));
     if ('fontKerning' in patch) span.style.fontKerning = patch.fontKerning ?? 'auto';
     if ('color' in patch) span.style.color = patch.color ?? '';
     if ('tracking' in patch) span.style.letterSpacing = `${(patch.tracking ?? 0) / 1000}em`;
@@ -223,6 +281,7 @@ export function applyTypographyPatchToDomSelection(
   savedRange: Range | null,
   patch: Partial<RichTypographyPatch>,
   zoom: number,
+  managedPaint?: RichEditorManagedPaintContext,
 ): ApplyTypographyToDomSelectionResult | null {
   if (!savedRange || !editor.contains(savedRange.commonAncestorContainer)) return null;
   const changedKeys = Object.keys(patch) as RichTypographyKey[];
@@ -236,7 +295,7 @@ export function applyTypographyPatchToDomSelection(
   let applied = false;
   if (hasCharacters && !range.collapsed) {
     const characterPatch = Object.fromEntries(changedKeys.filter((key) => CHARACTER_KEYS.has(key)).map((key) => [key, patch[key]]));
-    const nextRange = applyCharacterPatch(editor, range, characterPatch, zoom);
+    const nextRange = applyCharacterPatch(editor, range, characterPatch, zoom, managedPaint);
     if (nextRange) { range = nextRange; applied = true; }
   }
   if (hasParagraphs) {
@@ -254,7 +313,8 @@ export function applyTypographyToDomSelection(
   previous: PaperTypography,
   next: PaperTypography,
   zoom: number,
+  managedPaint?: RichEditorManagedPaintContext,
 ): ApplyTypographyToDomSelectionResult | null {
   const patch = changedRichTypographyPatch(previous, next);
-  return applyTypographyPatchToDomSelection(editor, savedRange, patch, zoom);
+  return applyTypographyPatchToDomSelection(editor, savedRange, patch, zoom, managedPaint);
 }

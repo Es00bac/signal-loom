@@ -69,6 +69,9 @@ function buildPaperPdfRenderReadyScript(options = {}) {
           throw new Error('Managed font payload has an invalid exact identity manifest.');
         }
         for (const face of manifest.faces) {
+          if ((face.format !== 'truetype' && face.format !== 'opentype-cff') || face.collectionIndex !== 0) {
+            throw new Error('Managed face ' + face.identity + ' is not an authenticated standalone font; collection member paint is blocked. Extract it to a standalone .ttf/.otf and retry.');
+          }
           const style = face.style === 'oblique' ? 'oblique ' + (face.obliqueAngleDeg ?? 14) + 'deg' : face.style;
           const descriptor = style + ' ' + face.weight + ' ' + face.stretchPercent + '% 16px "' + face.familyAlias + '"';
           const loaded = await Promise.race([

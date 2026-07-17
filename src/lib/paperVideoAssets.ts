@@ -1,11 +1,9 @@
 import type { SourceBinLibraryItem } from '../store/sourceBinStore';
 import type { PaperDocument, PaperPage } from '../types/paper';
 import {
-  buildFlattenedPaperPageSourcePayload,
-  buildFlattenedPaperPageSvgExportWithEmbeddedAssets,
+  buildRasterizedPaperPageSourcePayload,
   getPaperPageExportDimensions,
   imageSourceToDataUrl,
-  rasterizeFlattenedPaperPageToPng,
   type FlattenedPaperPageSourcePayload,
   type PaperPageEmbeddedAssetExportOptions,
 } from './paperPageFlattenExport';
@@ -70,33 +68,18 @@ export async function buildPaperStoryboardPageSourcePayload(
     throw new Error('Paper storyboard export could not find the requested page.');
   }
 
-  const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(document, pageId, {
+  const payload = await buildRasterizedPaperPageSourcePayload(document, pageId, {
     ...exportOptions,
     resolveImageSrc: options.resolveImageSrc ?? ((src) => imageSourceToDataUrl(src)),
   });
-  let dataUrl = svgExport.dataUrl;
-  let mimeType: string = svgExport.mimeType;
-
-  try {
-    const rasterExport = await rasterizeFlattenedPaperPageToPng(svgExport);
-    dataUrl = rasterExport.dataUrl;
-    mimeType = rasterExport.mimeType;
-  } catch {
-    dataUrl = svgExport.dataUrl;
-    mimeType = svgExport.mimeType;
-  }
 
   return {
-    ...buildFlattenedPaperPageSourcePayload(document, pageId, {
-      ...exportOptions,
-      dataUrl,
-      mimeType,
-      envelopeId: descriptor.envelopeId,
-      envelopeLabel: descriptor.envelopeLabel,
-      envelopeIndex: descriptor.envelopeIndex,
-    }),
+    ...payload,
     label: descriptor.label,
     sourceKey: descriptor.sourceKey,
+    envelopeId: descriptor.envelopeId,
+    envelopeLabel: descriptor.envelopeLabel,
+    envelopeIndex: descriptor.envelopeIndex,
   };
 }
 
@@ -111,6 +94,18 @@ export async function buildPaperStoryboardPageSourcePayloads(
   }
 
   return payloads;
+}
+
+/** Prepare every raster first, then publish; a failure on any page leaves the caller with zero new assets. */
+export async function publishPaperStoryboardPageSourcePayloads<T>(
+  document: PaperDocument,
+  options: PaperStoryboardAssetOptions,
+  publish: (payload: FlattenedPaperPageSourcePayload) => Promise<T>,
+): Promise<T[]> {
+  const payloads = await buildPaperStoryboardPageSourcePayloads(document, options);
+  const published: T[] = [];
+  for (const payload of payloads) published.push(await publish(payload));
+  return published;
 }
 
 export function getPaperStoryboardExistingItemIds(

@@ -2,13 +2,14 @@
 
 Base: `bacbac510f96e5b4cbae894c44f5ba315607dfa4`.
 
-This note supersedes the route-level claims in `922-terra-exact-managed-font-five-blocker-correction.md`.
-It records Terra's correction only; fresh Sol review remains mandatory and no approval is claimed.
+This note superseded the route-level claims in `922-terra-exact-managed-font-five-blocker-correction.md`,
+but its Chromium collection-fragment claim was later disproved and is itself superseded by
+`924-exact-managed-font-shipping-blockers-closed.md`. Fresh review remains mandatory and no approval is claimed.
 
 ## Corrected shipping invariants
 
 1. Live Paper maps a managed family to its digest-derived registered alias. Registration now uses
-   the exact CSS source (including collection member identity), and a missing, unreadable, or
+   the exact standalone CSS source, and a missing, unreadable, or
    failed `FontFace` registration is an assertive visible blocked state rather than swallowed
    browser-family fallback. The picker/rich selection writes exact weight, stretch, axis defaults,
    and explicit oblique style; outline extraction carries each shaped run's coordinates into
@@ -20,9 +21,9 @@ It records Terra's correction only; fresh Sol review remains mandatory and no ap
 3. Image and Video canvas paint no longer writes a non-standard Canvas 2D
    `fontVariationSettings` property. Variable managed text is blocked before pixels are painted;
    Paper uses the supported HarfBuzz shaping/outline route with retained coordinates.
-4. Collection `@font-face` payloads select the PostScript-name URL fragment and include that
-   PostScript identity with `collectionIndex` in the manifest. A bare `format("collection")`
-   declaration is no longer the member-selection mechanism.
+4. Correction: Chromium ignores the PostScript-name URL fragment and can decode member zero even for a
+   wrong or nonexistent fragment. Browser collection paint is therefore blocked; the selected member must
+   be extracted to a standalone `.ttf`/`.otf` before import, paint, or browser-backed output.
 5. Flattened SVG output refuses managed text without an exact manifest, verifies that every
    manifest alias is embedded in the isolated SVG, then performs descriptor-specific readiness
    checks before `Image.decode()`/canvas paint. This gate is shared by flattened PNG, raster PDF,
@@ -32,7 +33,7 @@ It records Terra's correction only; fresh Sol review remains mandatory and no ap
 
 - Missing and explicitly `missingAssets` license text both reject clean-profile reopen before
   partial restore.
-- Collection output asserts the encoded PostScript fragment plus manifest identity.
+- Collection member zero, nonzero members, and nonexistent PostScript names all fail before CSS emission.
 - Isolated SVG rasterization rejects an unloaded alias before constructing/decoding an `Image`.
 - Image and Video variable Canvas paint reject rather than default-instance fallback.
 - Paper managed SVG outline tests prove that a selected `opsz` coordinate reaches `glyphPath()`.

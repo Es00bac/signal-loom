@@ -580,6 +580,9 @@ async function registerResolvedBundledFontFace(
   let resolvedIdentity: string | undefined;
   const pending = loadVerifiedBundledFontBytes(face, fetchImpl).then(async (bytes) => {
     const vet = vetFontBytes(bytes);
+    if (vet.format === 'collection') {
+      throw new Error(`${face.fullName} is stored in a TrueType/OpenType Collection that Chromium cannot authenticate. Install a standalone .ttf/.otf build before rendering.`);
+    }
     const vettedFace = vet.faces.find((candidate) => candidate.collectionIndex === face.collectionIndex);
     if (!vet.ok || !vettedFace?.ok) {
       throw new Error(`${face.fullName} failed bundled-font face validation. Reinstall the audited font library before rendering.`);
@@ -803,6 +806,9 @@ export async function installBundledPaperFontFace(input: InstallBundledPaperFont
   }
   const vet = vetFontBytes(fontBytes);
   if (!vet.ok) throw new Error(vet.errors[0] ?? `${input.face.fullName} failed production font vetting.`);
+  if (vet.format === 'collection') {
+    throw new Error(`${input.face.fullName} is stored in a TrueType/OpenType Collection that Chromium cannot authenticate. Install a standalone .ttf/.otf build before importing it into Paper.`);
+  }
   const [fontAsset, licenseAsset] = await Promise.all([
     input.repository.put(fontRecord),
     input.repository.put(licenseRecord),
