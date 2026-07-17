@@ -1,6 +1,103 @@
 # AUD-021 / AUD-022 Image snapshot pixel-integrity repair — 2026-07-16
 
-## Terra BLOCK follow-up
+## Final Terra digest BLOCK follow-up
+
+### Retraction of the second false approval
+
+Evidence commit `b356b15` asserted that the `2f05169` structural manifest made
+project JSON and native `.slimg` named snapshots integrity-proven and that all
+three producer/decoder boundaries verified the integrity contract. That
+approval claim was false and is retracted. The contract recorded only payload
+presence, dimensions, and selection byte length. A same-length selection alpha
+replacement, a same-dimension bitmap or mask replacement, and equal-sized
+cross-layer asset swaps all passed readiness and Restore. Terra's second BLOCK
+was correct.
+
+The earlier structural, transaction, rollback, ownership, selection-persistence,
+and registry-lifecycle repairs remain valid and are preserved. Production/tests
+commit `37cc1fb61fad41b1503ab96d38567056d4b75921` adds the missing content binding
+without amending, rebasing, or integrating the prior lineage.
+
+### Final correction
+
+- `ImageDocumentSnapshotIntegrity` is now version 2. Every present bitmap and
+  mask records a SHA-256 digest over canonical decoded RGBA8 bytes plus an
+  unambiguous domain, asset role, layer-id byte length/value, width, height, and
+  payload length. Selection proof uses the same domain with a distinct
+  `selection-alpha8` role and exact alpha bytes. Equal dimensions and lengths
+  therefore cannot make bitmap/mask roles or layer identities interchangeable.
+- Snapshot creation hashes immutable snapshot clones. Project JSON and `.slimg`
+  encoders first verify the in-memory proof, produce their payloads, then
+  recompute and persist proof from canonical runtime bytes instead of copying a
+  caller-supplied digest. No runtime canvas or duplicate pixel payload is added
+  to either format.
+- Project sanitation accepts only lowercase `sha256:` plus 64 hexadecimal
+  digits for every expected current-format payload. Current-format malformed,
+  removed, mismatched, mutated, or swapped proof/payload data throws before
+  store replacement. Version-1 or proof-less snapshots remain explicitly
+  legacy/unavailable and are never silently upgraded.
+- Project and native decoders hash decoded canonical pixels before marking a
+  snapshot complete. Native snapshot decoding is sequential so already-owned
+  snapshots remain visible to rollback cleanup. Partial layer decodes and
+  digest failures zero-size every newly decoded owned bitmap/mask at most once;
+  successful replacement and all prior ownership protections are unchanged.
+- Restore, History descriptors, automation targets, and the Restore button keep
+  routing through `inspectImageDocumentSnapshotIntegrity`. Because hashing is
+  synchronous over `getImageData()`/alpha bytes, readiness cannot race an
+  asynchronous verification result.
+
+### Deterministic digest red evidence
+
+Before the production correction, the new focused regression was run with:
+
+`npx vitest run --configLoader runner src/components/ImageEditor/ImageSnapshotContentIntegrity.test.ts`
+
+Result: **1 file failed; 2 tests failed**. The manifest was version 1 instead
+of version 2, and a one-byte same-length project bitmap mutation resolved as a
+complete/restorable snapshot instead of rejecting.
+
+### Final green evidence
+
+- Focused digest gate:
+  `npx vitest run --configLoader runner src/components/ImageEditor/ImageSnapshotContentIntegrity.test.ts src/components/ImageEditor/ImageSlimgFormat.test.ts src/components/ImageEditor/ImageEditorHistoryPanel.test.tsx src/lib/projectValidation.test.ts -t "digest|SHA-256|round-trips exact project|same-size native|partially decoded native"`
+  — **4 files passed; 8 tests passed; 51 skipped**.
+- Prior 19-file/199-test matrix plus the new digest suite, all with
+  `--configLoader runner`: **20 files passed; 207 tests passed**. The eight new
+  cases cover one-byte bitmap, mask, and selection mutation without changing
+  length/dimensions; equal-sized cross-layer swaps; manifest digest mutation
+  and removal; project JSON and `.slimg`; valid byte-equal round trips; legacy
+  unavailable behavior; fresh-store readiness; disabled Restore UI; rollback;
+  and exact partial-resource disposal.
+- `npx tsc -p tsconfig.app.json --noEmit --incremental false` — passed.
+- `npx tsc -p tsconfig.node.json --noEmit --incremental false` — passed.
+- Changed-file ESLint — **0 errors, 0 warnings**.
+- `git diff --check`, staged `git diff --cached --check`, and production build
+  (`CI=1 npm run build`) — passed. Vite emitted the existing `module.register()`
+  deprecation and runtime `new URL("./", import.meta.url)` warning.
+
+### Final producer/decoder/readiness audit
+
+The production audit again found one creator (`createImageDocumentSnapshot`),
+the project JSON encoder/decoder pair, and the native `.slimg` encoder/decoder
+pair. Creation and both encoders call
+`buildImageDocumentSnapshotIntegrity`; both decoders and every readiness/
+Restore consumer call `inspectImageDocumentSnapshotIntegrity`. Native baton
+handoff and the normal `.slimg` codec both route through the same audited native
+functions. No alternate complete-snapshot producer or trusted decode bypass
+was found.
+
+### Remaining risk after the final correction
+
+Canonical hashing reads every complete snapshot bitmap/mask synchronously, so
+snapshot creation, readiness inspection, and save verification add O(pixel)
+CPU/readback cost on top of the already synchronous Canvas clone cost. Large
+projects remain memory- and latency-sensitive, and no Windows/macOS/Android GPU
+trace was captured. SHA-256 detects accidental or uncoordinated replacement;
+it is not a signature, so an attacker able to rewrite both payload and manifest
+can recompute a valid digest. Version-1 structural snapshots cannot be safely
+content-upgraded and intentionally remain unavailable.
+
+## First Terra BLOCK follow-up (historical; later blocked on content binding)
 
 Terra blocked the earlier `cb492f3` evidence because production commit
 `bf6b080` still trusted `pixelState: 'complete'`, did not retain exact named-
@@ -45,7 +142,7 @@ the earlier commits.
   structural proof result rather than the `pixelState` label. Selection-
   claiming snapshots without exact restorable bytes are blocked.
 
-### Follow-up verification
+### Follow-up verification (historical; second approval retracted above)
 
 - Prior focused/neighboring set plus the new snapshot-resource and selection-
   registry lifecycle suites, all with `--configLoader runner`: **19 files
@@ -63,10 +160,10 @@ the earlier commits.
 - `git diff --check`, staged `git diff --cached --check`, and `npm run build`
   — passed. Vite emitted only the repository's existing runtime URL, browser-
   module externalization, deprecation, and large-chunk warnings.
-- A second producer/bypass audit found one production snapshot creator
-  (`createImageDocumentSnapshot`) and two trusted complete decoders (project
-  and `.slimg`); all three now construct/verify the integrity contract. Every
-  Restore/readiness consumer routes through `inspectImageDocumentSnapshotIntegrity`.
+- The `b356b15` evidence claimed that a second producer/bypass audit proved the
+  integrity contract at the creator, project decoder, and `.slimg` decoder.
+  That claim covered structure only, missed content replacement, and is
+  explicitly retracted by the final Terra digest follow-up above.
 
 ### Remaining risk
 
@@ -77,7 +174,7 @@ than a guarantee about GPU-driver reclamation timing. This follow-up adds raw
 selection bytes and small manifests but does not change those scaling limits;
 no Windows/macOS/Android GPU trace was captured in this worktree.
 
-## Outcome
+## Original implementation outcome (historical; later blocked twice)
 
 AUD-021 and AUD-022 are repaired at the Image history, named-snapshot, and
 project/workfile persistence boundaries in production commit
