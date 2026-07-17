@@ -10,6 +10,7 @@ import {
   buildLoopNodeItems,
   type FlowListItem,
 } from './listNodes';
+import { getSignalIterationCount, isTextualSignal, type FlowSignal } from './flowSignals';
 import {
   COMPOSITION_AUDIO_HANDLES,
   COMPOSITION_VIDEO_HANDLE,
@@ -87,13 +88,11 @@ export function collectListLoopInputs(
 
     const items = getValidConnectedItems(sourceNode);
 
-    return items.length > 0
-      ? [{
-          listNodeId: sourceNode.id,
-          targetHandle: edge.targetHandle,
-          items,
-        }]
-      : [];
+    return [{
+      listNodeId: sourceNode.id,
+      targetHandle: edge.targetHandle,
+      items,
+    }];
   });
 }
 
@@ -110,6 +109,10 @@ export function getLoopIterationCount(
   }
 
   const counts = inputs.map((input) => input.items.length);
+  if (counts.some((count) => count === 0)) {
+    return 0;
+  }
+
   const maxCount = Math.max(...counts);
 
   const invalidInput = counts.find(
@@ -120,15 +123,100 @@ export function getLoopIterationCount(
     throw new Error('Connected lists must have the same number of items or a single broadcastable item.');
   }
 
-  if (maxCount === 0) {
-    return 0;
-  }
-
   return maxCount;
 }
 
 export function getLoopItemForIteration(input: ConnectedListInput, index: number): FlowListItem {
   return input.items[input.items.length === 1 ? 0 : index]!;
+}
+
+const TEXTUAL_LIST_ITEM_KINDS = new Set<FlowListItem['kind']>([
+  'text',
+  'number',
+  'boolean',
+  'json',
+  'package',
+]);
+
+export function isTextualListItem(item: FlowListItem): boolean {
+  return TEXTUAL_LIST_ITEM_KINDS.has(item.kind);
+}
+
+export function buildRoutedLoopInputs(
+  loopInputs: ConnectedListInput[],
+  promptSignal: FlowSignal,
+): ConnectedListInput[] {
+  if (!isTextualSignal(promptSignal)) {
+    return loopInputs;
+  }
+
+  return loopInputs
+    .map((input) => ({
+      ...input,
+      items: input.items.filter((item) => !isTextualListItem(item)),
+    }))
+    .filter((input) => input.items.length > 0);
+}
+
+export function resolveCombinedLoopIterationCount(
+  explicitLoopCount: number,
+  promptSignalLoopCount: number,
+): number {
+  if (promptSignalLoopCount <= 1) {
+    return explicitLoopCount;
+  }
+
+  if (explicitLoopCount <= 1) {
+    return promptSignalLoopCount;
+  }
+
+  if (explicitLoopCount === promptSignalLoopCount) {
+    return explicitLoopCount;
+  }
+
+  throw new Error('Prompt batches and connected media lists must have the same length, or one side must be a single broadcastable item.');
+}
+
+export function resolveLoopRunCount(
+  loopInputs: ConnectedListInput[],
+  loopMode: ListLoopMode,
+  promptSignal: FlowSignal,
+): number {
+  const promptSignalLoopCount = getSignalIterationCount(promptSignal);
+
+  if (loopMode === 'allCombinations') {
+    const hasLoopInputs = loopInputs.length > 0;
+    const hasPromptLoop = promptSignalLoopCount > 0;
+    if (!hasLoopInputs && !hasPromptLoop) {
+      return 0;
+    }
+    const explicitLoopCount = hasLoopInputs
+      ? getLoopIterationCount(loopInputs, 'allCombinations')
+      : 1;
+    return explicitLoopCount * (hasPromptLoop ? promptSignalLoopCount : 1);
+  }
+
+  const explicitLoopCount = getLoopIterationCount(loopInputs, loopMode);
+  if (explicitLoopCount === 0 && promptSignalLoopCount > 0) {
+    return promptSignalLoopCount;
+  }
+  return resolveCombinedLoopIterationCount(explicitLoopCount, promptSignalLoopCount);
+}
+
+export function resolveAllCombinationSubIndices(
+  index: number,
+  loopIterationCount: number,
+  promptSignalIterationCount: number,
+  loopMode: ListLoopMode,
+): { directIndex: number; promptIndex: number } {
+  if (loopMode !== 'allCombinations' || promptSignalIterationCount <= 1) {
+    return { directIndex: index, promptIndex: index };
+  }
+
+  return {
+    directIndex: loopIterationCount > 0 ? index % loopIterationCount : 0,
+    promptIndex: Math.floor(index / (loopIterationCount || 1)),
+  };
 }
 
 export function buildLoopIterationItems(

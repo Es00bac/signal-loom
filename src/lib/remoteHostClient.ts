@@ -99,17 +99,17 @@ export function remoteHostAssetUrl(id: string): string {
 
 /**
  * Ask the host to resolve a source-library item's bytes by its source-item id and return them as a
- * same-origin data URL. Covers every backing the host knows (native file / scratch / IndexedDB) — the
+ * bounded metadata/sample/full lifecycle. Covers every backing the host knows (native file / scratch / IndexedDB) — the
  * universal path for opening a served library item, since the item's own `assetUrl` may be a phone-local
  * or blob: URL the served browser can't fetch. Returns null when not a served session, unpaired, the
  * host lacks the endpoint (older APK), or the item has no resolvable bytes.
  */
 export async function fetchRemoteHostSourceAssetDataUrl(itemId: string): Promise<string | null> {
-  const res = await remoteHostFetch(`/source-asset/${encodeURIComponent(itemId)}`, { timeoutMs: 15_000 });
-  if (!res || !res.ok) return null;
   try {
-    const data = (await res.json()) as { dataUrl?: string } | null;
-    return data?.dataUrl ?? null;
+    const { loadRemoteSourceAssetForBoundedRead } = await import('./assetStore');
+    const asset = await loadRemoteSourceAssetForBoundedRead(itemId, 512 * 1024 * 1024, 256 * 1024);
+    const materialized = await asset?.materialize?.();
+    return materialized?.dataUrl ?? null;
   } catch {
     return null;
   }
@@ -133,13 +133,16 @@ export async function remoteHostFetch(path: string, init: RemoteHostFetchInit = 
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
   const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (init.signal?.aborted) controller.abort();
+  else init.signal?.addEventListener('abort', onAbort, { once: true });
   const timer = init.timeoutMs ? setTimeout(() => controller.abort(), init.timeoutMs) : null;
   try {
     const res = await fetch(`${REMOTE_HOST_API_BASE}${path}`, {
       ...init,
       headers,
       cache: 'no-store',
-      signal: init.signal ?? controller.signal,
+      signal: controller.signal,
     });
     if (res.status === 401 && authRequired) {
       setToken(null);
@@ -148,6 +151,7 @@ export async function remoteHostFetch(path: string, init: RemoteHostFetchInit = 
     return res;
   } finally {
     if (timer) clearTimeout(timer);
+    init.signal?.removeEventListener('abort', onAbort);
   }
 }
 

@@ -2243,7 +2243,10 @@ function installProtocolHandlers() {
       return new Response('Sloom Studio asset capability is not registered for this project.', { status: 403 });
     }
 
-    return net.fetch(pathToFileURL(filePath).toString());
+    return net.fetch(pathToFileURL(filePath).toString(), {
+      headers: request.headers,
+      signal: request.signal,
+    });
   });
 
   protocol.handle('signal-loom-font', async (request) => {

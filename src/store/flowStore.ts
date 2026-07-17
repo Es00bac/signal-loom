@@ -89,11 +89,14 @@ import {
 } from '../lib/listNodes';
 import {
   applyListItemsToExecutionContext,
+  buildRoutedLoopInputs,
   buildLoopIterationItems,
   collectListLoopInputs,
   type LoopIterationItem,
   getLoopIterationCount,
   normalizeListLoopMode,
+  resolveAllCombinationSubIndices,
+  resolveLoopRunCount,
 } from '../lib/listExecution';
 import {
   collectPromptSignalForNode,
@@ -165,6 +168,10 @@ import { useSourceBinStore } from './sourceBinStore';
 import { useProjectUsageStore } from './projectUsageStore';
 import { useConfirmationStore } from './confirmationStore';
 import { useFlowWorkspaceStore, type FlowRunOwner } from './flowWorkspaceStore';
+import {
+  validateSourceBinResumeItem,
+  type ValidatedSourceBinResume,
+} from '../lib/sourceBinResume';
 
 export interface FlowState {
   nodes: AppNode[];
@@ -2086,20 +2093,38 @@ function coerceNumber(value: number | string | undefined, fallback: number): num
   return fallback;
 }
 
-function resolveCombinedLoopIterationCount(explicitLoopCount: number, promptSignalLoopCount: number): number {
-  if (promptSignalLoopCount <= 1) {
-    return explicitLoopCount;
-  }
-
-  if (explicitLoopCount <= 1) {
-    return promptSignalLoopCount;
-  }
-
-  if (explicitLoopCount === promptSignalLoopCount) {
-    return explicitLoopCount;
-  }
-
-  throw new Error('Prompt batches and connected media lists must have the same length, or one side must be a single broadcastable item.');
+function providerRunFingerprint(rootNodeId: string): string {
+  const normalize = (value: unknown): unknown => {
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+    if (value === null || typeof value !== 'object') return value;
+    if (value instanceof Blob) return { type: value.type, size: value.size };
+    if (Array.isArray(value)) return value.map(normalize);
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .flatMap(([key, nested]) => {
+        const normalized = normalize(nested);
+        return normalized === undefined ? [] : [[key, normalized]];
+      }));
+  };
+  const state = useFlowStore.getState();
+  const settings = useSettingsStore.getState();
+  const sourceItems = useSourceBinStore.getState().getAllItems().map((item) => ({
+    id: item.id, kind: item.kind, assetId: item.assetId, assetUrl: item.assetUrl,
+    text: item.text, mimeType: item.mimeType, originNodeId: item.originNodeId,
+    envelopeId: item.envelopeId, envelopeIndex: item.envelopeIndex,
+  }));
+  return JSON.stringify(normalize({
+    rootNodeId,
+    nodes: state.nodes.map((node) => ({
+      id: node.id, type: node.type, parentId: node.parentId,
+      data: Object.fromEntries(Object.entries(node.data).filter(([key]) => ![
+        'onChange', 'onRun', 'onSelectAttempt', 'isRunning', 'error', 'statusMessage',
+      ].includes(key))),
+    })),
+    edges: state.edges,
+    settings,
+    sourceItems,
+  }));
 }
 
 function formatBlockingDiagnosticsMessage(diagnostics: Array<{ message: string; nodeId?: string; edgeId?: string }>): string {
@@ -2133,14 +2158,36 @@ function buildEnvelopeItemFromExecution(
   };
 }
 
-function buildEnvelopeItemFromSourceBinItem(item: import('./sourceBinStore').SourceBinLibraryItem): EnvelopeItem {
+function projectedResultType(node: AppNode): ResultType {
+  switch (node.type) {
+    case 'imageGen':
+    case 'cropImageNode':
+      return 'image';
+    case 'videoGen':
+    case 'composition':
+      return 'video';
+    case 'audioGen':
+      return 'audio';
+    case 'visionVerifyNode':
+      return 'boolean';
+    case 'functionNode':
+      return ['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope'].includes(String(node.data.resultType))
+        ? node.data.resultType as ResultType
+        : 'text';
+    default:
+      return 'text';
+  }
+}
+
+function buildEnvelopeItemFromSourceBinItem(resume: ValidatedSourceBinResume): EnvelopeItem {
+  const { item } = resume;
   return {
     id: `envelope-${item.id}`,
     index: item.envelopeIndex ?? 0,
-    kind: item.kind as ResultType,
+    kind: resume.kind,
     label: item.label,
-    value: item.assetUrl ?? item.text ?? '',
-    mimeType: item.mimeType ?? 'application/octet-stream',
+    value: resume.value,
+    mimeType: resume.mimeType,
     sourceBinItemId: item.id,
     sourceNodeId: item.originNodeId ?? '',
   };
@@ -3126,6 +3173,7 @@ export const useFlowStore = create<FlowState>()(
         const run = (async () => {
         const preflightState = get();
         const preflightSettings = useSettingsStore.getState();
+        const preflightFingerprint = providerRunFingerprint(nodeId);
         const preflightEstimate = estimateExecutionPlan(
           nodeId,
           preflightState.nodes,
@@ -3167,13 +3215,15 @@ export const useFlowStore = create<FlowState>()(
           if (promptDiagnostics.length > 0) {
             throw new Error(formatBlockingDiagnosticsMessage(promptDiagnostics));
           }
-          preflightLoopCount = getLoopIterationCount(
+          const preflightLoopInputs = buildRoutedLoopInputs(
             collectListLoopInputs(nodeId, preflightState.nodes, preflightState.edges),
-            preflightLoopMode,
+            preflightPromptSignal,
           );
-          preflightRunCount = resolveCombinedLoopIterationCount(
-            preflightLoopCount,
-            getSignalIterationCount(preflightPromptSignal),
+          preflightLoopCount = getLoopIterationCount(preflightLoopInputs, preflightLoopMode);
+          preflightRunCount = resolveLoopRunCount(
+            preflightLoopInputs,
+            preflightLoopMode,
+            preflightPromptSignal,
           );
         } catch (error) {
           get().patchNodeData(nodeId, {
@@ -3183,7 +3233,10 @@ export const useFlowStore = create<FlowState>()(
           return;
         }
 
-        if (preflightRunCount > 1) {
+        if (
+          preflightRunCount > 1
+          && !(preflightEstimate.rollup.totalKnownCostUsd >= 0.01 || preflightEstimate.rollup.unknownCostCount > 0)
+        ) {
           const preflightNode = preflightState.nodes.find((node) => node.id === nodeId);
           const preflightLoopMode = normalizeListLoopMode(preflightNode?.data.listLoopMode);
           const loopLabel = preflightLoopCount > 0
@@ -3206,7 +3259,7 @@ export const useFlowStore = create<FlowState>()(
         if (preflightEstimate.rollup.totalKnownCostUsd >= 0.01 || preflightEstimate.rollup.unknownCostCount > 0) {
           const summary = formatRollupSummary(preflightEstimate.rollup, 'Estimated run cost');
           const proceed = await useConfirmationStore.getState().requestConfirmation(
-            `${summary}\n\nOnly continue if you want to spend against the configured providers now.`,
+            `${summary}${preflightRunCount > 1 ? `\n\nThis plan contains ${preflightRunCount} exact batch iteration${preflightRunCount === 1 ? '' : 's'}.` : ''}\n\nOnly continue if you want to spend against the configured providers now.`,
             'Run Cost Confirmation',
           );
 
@@ -3217,6 +3270,18 @@ export const useFlowStore = create<FlowState>()(
             });
             return;
           }
+        }
+
+        // Confirmation authorizes exactly the graph, inputs, Source identities, and
+        // requester settings the user saw. Re-enter planning if any of those changed
+        // while a dialog was pending; do not allow the stale estimate to spend.
+        if (providerRunFingerprint(nodeId) !== preflightFingerprint) {
+          get().patchNodeData(nodeId, {
+            statusMessage: 'The run plan changed while awaiting confirmation. Re-planning before any provider request…',
+            error: undefined,
+          });
+          activeGraphRuns.delete(runKey);
+          return get().runNode(nodeId);
         }
 
         const workspaceState = useFlowWorkspaceStore.getState();
@@ -3451,9 +3516,10 @@ export const useFlowStore = create<FlowState>()(
             const settings = useSettingsStore.getState();
             const loopInputs = collectListLoopInputs(currentId, latestState.nodes, latestState.edges);
             const loopMode = normalizeListLoopMode(latestNode.data.listLoopMode);
-            const loopIterationCount = getLoopIterationCount(loopInputs, loopMode);
             const promptSignalIterationCount = getSignalIterationCount(promptSignal);
-            const combinedIterationCount = resolveCombinedLoopIterationCount(loopIterationCount, promptSignalIterationCount);
+            const routedLoopInputs = buildRoutedLoopInputs(loopInputs, promptSignal);
+            const loopIterationCount = getLoopIterationCount(routedLoopInputs, loopMode);
+            const combinedIterationCount = resolveLoopRunCount(routedLoopInputs, loopMode, promptSignal);
 
             if (combinedIterationCount > 0) {
               const envelopeItems: EnvelopeItem[] = [];
@@ -3476,17 +3542,22 @@ export const useFlowStore = create<FlowState>()(
                   break;
                 }
 
-                const iterationItems = loopIterationCount > 0 ? buildLoopIterationItems(loopInputs, index, loopMode) : [];
-                const routedIterationItems = promptSignalIterationCount > 0
-                  ? iterationItems.filter(({ item }) => item.kind !== 'text')
-                  : iterationItems;
+                const { directIndex, promptIndex } = resolveAllCombinationSubIndices(
+                  index,
+                  loopIterationCount,
+                  promptSignalIterationCount,
+                  loopMode,
+                );
+                const iterationItems = loopIterationCount > 0
+                  ? buildLoopIterationItems(routedLoopInputs, directIndex, loopMode)
+                  : [];
                 const loopContext = applyListItemsToExecutionContext(
                   {
                     ...context,
-                    prompt: promptSignalIterationCount > 0 ? signalToTextAt(promptSignal, index) : context.prompt,
+                    prompt: promptSignalIterationCount > 0 ? signalToTextAt(promptSignal, promptIndex) : context.prompt,
                   },
                   latestNode,
-                  routedIterationItems,
+                  iterationItems,
                 );
                 
                 const envelopeId = await hashExecutionParameters(latestNode.data, loopContext);
@@ -3494,12 +3565,15 @@ export const useFlowStore = create<FlowState>()(
                 const existingAsset = allSourceBinItems.find(
                   (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === index
                 );
+                const existingResume = currentId === nodeId && existingAsset
+                  ? await validateSourceBinResumeItem(existingAsset, projectedResultType(latestNode), abortSignal)
+                  : undefined;
 
                 // A Source result belongs to the root that produced it. Dependencies
                 // must execute for every root run, even when a prior root persisted
                 // an otherwise-matching envelope item.
-                if (currentId === nodeId && existingAsset) {
-                  envelopeItems.push(buildEnvelopeItemFromSourceBinItem(existingAsset));
+                if (existingResume) {
+                  envelopeItems.push(buildEnvelopeItemFromSourceBinItem(existingResume));
                   commitRunPatch(currentId, {
                     envelopeItems,
                     statusMessage: `${loopStatusLabel} ${index + 1}/${combinedIterationCount}: Resumed from Source Bin`,
@@ -3610,20 +3684,23 @@ export const useFlowStore = create<FlowState>()(
             const existingAsset = allSourceBinItems.find(
               (item) => item.originNodeId === currentId && item.envelopeId === envelopeId && item.envelopeIndex === 0
             );
+            const existingResume = currentId === nodeId && existingAsset
+              ? await validateSourceBinResumeItem(existingAsset, projectedResultType(latestNode), abortSignal)
+              : undefined;
 
             // Never satisfy a dependency from an earlier root's saved Source item.
             // Root-level resume remains available for an explicit direct rerun.
-            if (currentId === nodeId && existingAsset) {
+            if (existingResume) {
               const execution = {
-                result: existingAsset.assetUrl ?? existingAsset.text ?? '',
-                resultType: existingAsset.kind as import('../types/flow').ResultType,
+                result: existingResume.value,
+                resultType: existingResume.kind,
                 statusMessage: 'Resumed from Source Bin',
-                mimeType: existingAsset.mimeType,
+                mimeType: existingResume.mimeType,
               };
 
               const nextAttemptState = appendResultAttempt(latestNode.data.resultHistory ?? [], {
                 ...execution,
-                sourceBinItemId: existingAsset.id,
+                sourceBinItemId: existingResume.item.id,
               });
 
               commitRunPatch(currentId, {

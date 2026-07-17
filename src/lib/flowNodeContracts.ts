@@ -74,7 +74,7 @@ export interface FlowNodeContract {
   implementation: {
     status: 'implemented' | 'structural';
     path: string;
-    apiCapability?: 'text' | 'number' | 'boolean' | 'json' | 'image' | 'video' | 'audio';
+    apiCapability?: 'text' | 'image' | 'video' | 'audio';
   };
 }
 
@@ -92,9 +92,23 @@ const controlType = type('control');
 const unknownType = type('unknown');
 const listMixedType = containerType('list', { kind: 'mixed' });
 const envelopeMixedType = containerType('envelope', { kind: 'mixed' });
-const envelopeTextType = containerType('envelope', textType);
 const envelopeImageType = containerType('envelope', imageType);
 const envelopePackageType = containerType('envelope', packageType);
+
+const textualAtomicTypes: readonly FlowDataType[] = [
+  textType,
+  numberType,
+  booleanType,
+  jsonType,
+  packageType,
+];
+const textualEnvelopeTypes: readonly FlowDataType[] = textualAtomicTypes.map((item) => containerType('envelope', item));
+const textualListTypes: readonly FlowDataType[] = textualAtomicTypes.map((item) => containerType('list', item));
+const textualPromptInputTypes: readonly FlowDataType[] = [
+  ...textualAtomicTypes,
+  ...textualListTypes,
+  ...textualEnvelopeTypes,
+];
 
 const knownAtomicValueTypes: readonly FlowDataType[] = [
   textType,
@@ -145,13 +159,8 @@ const imageReferenceInputTypes: readonly FlowDataType[] = [
 ];
 
 const imagePromptInputTypes: readonly FlowDataType[] = [
-  textType,
-  jsonType,
+  ...textualPromptInputTypes,
   videoType,
-  packageType,
-  envelopeTextType,
-  envelopePackageType,
-  envelopeMixedType,
 ];
 
 const allKnownValueTypes: readonly FlowDataType[] = [
@@ -249,7 +258,7 @@ const resolvers = {
       ...(modalities.includes('image') ? [imageType] : []),
       ...(modalities.includes('video') ? [videoType] : []),
       ...(modalities.includes('audio') ? [audioType] : []),
-      jsonType,
+      ...textualPromptInputTypes.filter((type) => type.kind !== 'text'),
     ];
 
     return [
@@ -266,7 +275,7 @@ const resolvers = {
     input(
       null,
       context.node.data.audioGenerationMode === 'voiceChange' ? 'Voice source / config' : 'Prompt / config',
-      context.node.data.audioGenerationMode === 'voiceChange' ? [audioType, jsonType] : [textType, jsonType],
+      context.node.data.audioGenerationMode === 'voiceChange' ? [audioType, jsonType] : textualPromptInputTypes,
       { maxConnections: null },
     ),
     output(null, 'Audio', [audioType]),
@@ -400,7 +409,7 @@ export const FLOW_NODE_CONTRACTS = {
   runMeNode: define('runMeNode', 'sink', 'Provide an explicit button that executes its complete upstream dependency graph.', resolvers.runMeNode, ['envelope'], []),
   packageNode: define('packageNode', 'container', 'Bundle an image asset and descriptive text as one package value.', resolvers.packageNode, ['imageGen', 'textNode'], ['sourceBin']),
   loopNode: define('loopNode', 'control', 'Repeat one connected value a fixed number of times as a list.', resolvers.loopNode, ['textNode'], ['imageGen']),
-  visionVerifyNode: define('visionVerifyNode', 'transform', 'Verify a generated image against a prompt and optional reference image.', resolvers.visionVerifyNode, ['imageGen', 'textNode'], ['conditionalNode'], 'boolean'),
+  visionVerifyNode: define('visionVerifyNode', 'transform', 'Verify a generated image against a prompt and optional reference image.', resolvers.visionVerifyNode, ['imageGen', 'textNode'], ['conditionalNode'], 'text'),
   logicNode: define('logicNode', 'transform', 'Apply AND, OR, XOR, or NOT to explicit boolean inputs.', resolvers.logicNode, ['comparisonNode'], ['conditionalNode']),
   conditionalNode: define('conditionalNode', 'control', 'Select one of two compatible values from a boolean condition.', resolvers.conditionalNode, ['logicNode'], ['valueMonitorNode']),
   comparisonNode: define('comparisonNode', 'transform', 'Compare two text or number values and emit a boolean.', resolvers.comparisonNode, ['valueNode'], ['logicNode']),
@@ -468,7 +477,7 @@ function define(
   resolvePorts: PortResolver,
   upstream: readonly FlowNodeType[],
   downstream: readonly FlowNodeType[],
-  apiCapability?: 'text' | 'number' | 'boolean' | 'json' | 'image' | 'video' | 'audio',
+  apiCapability?: 'text' | 'image' | 'video' | 'audio',
 ): FlowNodeContract {
   return {
     type: nodeType,
@@ -582,7 +591,7 @@ function resolveVideoPorts(context: FlowNodeContractContext): readonly FlowPortC
     : capability ? undefined : `${modelId || 'The selected model'} does not support ${description} through this API route.`;
 
   return [
-    input('video-prompt', 'Prompt / config', [textType, jsonType], { maxConnections: null, disabledReason: importMode ? 'Imported Video nodes do not consume prompts.' : undefined }),
+    input('video-prompt', 'Prompt / config', textualPromptInputTypes, { maxConnections: null, disabledReason: importMode ? 'Imported Video nodes do not consume prompts.' : undefined }),
     input('video-start-frame', 'Start frame', imageCompositeInputTypes, { disabledReason: unsupported(support.imageToVideo, 'image-to-video') }),
     input('video-end-frame', 'End frame', imageCompositeInputTypes, { disabledReason: unsupported(support.interpolation, 'first/last-frame interpolation') }),
     ...['video-reference-1', 'video-reference-2', 'video-reference-3'].map((id, index) => input(id, `Reference ${index + 1}`, imageReferenceInputTypes, {

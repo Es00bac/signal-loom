@@ -107,6 +107,9 @@ export function evaluateNodeSignal(
   switch (node.type) {
     case 'textNode': {
       const mode = node.data.mode ?? 'prompt';
+      if (mode === 'generate' && Array.isArray(node.data.envelopeItems)) {
+        return listSignal(node.data.envelopeItems.map((item) => signalFromEnvelopeItem(item)), node.id, 'envelope');
+      }
       const resolved = resolveFlowVariablesInText(
         String((mode === 'generate' ? node.data.result : node.data.prompt) ?? ''),
         nodes,
@@ -954,6 +957,10 @@ function vectorizeRecord(
     };
   }
 
+  if (listLengths.some((length) => length === 0)) {
+    return listSignal([], nodeId, 'list', diagnostics);
+  }
+
   const maxLength = Math.max(...listLengths);
   const invalidLength = listLengths.find((length) => length !== 1 && length !== maxLength);
   if (invalidLength !== undefined) {
@@ -1164,9 +1171,9 @@ function isListSignal(signal: FlowSignal): signal is FlowSignal & { items: FlowS
   return Array.isArray(signal.items);
 }
 
-function isTextualSignal(signal: FlowSignal): boolean {
+export function isTextualSignal(signal: FlowSignal): boolean {
   if (isListSignal(signal)) {
-    return signal.items.length > 0 && signal.items.every(isTextualSignal);
+    return signal.items.every(isTextualSignal);
   }
   return TEXTUAL_KINDS.has(signal.kind);
 }

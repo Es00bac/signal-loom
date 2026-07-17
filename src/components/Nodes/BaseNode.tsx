@@ -14,10 +14,12 @@ import {
   withFlowNodeInteractionClasses,
 } from '../../lib/flowNodeInteraction';
 import {
+  buildRoutedLoopInputs,
   collectListLoopInputs,
-  getLoopIterationCount,
   normalizeListLoopMode,
+  resolveLoopRunCount,
 } from '../../lib/listExecution';
+import { collectPromptSignalForNode, getSignalIterationCount } from '../../lib/flowSignals';
 import { LOOP_BREAK_TARGET_HANDLE } from '../../lib/flowControlHandles';
 import { useFlowStore } from '../../store/flowStore';
 import type { FlowNodeType, ListLoopMode } from '../../types/flow';
@@ -95,20 +97,26 @@ export const BaseNode: React.FC<BaseNodeProps> = ({
     }
 
     const inputs = collectListLoopInputs(nodeId, nodes, edges);
-    if (inputs.length < 2) {
+    const promptSignal = collectPromptSignalForNode(nodeId, nodes, edges);
+    const promptSignalIterationCount = getSignalIterationCount(promptSignal);
+    const routedInputs = buildRoutedLoopInputs(inputs, promptSignal);
+    const promptAxisCount = promptSignalIterationCount > 1 ? 1 : 0;
+    const axisCount = routedInputs.length + promptAxisCount;
+
+    if (axisCount < 2) {
       return undefined;
     }
 
     const getRunCount = (mode: ListLoopMode) => {
       try {
-        return getLoopIterationCount(inputs, mode);
+        return resolveLoopRunCount(routedInputs, mode, promptSignal);
       } catch {
         return undefined;
       }
     };
 
     return {
-      inputCount: inputs.length,
+      inputCount: axisCount,
       pairedCount: getRunCount('paired'),
       allCombinationsCount: getRunCount('allCombinations'),
     };

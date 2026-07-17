@@ -10,15 +10,19 @@ const mocks = vi.hoisted(() => ({
   })),
   stop: vi.fn(async () => ({ running: false, port: 0, ip: '10.0.0.5', url: null })),
   status: vi.fn(async () => ({ running: true, port: 8723, ip: '10.0.0.5', url: 'http://10.0.0.5:8723/' })),
+  addListener: vi.fn(async () => ({ remove: vi.fn() })),
 }));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { getPlatform: () => mocks.platform.value },
-  registerPlugin: () => ({ start: mocks.start, stop: mocks.stop, status: mocks.status }),
+  registerPlugin: () => ({
+    start: mocks.start, stop: mocks.stop, status: mocks.status, addListener: mocks.addListener,
+  }),
 }));
 
 import {
   getAndroidLanServerStatus,
+  initializeLanServerProxy,
   isAndroidLanServerAvailable,
   resolveLanRequest,
   SIGNAL_LOOM_LAN_SERVER_DEFAULT_PORT,
@@ -67,6 +71,74 @@ describe('androidLanServer', () => {
     const status = await stopAndroidLanServer();
     expect(mocks.stop).toHaveBeenCalled();
     expect(status?.running).toBe(false);
+  });
+
+  it('serves bounded asset metadata separately from the asset payload', async () => {
+    const getAssetMetadata = vi.fn(async () => ({
+      id: 'asset-1', name: 'clip.mp4', mimeType: 'video/mp4', size: 123, createdAt: 1,
+    }));
+    initializeLanServerProxy({ getAssetMetadata });
+    await expect(resolveLanRequest({
+      method: 'GET', path: '/__loom/api/asset-metadata/asset-1',
+    })).resolves.toMatchObject({ size: 123, mimeType: 'video/mp4' });
+    expect(getAssetMetadata).toHaveBeenCalledWith('asset-1');
+  });
+
+  it('requires and forwards the explicit bound, sample window, and identity for asset bytes', async () => {
+    const getAsset = vi.fn(async () => ({ dataUrl: 'data:image/png;base64,QUJD' }));
+    const getAssetSample = vi.fn(async () => ({ headBase64: 'QUJD', tailBase64: 'QUJD' }));
+    initializeLanServerProxy({ getAsset, getAssetSample });
+
+    await expect(resolveLanRequest({
+      method: 'GET', path: '/__loom/api/asset/asset-1',
+    })).resolves.toBeNull();
+    expect(getAsset).not.toHaveBeenCalled();
+
+    const query = 'maxBytes=8&sampleBytes=4&transportIdentity=revision-1';
+    await expect(resolveLanRequest({
+      method: 'GET', path: `/__loom/api/asset-sample/asset-1?${query}`,
+    })).resolves.toMatchObject({ headBase64: 'QUJD' });
+    await expect(resolveLanRequest({
+      method: 'GET', path: `/__loom/api/asset/asset-1?${query}`,
+    })).resolves.toMatchObject({ dataUrl: 'data:image/png;base64,QUJD' });
+    expect(getAssetSample).toHaveBeenCalledWith('asset-1', {
+      maxBytes: 8, sampleBytes: 4, transportIdentity: 'revision-1',
+    });
+    expect(getAsset).toHaveBeenCalledWith('asset-1', {
+      maxBytes: 8, sampleBytes: 4, transportIdentity: 'revision-1',
+    });
+  });
+
+  it('requires the same metadata, sample, and full lifecycle for universal source assets', async () => {
+    const getSourceAssetMetadata = vi.fn(async () => ({
+      id: 'source-1', name: 'clip.mp4', mimeType: 'video/mp4', size: 123, createdAt: 1,
+      transportRevision: 'source-revision', transportIdentity: 'sha256:source-identity',
+    }));
+    const getSourceAssetSample = vi.fn(async () => ({ headBase64: 'QUJD', tailBase64: 'QUJD' }));
+    const getSourceAsset = vi.fn(async () => ({ dataUrl: 'data:video/mp4;base64,QUJD' }));
+    initializeLanServerProxy({ getSourceAssetMetadata, getSourceAssetSample, getSourceAsset });
+
+    await expect(resolveLanRequest({
+      method: 'GET', path: '/__loom/api/source-asset/source-1',
+    })).resolves.toBeNull();
+    expect(getSourceAsset).not.toHaveBeenCalled();
+
+    await expect(resolveLanRequest({
+      method: 'GET', path: '/__loom/api/source-asset-metadata/source-1',
+    })).resolves.toMatchObject({ size: 123, mimeType: 'video/mp4' });
+    const query = 'maxBytes=256&sampleBytes=64&transportIdentity=sha256%3Asource-identity';
+    await expect(resolveLanRequest({
+      method: 'GET', path: `/__loom/api/source-asset-sample/source-1?${query}`,
+    })).resolves.toMatchObject({ headBase64: 'QUJD' });
+    await expect(resolveLanRequest({
+      method: 'GET', path: `/__loom/api/source-asset/source-1?${query}`,
+    })).resolves.toMatchObject({ dataUrl: 'data:video/mp4;base64,QUJD' });
+    expect(getSourceAssetSample).toHaveBeenCalledWith('source-1', {
+      maxBytes: 256, sampleBytes: 64, transportIdentity: 'sha256:source-identity',
+    });
+    expect(getSourceAsset).toHaveBeenCalledWith('source-1', {
+      maxBytes: 256, sampleBytes: 64, transportIdentity: 'sha256:source-identity',
+    });
   });
 });
 

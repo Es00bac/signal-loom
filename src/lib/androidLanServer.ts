@@ -17,6 +17,7 @@ import {
 } from './projectSyncService';
 import { getEditLockState, type EditLockDevice } from './projectEditLock';
 import { hostClaim, hostForceClaim, hostHeartbeat, hostRelease, hostYield } from './editLockHost';
+import { BINARY_RESUME_SAMPLE_BYTES, MAX_BINARY_RESUME_BYTES } from './binaryResumeSniffer';
 
 /**
  * Bridge to the native SignalLoomLanServer plugin, which serves the bundled web app over the local
@@ -114,20 +115,30 @@ interface LanProxyHandlers {
   getProjects?: () => Promise<unknown>;
   getProject?: (id: string) => Promise<unknown>;
   getSourceLibrary?: () => Promise<unknown>;
-  getAsset?: (id: string) => Promise<unknown>;
+  getAsset?: (id: string, request?: LanBoundedAssetRequest) => Promise<unknown>;
+  getAssetSample?: (id: string, request?: LanBoundedAssetRequest) => Promise<unknown>;
+  getAssetMetadata?: (id: string) => Promise<unknown>;
   /**
    * Resolve a source-library item's bytes by its *source-item* id (not assetId), via the universal
    * `loadItemAsDataUrl` resolver. Unlike `getAsset` (IndexedDB only), this serves native-file- and
    * scratch-backed items too — the bytes a served browser can't reach through the item's phone-local
-   * `assetUrl`. Returns a same-origin `{ dataUrl }` (or null when the item/bytes are unavailable).
+   * `assetUrl`. The metadata/sample/full handlers below bind all three phases to one exact digest.
    */
-  getSourceAsset?: (itemId: string) => Promise<unknown>;
+  getSourceAsset?: (itemId: string, request?: LanBoundedAssetRequest) => Promise<unknown>;
+  getSourceAssetSample?: (itemId: string, request?: LanBoundedAssetRequest) => Promise<unknown>;
+  getSourceAssetMetadata?: (itemId: string) => Promise<unknown>;
   /** Phase B: apply a source-library mutation pushed by a served client to the phone's live store. */
   applySourceLibraryMutation?: (change: SourceLibraryNativeChange) => Promise<void>;
   /** Phase B: store an asset blob (data-URL record) uploaded by a served client. Additive only. */
   putAsset?: (id: string, record: unknown) => Promise<void>;
 }
 const proxyHandlers: LanProxyHandlers = {};
+
+interface LanBoundedAssetRequest {
+  maxBytes: number;
+  sampleBytes: number;
+  transportIdentity: string;
+}
 
 /**
  * The namespaced data API the phone host answers for served desktop browsers (task #20; see
@@ -192,11 +203,37 @@ export async function resolveLanRequest(req: { method: string; path: string; bod
     }
     if (path.startsWith(`${REMOTE_HOST_API_BASE}/source-asset/`)) {
       const itemId = decodeURIComponent(path.slice(`${REMOTE_HOST_API_BASE}/source-asset/`.length));
-      return proxyHandlers.getSourceAsset ? await proxyHandlers.getSourceAsset(itemId) : null;
+      const request = parseLanBoundedAssetRequest(queryString);
+      return request && proxyHandlers.getSourceAsset
+        ? await proxyHandlers.getSourceAsset(itemId, request)
+        : null;
+    }
+    if (path.startsWith(`${REMOTE_HOST_API_BASE}/source-asset-metadata/`)) {
+      const itemId = decodeURIComponent(path.slice(`${REMOTE_HOST_API_BASE}/source-asset-metadata/`.length));
+      return proxyHandlers.getSourceAssetMetadata ? await proxyHandlers.getSourceAssetMetadata(itemId) : null;
+    }
+    if (path.startsWith(`${REMOTE_HOST_API_BASE}/source-asset-sample/`)) {
+      const itemId = decodeURIComponent(path.slice(`${REMOTE_HOST_API_BASE}/source-asset-sample/`.length));
+      const request = parseLanBoundedAssetRequest(queryString);
+      return request && proxyHandlers.getSourceAssetSample
+        ? await proxyHandlers.getSourceAssetSample(itemId, request)
+        : null;
+    }
+    if (path.startsWith(`${REMOTE_HOST_API_BASE}/asset-metadata/`)) {
+      const id = decodeURIComponent(path.slice(`${REMOTE_HOST_API_BASE}/asset-metadata/`.length));
+      return proxyHandlers.getAssetMetadata ? await proxyHandlers.getAssetMetadata(id) : null;
+    }
+    if (path.startsWith(`${REMOTE_HOST_API_BASE}/asset-sample/`)) {
+      const id = decodeURIComponent(path.slice(`${REMOTE_HOST_API_BASE}/asset-sample/`.length));
+      const request = parseLanBoundedAssetRequest(queryString);
+      return request && proxyHandlers.getAssetSample
+        ? await proxyHandlers.getAssetSample(id, request)
+        : null;
     }
     if (path.startsWith(`${REMOTE_HOST_API_BASE}/asset/`)) {
       const id = decodeURIComponent(path.slice(`${REMOTE_HOST_API_BASE}/asset/`.length));
-      return proxyHandlers.getAsset ? await proxyHandlers.getAsset(id) : null;
+      const request = parseLanBoundedAssetRequest(queryString);
+      return request && proxyHandlers.getAsset ? await proxyHandlers.getAsset(id, request) : null;
     }
     if (path === `${REMOTE_HOST_API_BASE}/lock`) {
       // Current cross-device edit-baton state (memory: cross-device-sync-baton-model). The live stream
@@ -319,6 +356,24 @@ export async function resolveLanRequest(req: { method: string; path: string; bod
   }
 
   return null;
+}
+
+function parseLanBoundedAssetRequest(queryString: string): LanBoundedAssetRequest | undefined {
+  const query = new URLSearchParams(queryString);
+  const maxBytes = Number(query.get('maxBytes'));
+  const sampleBytes = Number(query.get('sampleBytes'));
+  const transportIdentity = query.get('transportIdentity') ?? '';
+  return Number.isSafeInteger(maxBytes)
+    && maxBytes > 0
+    && maxBytes <= MAX_BINARY_RESUME_BYTES
+    && Number.isSafeInteger(sampleBytes)
+    && sampleBytes > 0
+    && sampleBytes <= BINARY_RESUME_SAMPLE_BYTES
+    && sampleBytes <= maxBytes
+    && transportIdentity.length > 0
+    && transportIdentity.length <= 256
+    ? { maxBytes, sampleBytes, transportIdentity }
+    : undefined;
 }
 
 function parseJsonBody<T>(body: string | undefined): T | null {

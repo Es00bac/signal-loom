@@ -166,6 +166,36 @@ describe('validateFlowConnection', () => {
       .toMatchObject({ valid: true, carriedType: { kind: 'envelope', item: { kind: 'text' } } });
   });
 
+  it.each(['text', 'number', 'boolean', 'json', 'package'] as const)(
+    'accepts concrete list<%s> and envelope<%s> prompt connections',
+    (kind) => {
+      const nodes = [
+        node('source-list', 'list', { envelopeItemKind: kind }),
+        node('source-envelope', 'envelope', { envelopeItemKind: kind }),
+        node('target', 'imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }),
+      ];
+
+      expect(validateFlowConnection(connection({ source: 'source-list' }), { nodes, edges: [] }))
+        .toMatchObject({ valid: true, carriedType: { kind: 'list', item: { kind } } });
+      expect(validateFlowConnection(connection({ source: 'source-envelope' }), { nodes, edges: [] }))
+        .toMatchObject({ valid: true, carriedType: { kind: 'envelope', item: { kind } } });
+    },
+  );
+
+  it('rejects envelope<mixed> on prompt ports while retaining explicit mixed media routing', () => {
+    const nodes = [
+      node('source', 'envelope'),
+      node('target', 'imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }),
+    ];
+
+    expect(validateFlowConnection(connection(), { nodes, edges: [] })).toMatchObject({
+      valid: false,
+      carriedType: { kind: 'envelope', item: { kind: 'mixed' } },
+    });
+    expect(validateFlowConnection(connection({ targetHandle: 'image-edit-source' }), { nodes, edges: [] }))
+      .toMatchObject({ valid: true, carriedType: { kind: 'envelope', item: { kind: 'mixed' } } });
+  });
+
   it('preserves a configured container output type before it has connected items', () => {
     const nodes = [
       node('envelope', 'envelope', { envelopeItemKind: 'image' }),

@@ -2,13 +2,21 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   deleteImportedAsset,
+  createStoredAssetTransportMetadata,
+  createStoredAssetTransportRecord,
+  createStoredAssetTransportSample,
   loadImportedAsset,
   loadImportedAssetAsDataUrl,
   loadImportedAssetBlob,
+  loadImportedAssetRecord,
   saveDataUrlAsset,
   saveImportedAsset,
   type StoredAssetPayload,
+  type StoredAssetRecord,
 } from '../lib/assetStore';
+import { readBoundedBytesResponse } from '../lib/boundedResponse';
+import { visitBase64DataUrlBytes } from '../lib/boundedDataUrl';
+import { MAX_BINARY_RESUME_BYTES } from '../lib/binaryResumeSniffer';
 import {
   loadScratchAssetBlob,
   storeScratchAssetBlob,
@@ -2048,15 +2056,22 @@ initializeLanServerProxy({
     });
     return { version: getHostSourceLibraryVersion(), snapshot };
   },
-  // The seed ships without asset bytes, and a served browser can't reach the phone-local `assetUrl`
-  // of native-file/scratch-backed items (nor blob: URLs). So resolve any item's bytes here by its
-  // source-item id through the universal resolver and hand back a same-origin data URL.
-  getSourceAsset: async (itemId) => {
-    const state = useSourceBinStore.getState();
-    const item = state.bins.flatMap((bin) => bin.items).find((candidate) => candidate.id === itemId);
-    if (!item) return null;
-    const dataUrl = await loadItemAsDataUrl(item, state.scratchDirectoryHandle);
-    return dataUrl ? { dataUrl, mimeType: item.mimeType } : null;
+  // Bind metadata, sample, and materialized payload to one exact bounded
+  // transport identity. This prevents a replaced LAN asset from reusing an
+  // earlier sample or stale middle bytes.
+  getSourceAssetMetadata: async (itemId) => {
+    const record = await loadSourceAssetTransportRecord(itemId, MAX_BINARY_RESUME_BYTES);
+    return record ? createStoredAssetTransportMetadata(record) : null;
+  },
+  getSourceAssetSample: async (itemId, request) => {
+    if (!request) return null;
+    const record = await loadSourceAssetTransportRecord(itemId, request.maxBytes);
+    return record ? createStoredAssetTransportSample(record, request) : null;
+  },
+  getSourceAsset: async (itemId, request) => {
+    if (!request) return null;
+    const record = await loadSourceAssetTransportRecord(itemId, request.maxBytes);
+    return record ? createStoredAssetTransportRecord(record, request) : null;
   },
   applySourceLibraryMutation: async (change) => {
     // Apply via the reducer (not the public actions) so this incoming change isn't re-broadcast back
@@ -2613,6 +2628,46 @@ function createFallbackLibraryAssetItem(item: {
   };
 }
 
+async function loadSourceAssetTransportRecord(
+  itemId: string,
+  maxBytes: number,
+): Promise<StoredAssetRecord | undefined> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_BINARY_RESUME_BYTES) return undefined;
+  const state = useSourceBinStore.getState();
+  const item = state.bins.flatMap((bin) => bin.items).find((candidate) => candidate.id === itemId);
+  if (!item || item.kind === 'text') return undefined;
+
+  let source: StoredAssetRecord | undefined;
+  if (item.scratchFileName && state.scratchDirectoryHandle) {
+    const blob = await loadScratchAssetBlob(state.scratchDirectoryHandle, item.scratchFileName).catch(() => undefined);
+    if (blob) source = {
+      id: item.id, name: item.label, mimeType: blob.type || item.mimeType || 'application/octet-stream',
+      blob, byteLength: blob.size, createdAt: item.createdAt,
+    };
+  } else if (item.assetId) {
+    const stored = await loadImportedAssetRecord(item.assetId).catch(() => undefined);
+    if (stored) source = { ...stored, id: item.id, name: item.label, mimeType: item.mimeType || stored.mimeType };
+  } else if (item.assetUrl?.startsWith('data:')) {
+    source = {
+      id: item.id, name: item.label, mimeType: item.mimeType || 'application/octet-stream',
+      dataUrl: item.assetUrl, createdAt: item.createdAt,
+    };
+  } else if (item.assetUrl) {
+    const blob = await assetUrlToBlob(item.assetUrl, item.mimeType, maxBytes).catch(() => undefined);
+    if (blob) source = {
+      id: item.id, name: item.label, mimeType: blob.type || item.mimeType || 'application/octet-stream',
+      blob, byteLength: blob.size, createdAt: item.createdAt,
+    };
+  }
+  return source ? {
+    ...source,
+    id: item.id,
+    name: item.label,
+    createdAt: item.createdAt,
+    transportRevision: `source-v1:${source.transportRevision ?? item.scratchFileName ?? item.nativeFilePath ?? item.id}`,
+  } : undefined;
+}
+
 async function loadItemAsDataUrl(
   item: SourceBinLibraryItem,
   scratchDirectoryHandle?: FileSystemDirectoryHandle,
@@ -2653,15 +2708,37 @@ function createObjectAssetUrl(blob: Blob): string | undefined {
   }
 }
 
-async function assetUrlToBlob(url: string, fallbackMimeType?: string): Promise<Blob> {
-  const response = await fetch(url);
-  const blob = await response.blob();
-
-  if (blob.type || !fallbackMimeType) {
-    return blob;
+async function assetUrlToBlob(
+  url: string,
+  fallbackMimeType?: string,
+  maxBytes = MAX_BINARY_RESUME_BYTES,
+): Promise<Blob> {
+  if (url.startsWith('data:')) {
+    const chunks: ArrayBuffer[] = [];
+    const analysis = visitBase64DataUrlBytes(url, maxBytes, (bytes) => {
+      const copy = new Uint8Array(bytes.byteLength);
+      copy.set(bytes);
+      chunks.push(copy.buffer);
+    });
+    if (!analysis) throw new Error('The source asset data URL is malformed or exceeds the decoded byte limit.');
+    return new Blob(chunks, { type: analysis.mimeType || fallbackMimeType });
   }
-
-  return new Blob([blob], { type: fallbackMimeType });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  const bytes = await readBoundedBytesResponse(response, maxBytes, undefined, 15_000);
+  if (!bytes) throw new Error('The source asset response is missing a bounded fixed-length body.');
+  const mimeType = response.headers.get('content-type')?.split(';', 1)[0].trim()
+    || fallbackMimeType
+    || 'application/octet-stream';
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy.buffer], { type: mimeType });
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {

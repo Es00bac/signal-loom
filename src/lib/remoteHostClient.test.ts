@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 // The phone-host detection must never mistake a normal web visitor for a served LAN session.
 // `setServedMutationPublisher` is invoked at module load (the publisher seam), so it must be stubbed.
 vi.mock('./androidLanServer', () => ({
   isAndroidLanServerAvailable: () => false,
+  initializeLanServerProxy: () => {},
   setServedMutationPublisher: () => {},
 }));
 
@@ -63,6 +65,15 @@ function stubMemoryStorage() {
 async function loadFreshModule() {
   vi.resetModules();
   return import('./remoteHostClient');
+}
+
+function sha256Identity(value: string): string {
+  return `sha256:${Array.from(sha256(new TextEncoder().encode(value)), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function fixedJsonResponse(value: unknown): Response {
+  const body = JSON.stringify(value);
+  return new Response(body, { headers: { 'content-length': String(body.length), 'content-type': 'application/json' } });
 }
 
 describe('remoteHostClient served-session detection', () => {
@@ -169,6 +180,70 @@ describe('remoteHostClient seed hydration', () => {
     const restoreOrder = (store.restoreProjectSnapshot as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const hydrateOrder = (store.hydrateAssets as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     expect(hydrateOrder).toBeGreaterThan(restoreOrder);
+  });
+});
+
+describe('remoteHostClient universal source-asset transport', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('uses bounded metadata/sample/full reads without Response.json()', async () => {
+    const digest = sha256Identity('ABC');
+    const core = {
+      id: 'source-1', name: 'phone.png', mimeType: 'image/png', size: 3, createdAt: 1,
+      transportRevision: 'source-v1', contentDigest: digest,
+    };
+    const identity = sha256Identity(`${core.id}\u0000${core.name}\u0000${core.mimeType}\u0000${core.size}\u0000${core.createdAt}\u0000${core.transportRevision}\u0000${core.contentDigest}`);
+    const metadataResponse = fixedJsonResponse({ ...core, transportIdentity: identity });
+    const sampleResponse = fixedJsonResponse({
+      id: core.id, size: 3, mimeType: core.mimeType, transportIdentity: identity,
+      headBase64: 'QUJD', tailBase64: 'QUJD', tailOffset: 0,
+    });
+    const fullResponse = fixedJsonResponse({
+      id: core.id, name: core.name, mimeType: core.mimeType,
+      dataUrl: 'data:image/png;base64,QUJD', byteLength: 3, createdAt: 1,
+      transportRevision: core.transportRevision,
+    });
+    const jsonSpies = [metadataResponse, sampleResponse, fullResponse].map((response) => vi.spyOn(response, 'json'));
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/health')) {
+        return mockResponse({
+          ok: true, contentType: 'application/json', body: { name: 'Sloom Studio', authRequired: false },
+        });
+      }
+      if (url.includes('/source-library')) return mockResponse({ ok: false });
+      if (url.includes('/source-asset-metadata/')) return metadataResponse;
+      if (url.includes('/source-asset-sample/')) return sampleResponse;
+      if (url.includes('/source-asset/')) return fullResponse;
+      return mockResponse({ ok: false });
+    }));
+
+    const mod = await loadFreshModule();
+    await mod.initializeRemoteHostSession();
+    await expect(mod.fetchRemoteHostSourceAssetDataUrl('source-1'))
+      .resolves.toBe('data:image/png;base64,QUJD');
+    for (const jsonSpy of jsonSpies) expect(jsonSpy).not.toHaveBeenCalled();
+  });
+
+  it('cancels a non-OK universal metadata body without waiting for stalled cancellation', async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const rejected = new Response(new ReadableStream<Uint8Array>({ cancel, pull() {} }), { status: 503 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/health')) {
+        return mockResponse({
+          ok: true, contentType: 'application/json', body: { name: 'Sloom Studio', authRequired: false },
+        });
+      }
+      if (url.includes('/source-library')) return mockResponse({ ok: false });
+      if (url.includes('/source-asset-metadata/')) return rejected;
+      return mockResponse({ ok: false });
+    }));
+
+    const mod = await loadFreshModule();
+    await mod.initializeRemoteHostSession();
+    await expect(mod.fetchRemoteHostSourceAssetDataUrl('source-rejected')).resolves.toBeNull();
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
 

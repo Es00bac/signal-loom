@@ -134,21 +134,38 @@ describe('dynamic Flow node contracts', () => {
       modelId: 'Qwen/Qwen3-4B-Thinking-2507',
     }));
 
+    const textualPromptTypes = [
+      { kind: 'number' },
+      { kind: 'boolean' },
+      { kind: 'json' },
+      { kind: 'package' },
+      { kind: 'list', item: { kind: 'text' } },
+      { kind: 'list', item: { kind: 'number' } },
+      { kind: 'list', item: { kind: 'boolean' } },
+      { kind: 'list', item: { kind: 'json' } },
+      { kind: 'list', item: { kind: 'package' } },
+      { kind: 'envelope', item: { kind: 'text' } },
+      { kind: 'envelope', item: { kind: 'number' } },
+      { kind: 'envelope', item: { kind: 'boolean' } },
+      { kind: 'envelope', item: { kind: 'json' } },
+      { kind: 'envelope', item: { kind: 'package' } },
+    ];
+
     expect(gemini.find((port) => port.direction === 'input')?.types).toEqual([
       { kind: 'text' },
       { kind: 'image' },
       { kind: 'video' },
       { kind: 'audio' },
-      { kind: 'json' },
+      ...textualPromptTypes,
     ]);
     expect(openai.find((port) => port.direction === 'input')?.types).toEqual([
       { kind: 'text' },
       { kind: 'image' },
-      { kind: 'json' },
+      ...textualPromptTypes,
     ]);
     expect(huggingface.find((port) => port.direction === 'input')?.types).toEqual([
       { kind: 'text' },
-      { kind: 'json' },
+      ...textualPromptTypes,
     ]);
   });
 
@@ -251,21 +268,30 @@ describe('dynamic Flow node contracts', () => {
     expect(sourceBinInput?.types).not.toContainEqual({ kind: 'envelope', item: { kind: 'number' } });
   });
 
-  it('declares package and envelope prompt extraction without accepting unrelated scalar coercions', () => {
+  it('declares all textual kinds plus video on the image prompt input', () => {
     const prompt = resolveFlowNodePorts(context('imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }))
       .find((port) => port.id === null && port.direction === 'input');
 
     expect(prompt?.types).toEqual([
       { kind: 'text' },
+      { kind: 'number' },
+      { kind: 'boolean' },
       { kind: 'json' },
-      { kind: 'video' },
       { kind: 'package' },
+      { kind: 'list', item: { kind: 'text' } },
+      { kind: 'list', item: { kind: 'number' } },
+      { kind: 'list', item: { kind: 'boolean' } },
+      { kind: 'list', item: { kind: 'json' } },
+      { kind: 'list', item: { kind: 'package' } },
       { kind: 'envelope', item: { kind: 'text' } },
+      { kind: 'envelope', item: { kind: 'number' } },
+      { kind: 'envelope', item: { kind: 'boolean' } },
+      { kind: 'envelope', item: { kind: 'json' } },
       { kind: 'envelope', item: { kind: 'package' } },
-      { kind: 'envelope', item: { kind: 'mixed' } },
+      { kind: 'video' },
     ]);
-    expect(prompt?.types).not.toContainEqual({ kind: 'number' });
-    expect(prompt?.types).not.toContainEqual({ kind: 'boolean' });
+    expect(prompt?.types).not.toContainEqual({ kind: 'audio' });
+    expect(prompt?.types).not.toContainEqual({ kind: 'envelope', item: { kind: 'mixed' } });
   });
 
   it('distinguishes Portal entrance and exit directions', () => {

@@ -18,66 +18,6 @@ function createNode(node: Partial<AppNode> & Pick<AppNode, 'id' | 'type'>): AppN
 }
 
 describe('flow signal evaluation', () => {
-  it.each([
-    ['true', true],
-    ['false', false],
-  ])('restores legacy Function Boolean %s as a typed scalar signal', (result, expected) => {
-    const nodes = [createNode({
-      id: 'function', type: 'functionNode', data: { result, resultType: 'boolean' },
-    })];
-
-    expect(evaluateNodeSignal('function', nodes, [])).toMatchObject({ kind: 'boolean', value: expected, diagnostics: [] });
-  });
-
-  it.each(['TRUE', ' false', 'false ', '0', 'yes'])('blocks ambiguous Function Boolean scalar signals: %s', (result) => {
-    const nodes = [createNode({
-      id: 'function', type: 'functionNode', data: { result, resultType: 'boolean' },
-    })];
-
-    expect(evaluateNodeSignal('function', nodes, []).diagnostics).toEqual([
-      expect.objectContaining({ severity: 'critical', blocksRun: true }),
-    ]);
-  });
-
-  it('restores a legacy Function false through list transport without truthiness', () => {
-    const nodes = [
-      createNode({ id: 'function', type: 'functionNode', data: { result: 'false', resultType: 'boolean' } }),
-      createNode({ id: 'list', type: 'list' }),
-    ];
-    const edges: Edge[] = [{ id: 'function-list', source: 'function', target: 'list', targetHandle: buildListItemTargetHandle(0) }];
-
-    expect(evaluateNodeSignal('list', nodes, edges).items?.[0]).toMatchObject({ kind: 'boolean', value: false });
-  });
-
-  it.each([
-    [true, false],
-    [false, true],
-  ])('routes Vision Verify %s as a typed Boolean to downstream logic', (verification, expectedNot) => {
-    const nodes = [
-      createNode({ id: 'verify', type: 'visionVerifyNode', data: { result: verification, resultType: 'boolean' } }),
-      createNode({ id: 'not', type: 'logicNode', data: { operation: 'NOT' } }),
-    ];
-    const edges: Edge[] = [{ id: 'verify-not', source: 'verify', target: 'not', targetHandle: 'A' }];
-
-    expect(evaluateNodeSignal('verify', nodes, edges)).toMatchObject({ kind: 'boolean', value: verification });
-    expect(evaluateNodeSignal('not', nodes, edges)).toMatchObject({ kind: 'boolean', value: expectedNot });
-  });
-
-  it.each([true, false])('round-trips Boolean %s through list and envelope transport as a real signal', (decision) => {
-    const nodes = [
-      createNode({ id: 'verify', type: 'visionVerifyNode', data: { result: decision, resultType: 'boolean' } }),
-      createNode({ id: 'list', type: 'list' }),
-      createNode({ id: 'envelope', type: 'envelope' }),
-    ];
-    const edges: Edge[] = [
-      { id: 'list-value', source: 'verify', target: 'list', targetHandle: buildListItemTargetHandle(0) },
-      { id: 'envelope-value', source: 'verify', target: 'envelope' },
-    ];
-
-    expect(evaluateNodeSignal('list', nodes, edges).items?.[0]).toMatchObject({ kind: 'boolean', value: decision });
-    expect(evaluateNodeSignal('envelope', nodes, edges).items?.[0]).toMatchObject({ kind: 'boolean', value: decision });
-  });
-
   it('renders local string-template slots across casing without corrupting double braces or literal braces', () => {
     const nodes = [
       createNode({ id: 'slot-a', type: 'textNode', data: { prompt: 'alpha' } }),
@@ -118,6 +58,101 @@ describe('flow signal evaluation', () => {
     const signal = evaluateNodeSignal('list', nodes, edges);
 
     expect(signal.items?.map((item) => item.value)).toEqual(['first slot', 'second slot']);
+  });
+
+  it.each([
+    ['text', ['alpha', 'beta'], ['alpha', 'beta']],
+    ['number', ['1', '2'], ['1', '2']],
+    ['boolean', ['true', 'false'], ['true', 'false']],
+    ['json', ['{"a":1}', '{"b":2}'], ['{"a":1}', '{"b":2}']],
+    ['package', ['pkg:a', 'pkg:b'], ['pkg:a', 'pkg:b']],
+  ] as const)('routes concrete %s lists and envelopes through the textual prompt boundary', (kind, values, expected) => {
+    for (const containerType of ['list', 'envelope'] as const) {
+      const source = createNode({
+        id: `source-${containerType}`,
+        type: containerType,
+        data: {
+          envelopeItemKind: kind,
+          envelopeItems: values.map((value, index) => ({
+            id: `${containerType}-${index}`,
+            index,
+            kind,
+            label: `${kind} ${index + 1}`,
+            value,
+          })),
+        },
+      });
+      const target = createNode({ id: 'target', type: 'imageGen' });
+      const signal = collectPromptSignalForNode('target', [source, target], [{
+        id: `${containerType}-target`,
+        source: source.id,
+        target: target.id,
+      }]);
+
+      expect(signalToTextList(signal)).toEqual(expected);
+    }
+  });
+
+  it('keeps a mixed media envelope out of the prompt signal boundary', () => {
+    const source = createNode({
+      id: 'mixed',
+      type: 'envelope',
+      data: {
+        envelopeItems: [
+          { id: 'text', index: 0, kind: 'text', label: 'Text', value: 'do not partially coerce' },
+          { id: 'image', index: 1, kind: 'image', label: 'Image', value: 'data:image/png;base64,AAA' },
+        ],
+      },
+    });
+    const target = createNode({ id: 'target', type: 'imageGen' });
+
+    expect(signalToTextList(collectPromptSignalForNode('target', [source, target], [{
+      id: 'mixed-target', source: source.id, target: target.id,
+    }]))).toEqual([]);
+  });
+
+  it('preserves generated Text envelope batches for downstream prompt execution', () => {
+    const generated = createNode({
+      id: 'generated',
+      type: 'textNode',
+      data: {
+        mode: 'generate',
+        result: 'first',
+        envelopeItems: [
+          { id: 'one', index: 0, kind: 'text', label: 'One', value: 'first' },
+          { id: 'two', index: 1, kind: 'text', label: 'Two', value: 'second' },
+          { id: 'three', index: 2, kind: 'text', label: 'Three', value: 'third' },
+        ],
+      },
+    });
+    const target = createNode({ id: 'target', type: 'imageGen' });
+
+    expect(signalToTextList(collectPromptSignalForNode('target', [generated, target], [{
+      id: 'generated-target', source: generated.id, target: target.id,
+    }]))).toEqual(['first', 'second', 'third']);
+  });
+
+  it('short-circuits vectorized prompt routing when any connected prompt axis is empty', () => {
+    const empty = createNode({ id: 'empty', type: 'envelope', data: { envelopeItemKind: 'text', envelopeItems: [] } });
+    const nonempty = createNode({
+      id: 'nonempty',
+      type: 'envelope',
+      data: {
+        envelopeItemKind: 'text',
+        envelopeItems: [
+          { id: 'one', index: 0, kind: 'text', label: 'One', value: 'one' },
+          { id: 'two', index: 1, kind: 'text', label: 'Two', value: 'two' },
+        ],
+      },
+    });
+    const target = createNode({ id: 'target', type: 'imageGen' });
+    const signal = collectPromptSignalForNode('target', [empty, nonempty, target], [
+      { id: 'empty-target', source: empty.id, target: target.id },
+      { id: 'nonempty-target', source: nonempty.id, target: target.id },
+    ]);
+
+    expect(getSignalIterationCount(signal)).toBe(0);
+    expect(signal.diagnostics).toEqual([]);
   });
 
   it('auto-batches a string template when one placeholder is fed by a text list', () => {

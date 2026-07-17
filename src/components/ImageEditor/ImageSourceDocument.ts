@@ -5,7 +5,7 @@ import { bitmapFromUrl, createBitmap, fillBitmap } from './LayerBitmap';
 import { getImageClipboardBitmap } from './ImageEditorClipboard';
 import { getSignalLoomNativeBridge } from '../../lib/nativeApp';
 import { isRemoteLanClient } from '../../lib/projectLibrary';
-import { loadImportedAssetRecord, materializeStoredAssetPayload } from '../../lib/assetStore';
+import { loadImportedAssetAsDataUrl } from '../../lib/assetStore';
 import { parseSignalLoomAssetId } from '../../lib/signalLoomAssetUrl';
 import { fetchRemoteHostSourceAssetDataUrl } from '../../lib/remoteHostClient';
 import {
@@ -1453,10 +1453,10 @@ export async function createImageDocumentFromFile(
  * authenticated host API instead and hand back a same-origin data URL.
  *
  * Primary path: {@link fetchRemoteHostSourceAssetDataUrl} asks the host to resolve the item by its
- * source-item id through the universal `loadItemAsDataUrl`, so it serves *every* backing the phone
+ * source-item id through the universal bounded source-asset lifecycle, so it serves *every* backing the phone
  * knows — native-file- and scratch-backed items included, which carry no `assetId` and so could never
  * be reached via `/asset/:id`. That is the actual fix for the open-NetworkError. The `/asset/:id`
- * lookup (via {@link loadImportedAssetRecord}) is kept as a fallback for IndexedDB/assetId-backed items
+ * lookup (via the bounded asset-store data-URL loader) is kept as a fallback for IndexedDB/assetId-backed items
  * and for older hosts that predate the `/source-asset/:id` endpoint. Desktop / Electron / native
  * sessions are not remote LAN clients, so they fall straight through to the item's own `assetUrl`.
  */
@@ -1471,8 +1471,7 @@ async function resolveSourceItemFetchUrl(item: SourceBinLibraryItem): Promise<st
     const lookupId = item.assetId ?? parseSignalLoomAssetId(item.assetUrl);
     if (lookupId) {
       try {
-        const record = await loadImportedAssetRecord(lookupId);
-        const payload = record ? materializeStoredAssetPayload(record) : undefined;
+        const payload = await loadImportedAssetAsDataUrl(lookupId);
         if (payload?.dataUrl) return payload.dataUrl;
       } catch {
         // Fall through to the item's own assetUrl below.

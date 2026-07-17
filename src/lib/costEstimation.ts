@@ -59,7 +59,7 @@ interface TokenPricing {
   outputUsdPerMillion: number;
 }
 
-interface ExecutionContextEstimate {
+export interface ExecutionContextEstimate {
   prompt: string;
   config: ExecutionConfig;
   editImageInput?: string;
@@ -1465,6 +1465,14 @@ function estimateNodeOwnTelemetry(
   return undefined;
 }
 
+export function estimateNodeExecutionTelemetry(
+  node: AppNode,
+  context: ExecutionContextEstimate,
+  settings: RuntimeSettingsSnapshot,
+): UsageTelemetry | undefined {
+  return estimateNodeOwnTelemetry(node, context, settings);
+}
+
 function withAutoUpscaleEstimate(
   telemetry: UsageTelemetry,
   nodeData: NodeData,
@@ -1535,6 +1543,73 @@ export function aggregateUsageTelemetries(telemetries: UsageTelemetry[]): UsageR
       unknownCostCount: 0,
     },
   );
+}
+
+export function scaleUsageTelemetry(telemetry: UsageTelemetry, factor: number): UsageTelemetry {
+  if (factor <= 0) {
+    return {
+      ...telemetry,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      characters: 0,
+      durationSeconds: 0,
+      imageCount: 0,
+      costUsd: 0,
+      notes: telemetry.notes ? [...telemetry.notes, 'Scaled to zero because all iterations are resumable.'] : ['Scaled to zero because all iterations are resumable.'],
+    };
+  }
+  return {
+    ...telemetry,
+    inputTokens: (telemetry.inputTokens ?? 0) * factor,
+    outputTokens: (telemetry.outputTokens ?? 0) * factor,
+    totalTokens: (telemetry.totalTokens ?? 0) * factor,
+    characters: (telemetry.characters ?? 0) * factor,
+    durationSeconds: (telemetry.durationSeconds ?? 0) * factor,
+    imageCount: (telemetry.imageCount ?? 0) * factor,
+    costUsd: telemetry.costUsd === undefined ? undefined : telemetry.costUsd * factor,
+  };
+}
+
+export function scaleUsageRollup(rollup: UsageRollup, factor: number): UsageRollup {
+  if (factor <= 0) {
+    return {
+      totalKnownCostUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      characters: 0,
+      durationSeconds: 0,
+      imageCount: 0,
+      knownCostCount: 0,
+      unknownCostCount: 0,
+    };
+  }
+  return {
+    totalKnownCostUsd: rollup.totalKnownCostUsd * factor,
+    inputTokens: rollup.inputTokens * factor,
+    outputTokens: rollup.outputTokens * factor,
+    totalTokens: rollup.totalTokens * factor,
+    characters: rollup.characters * factor,
+    durationSeconds: rollup.durationSeconds * factor,
+    imageCount: rollup.imageCount * factor,
+    knownCostCount: rollup.knownCostCount * factor,
+    unknownCostCount: rollup.unknownCostCount * factor,
+  };
+}
+
+export function mergeUsageRollups(a: UsageRollup, b: UsageRollup): UsageRollup {
+  return {
+    totalKnownCostUsd: a.totalKnownCostUsd + b.totalKnownCostUsd,
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    characters: a.characters + b.characters,
+    durationSeconds: a.durationSeconds + b.durationSeconds,
+    imageCount: a.imageCount + b.imageCount,
+    knownCostCount: a.knownCostCount + b.knownCostCount,
+    unknownCostCount: a.unknownCostCount + b.unknownCostCount,
+  };
 }
 
 export function estimateExecutionPlan(
