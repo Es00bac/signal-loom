@@ -55,15 +55,15 @@ export async function exportPaperDocumentToPdfxInBrowser(
     throw new Error(`The selected managed CMYK output profile is unavailable${detail}`);
   }
   assertCurrentSources();
-  const sourceItems = useSourceBinStore.getState().getAllItems();
   const materializedDocument = await materializePaperDocumentAssetUrls(
     document,
-    sourceItems,
+    assertCurrentSources.sourceItems,
   );
   assertCurrentSources();
   const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
+  assertCurrentSources();
   const exportDocument = exact.document;
-  return exportPaperDocumentToPdfx(exportDocument, { ...options, outputProfile }, {
+  const result = await exportPaperDocumentToPdfx(exportDocument, { ...options, outputProfile }, {
     createTransform: (bytes) => createRgbToCmykTransform(bytes, { intent: 'relative' }),
     loadManagedFontBytes: loadManagedPaperFont,
     rasterizePage: async (pageId, outputDpi, rasterOptions) => {
@@ -83,4 +83,6 @@ export async function exportPaperDocumentToPdfxInBrowser(
       return { rgba: raster.rgba, widthPx: raster.widthPx, heightPx: raster.heightPx };
     },
   });
+  assertCurrentSources();
+  return result;
 }

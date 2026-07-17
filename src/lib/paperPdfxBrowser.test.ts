@@ -83,7 +83,35 @@ describe('exportPaperDocumentToPdfxInBrowser placed-document boundary', () => {
     mocks.exportPdfx.mockResolvedValue(exported);
 
     await expect(exportPaperDocumentToPdfxInBrowser(document, { standard: 'pdf-x-4' })).resolves.toBe(exported);
-    expect(mocks.materialize).toHaveBeenCalledWith(document, mocks.sourceItems);
+    expect(mocks.materialize).toHaveBeenCalledWith(document, [{
+      id: 'replaced', mimeType: 'image/png',
+      assetUrl: 'blob:https://app.test/current-image', createdAt: 1,
+    }]);
     expect(mocks.exportPdfx).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a same-id same-MIME URL replacement that lands during materialization', async () => {
+    mocks.sourceItems = [{
+      id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'blob:https://app.test/old-image', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'PDF/X revision race' });
+    const document = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    mocks.resolveProfile.mockResolvedValue({ status: 'ready', bytes: new Uint8Array([1]) });
+    mocks.materialize.mockImplementationOnce(async () => {
+      mocks.sourceItems = [{
+        id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+        assetUrl: 'blob:https://app.test/new-image', createdAt: 1,
+      }];
+      return document;
+    });
+
+    await expect(exportPaperDocumentToPdfxInBrowser(document, { standard: 'pdf-x-4' }))
+      .rejects.toThrow(/changed while this output was being prepared/i);
+    expect(mocks.exportPdfx).not.toHaveBeenCalled();
+    expect(mocks.buildPage).not.toHaveBeenCalled();
   });
 });

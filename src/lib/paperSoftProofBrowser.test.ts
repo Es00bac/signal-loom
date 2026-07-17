@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   rasterize: vi.fn(),
   resolveProfile: vi.fn(),
   softProof: vi.fn(),
+  sourceItems: [] as Array<{ id: string; label: string; kind: string; mimeType?: string; assetUrl?: string; createdAt: number }>,
 }));
 
 vi.mock('./paperPageFlattenExport', () => ({
@@ -26,7 +27,7 @@ vi.mock('../features/paper/assets/PaperAssetRuntime', () => ({
   paperAssetRepository: { get: vi.fn() },
 }));
 vi.mock('../store/sourceBinStore', () => ({
-  useSourceBinStore: { getState: () => ({ getAllItems: () => [{ id: 'source-art' }] }) },
+  useSourceBinStore: { getState: () => ({ getAllItems: () => mocks.sourceItems }) },
 }));
 
 import { softProofPaperPageInBrowser } from './paperSoftProofBrowser';
@@ -35,6 +36,7 @@ import { getPaperResourceCleanupError } from './paperColorManagement';
 describe('softProofPaperPageInBrowser', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.sourceItems = [];
     mocks.resolveProfile.mockResolvedValue({ status: 'ready', bytes: new Uint8Array([1, 2, 3]) });
     mocks.createProof.mockResolvedValue({ profileName: 'FOGRA39L Coated', dispose: vi.fn() });
     mocks.exact.mockImplementation(async (document) => ({ document }));
@@ -64,7 +66,7 @@ describe('softProofPaperPageInBrowser', () => {
 
     const result = await softProofPaperPageInBrowser(document, document.pages[0].id);
 
-    expect(mocks.materialize).toHaveBeenCalledWith(document, [{ id: 'source-art' }]);
+    expect(mocks.materialize).toHaveBeenCalledWith(document, []);
     expect(mocks.exact).toHaveBeenCalledWith(materialized);
     expect(mocks.buildPage).toHaveBeenCalledWith(
       materialized,
@@ -92,6 +94,30 @@ describe('softProofPaperPageInBrowser', () => {
     expect(mocks.resolveProfile).not.toHaveBeenCalled();
     expect(mocks.createProof).not.toHaveBeenCalled();
     expect(mocks.materialize).not.toHaveBeenCalled();
+    expect(mocks.buildPage).not.toHaveBeenCalled();
+    expect(mocks.rasterize).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-id same-MIME URL replacement that lands during materialization', async () => {
+    mocks.sourceItems = [{
+      id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'blob:https://app.test/old-image', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Soft-proof revision race' });
+    const document = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 60, heightMm: 40,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    mocks.materialize.mockImplementationOnce(async () => {
+      mocks.sourceItems = [{
+        id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+        assetUrl: 'blob:https://app.test/new-image', createdAt: 1,
+      }];
+      return document;
+    });
+
+    await expect(softProofPaperPageInBrowser(document, document.pages[0].id))
+      .rejects.toThrow(/changed while this output was being prepared/i);
     expect(mocks.buildPage).not.toHaveBeenCalled();
     expect(mocks.rasterize).not.toHaveBeenCalled();
   });

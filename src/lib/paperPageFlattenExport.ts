@@ -316,8 +316,10 @@ export async function publishRasterizedPaperPageSourcePayload<T>(
   pageId: string,
   options: RasterizedPaperPageSourcePayloadOptions,
   publish: (payload: FlattenedPaperPageSourcePayload) => Promise<T>,
+  assertBeforePublish?: () => void,
 ): Promise<T> {
   const payload = await buildRasterizedPaperPageSourcePayload(document, pageId, options);
+  assertBeforePublish?.();
   return publish(payload);
 }
 
@@ -335,11 +337,13 @@ export async function publishRasterizedPaperPagesSourcePayloads<T>(
   document: PaperDocument,
   requests: readonly RasterizedPaperPageSourcePayloadRequest[],
   publish: (payload: FlattenedPaperPageSourcePayload) => Promise<T>,
+  assertBeforePublish?: () => void,
 ): Promise<T[]> {
   const payloads: FlattenedPaperPageSourcePayload[] = [];
   for (const { pageId, options } of requests) {
     payloads.push(await buildRasterizedPaperPageSourcePayload(document, pageId, options));
   }
+  assertBeforePublish?.();
   const published: T[] = [];
   for (const payload of payloads) published.push(await publish(payload));
   return published;

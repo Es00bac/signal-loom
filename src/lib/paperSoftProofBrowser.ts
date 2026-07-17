@@ -62,13 +62,13 @@ export async function softProofPaperPageInBrowser(
   const proof = await createSoftProofTransform(iccBytes, proofOptions);
   return usingOwnedPaperResource(proof, async () => {
     assertCurrentSources();
-    const sourceItems = useSourceBinStore.getState().getAllItems();
     const materializedDocument = await materializePaperDocumentAssetUrls(
       document,
-      sourceItems,
+      assertCurrentSources.sourceItems,
     );
     assertCurrentSources();
     const exact = await buildPaperDocumentExactManagedFontOutput(materializedDocument);
+    assertCurrentSources();
     const svgExport = await buildFlattenedPaperPageSvgExportWithEmbeddedAssets(exact.document, pageId, {
       includeBleed: false,
       outputDpi: previewDpi ?? 150,

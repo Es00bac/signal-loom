@@ -25,7 +25,17 @@ export interface PaperPlacedDocumentRasterizationIssue {
   message: string;
 }
 
-type PaperPlacedSourceItem = Pick<SourceBinLibraryItem, 'id' | 'mimeType' | 'assetUrl'>;
+export type PaperPlacedSourceItem = Pick<SourceBinLibraryItem, 'id' | 'mimeType' | 'assetUrl' | 'createdAt'>;
+
+/**
+ * A raster transaction owns one immutable view of every linked Source Library item it may
+ * materialize. Calling the guard proves those same item revisions are still current; `sourceItems`
+ * is the exact snapshot callers must pass to materialization so validation and bytes cannot drift.
+ */
+export interface PaperPlacedDocumentRasterizationGuard {
+  (): void;
+  readonly sourceItems: readonly PaperPlacedSourceItem[];
+}
 
 /** Typed, actionable failure shared by PNG/CBZ/KDP/PDF/X and soft-proof raster routes. */
 export class PaperPlacedDocumentRasterizationError extends Error {
@@ -84,22 +94,49 @@ export function createPaperPlacedDocumentRasterizationGuard(
   document: PaperDocument,
   readSourceItems: () => readonly PaperPlacedSourceItem[],
   pageIds?: readonly string[],
-): () => void {
-  const initialSourceItems = readSourceItems();
-  const initiallyAvailableIds = new Set(initialSourceItems.map((item) => item.id));
+): PaperPlacedDocumentRasterizationGuard {
+  const linkedSourceIds = collectPaperLinkedSourceItemIds(document);
+  const initialSourceItems = Object.freeze(readSourceItems()
+    .filter((item) => linkedSourceIds.has(item.id))
+    .map(snapshotPaperPlacedSourceItem));
+  const initialSourceItemsById = new Map(initialSourceItems.map((item) => [item.id, item]));
+  const initiallyAvailableIds = new Set(initialSourceItemsById.keys());
 
   const assertAgainstSourceItems = (sourceItems: readonly PaperPlacedSourceItem[]): void => {
-    const currentIds = new Set(sourceItems.map((item) => item.id));
+    const currentSourceItemsById = new Map(sourceItems
+      .filter((item) => linkedSourceIds.has(item.id))
+      .map((item) => [item.id, item]));
+    const currentIds = new Set(currentSourceItemsById.keys());
     assertPaperDocumentSupportsRasterization(document, pageIds, {
       resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(sourceItems),
       isSourceItemMissing: (sourceBinItemId) => (
         initiallyAvailableIds.has(sourceBinItemId) && !currentIds.has(sourceBinItemId)
       ),
     });
+
+    const changedSourceItemIds = new Set<string>();
+    for (const sourceItemId of linkedSourceIds) {
+      const initialItem = initialSourceItemsById.get(sourceItemId);
+      const currentItem = currentSourceItemsById.get(sourceItemId);
+      if ((!initialItem && currentItem)
+        || (initialItem && currentItem && !paperPlacedSourceItemRevisionMatches(initialItem, currentItem))) {
+        changedSourceItemIds.add(sourceItemId);
+      }
+    }
+    if (changedSourceItemIds.size > 0) {
+      throw new PaperPlacedDocumentRasterizationError(
+        collectPaperChangedSourceRevisionIssues(document, changedSourceItemIds, currentSourceItemsById),
+      );
+    }
   };
 
   assertAgainstSourceItems(initialSourceItems);
-  return () => assertAgainstSourceItems(readSourceItems());
+  const guard = (() => assertAgainstSourceItems(readSourceItems())) as PaperPlacedDocumentRasterizationGuard;
+  Object.defineProperty(guard, 'sourceItems', {
+    value: initialSourceItems,
+    enumerable: true,
+  });
+  return guard;
 }
 
 export function isPaperPlacedDocumentRasterizationError(value: unknown): value is PaperPlacedDocumentRasterizationError {
@@ -141,6 +178,66 @@ function createIssue(
   };
 }
 
+function snapshotPaperPlacedSourceItem(item: PaperPlacedSourceItem): PaperPlacedSourceItem {
+  return Object.freeze({
+    id: item.id,
+    mimeType: item.mimeType,
+    assetUrl: item.assetUrl,
+    createdAt: item.createdAt,
+  });
+}
+
+function paperPlacedSourceItemRevisionMatches(
+  initialItem: PaperPlacedSourceItem,
+  currentItem: PaperPlacedSourceItem,
+): boolean {
+  return initialItem.id === currentItem.id
+    && initialItem.mimeType === currentItem.mimeType
+    && initialItem.assetUrl === currentItem.assetUrl
+    && initialItem.createdAt === currentItem.createdAt;
+}
+
+function collectPaperLinkedSourceItemIds(document: PaperDocument): Set<string> {
+  const linkedSourceIds = new Set<string>();
+  for (const page of document.pages) {
+    for (const frame of resolvePaperPageFramesForOutput(document, page)) {
+      if (frame.asset?.sourceBinItemId) linkedSourceIds.add(frame.asset.sourceBinItemId);
+    }
+  }
+  return linkedSourceIds;
+}
+
+function collectPaperChangedSourceRevisionIssues(
+  document: PaperDocument,
+  changedSourceItemIds: ReadonlySet<string>,
+  currentSourceItemsById: ReadonlyMap<string, PaperPlacedSourceItem>,
+): PaperPlacedDocumentRasterizationIssue[] {
+  const issues: PaperPlacedDocumentRasterizationIssue[] = [];
+  for (const page of document.pages) {
+    for (const frame of resolvePaperPageFramesForOutput(document, page)) {
+      const sourceItemId = frame.asset?.sourceBinItemId;
+      if (!sourceItemId || !changedSourceItemIds.has(sourceItemId)) continue;
+      const currentSourceItem = currentSourceItemsById.get(sourceItemId);
+      const classification = classifyPaperPlacedPdf(frame, {
+        resolveSourceItemMimeType: buildPaperPlacedSourceItemMimeTypeLookup(
+          currentSourceItem ? [currentSourceItem] : [],
+        ),
+      });
+      issues.push({
+        code: 'paper-placed-document-rasterization-unsupported',
+        pageId: page.id,
+        pageNumber: page.pageNumber,
+        frameId: frame.id,
+        frameLabel: frame.asset?.label || frame.label,
+        mimeType: classification.mimeType,
+        isPdf: classification.isPdf,
+        message: `Page ${page.pageNumber}, frame "${frame.asset?.label || frame.label}" cannot rasterize because its linked Source Library item changed while this output was being prepared. Retry the export so it uses one current source revision from materialization through delivery.`,
+      });
+    }
+  }
+  return issues;
+}
+
 function validatePaperRasterPageIds(document: PaperDocument, pageIds: readonly string[]): Set<string> {
   const knownPageIds = new Set(document.pages.map((page) => page.id));
   for (const pageId of pageIds) {
@@ -153,6 +250,10 @@ function validatePaperRasterPageIds(document: PaperDocument, pageIds: readonly s
 
 function formatPlacedDocumentRasterizationIssues(issues: readonly PaperPlacedDocumentRasterizationIssue[]): string {
   const summary = issues.slice(0, 3).map((issue) => issue.message).join(' ');
-  const more = issues.length > 3 ? ` ${issues.length - 3} more placed document frame${issues.length === 4 ? '' : 's'} also need a PDF page rasterizer.` : '';
+  const more = issues.length > 3
+    ? issues.every((issue) => issue.isPdf)
+      ? ` ${issues.length - 3} more placed document frame${issues.length === 4 ? '' : 's'} also need a PDF page rasterizer.`
+      : ` ${issues.length - 3} more linked placement${issues.length === 4 ? '' : 's'} also changed during this raster output transaction.`
+    : '';
   return `${summary}${more}`;
 }

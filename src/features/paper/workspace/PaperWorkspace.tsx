@@ -355,7 +355,6 @@ import {
   resolvePaperPanelMode,
 } from './PaperWorkspaceUtils';
 import {
-  assertPaperDocumentSupportsRasterizationWithCurrentSources,
   beginGuideDragFromRuler,
   bubbleHandlePatch,
   buildPaperEyedropperFrameColorPatch,
@@ -366,6 +365,7 @@ import {
   deletePaperFrameVertexPatch,
   downloadBlob,
   downloadText,
+  createPaperDocumentRasterizationGuardWithCurrentSources,
   exportPaperPdfDocument,
   exportPaperPdfxAndSave,
   exportPaperKdpPdfAndSave,
@@ -378,6 +378,7 @@ import {
   gradientVector,
   isEditableKeyboardTarget,
   insertPaperFrameVertexPatch,
+  materializePaperRasterOutputDocument,
   movePaperTextBoxPatch,
   movePaperFrameVertexPatch,
   pagePresetLabel,
@@ -897,9 +898,14 @@ export function PaperWorkspace() {
     setExportNotice(outcome);
   }, []);
 
-  const materializePaperOutputDocument = useCallback(async (sourceDocument: PaperDocument): Promise<PaperDocument | undefined> => {
+  const materializePaperOutputDocument = useCallback(async (
+    sourceDocument: PaperDocument,
+    rasterizationGuard?: ReturnType<typeof createPaperDocumentRasterizationGuardWithCurrentSources>,
+  ): Promise<PaperDocument | undefined> => {
     try {
-      return await materializePaperDocumentAssetUrls(sourceDocument, sourceItems);
+      return rasterizationGuard
+        ? await materializePaperRasterOutputDocument(sourceDocument, rasterizationGuard)
+        : await materializePaperDocumentAssetUrls(sourceDocument, sourceItems);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'A Paper asset could not be resolved.';
       setStatus(`Export blocked: ${message}`);
@@ -1413,19 +1419,23 @@ export function PaperWorkspace() {
             // Strict PDF/X consumes the original content-addressed document and freezes it before validation.
             void exportPaperPdfxAndSave(document, setStatus);
           } else {
+            let rasterizationGuard: ReturnType<typeof createPaperDocumentRasterizationGuardWithCurrentSources>;
             try {
-              assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+              rasterizationGuard = createPaperDocumentRasterizationGuardWithCurrentSources(document);
             } catch (error) {
               setStatus(error instanceof Error ? error.message : 'PDF export is unavailable.');
               return;
             }
-            const outputDocument = await materializePaperOutputDocument(document);
+            const outputDocument = await materializePaperOutputDocument(document, rasterizationGuard);
             if (!outputDocument) return;
             void exportPaperPdfDocument(
               outputDocument,
               (message) => showPaperExportProgress(message, 'file'),
               undefined,
-              { rasterPreset: providerSettings.paperPdfRasterPreset },
+              {
+                rasterPreset: providerSettings.paperPdfRasterPreset,
+                rasterizationGuard,
+              },
             ).then(finishPaperExportNotice);
           }
         }
@@ -1538,17 +1548,19 @@ export function PaperWorkspace() {
       }
       case 'paper:export-cbz': {
         if (!await confirmPreflightBeforeExport('raster CBZ export', { rasterTarget: true })) return;
+        let rasterizationGuard: ReturnType<typeof createPaperDocumentRasterizationGuardWithCurrentSources>;
         try {
-          assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+          rasterizationGuard = createPaperDocumentRasterizationGuardWithCurrentSources(document);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'CBZ export is unavailable.';
           setStatus(`CBZ export failed: ${message}`);
           void showAlertDialog({ title: 'CBZ Export Failed', message, tone: 'danger' });
           return;
         }
-        const outputDocument = await materializePaperOutputDocument(document);
+        const outputDocument = await materializePaperOutputDocument(document, rasterizationGuard);
         if (!outputDocument) return;
         const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+        rasterizationGuard();
         setStatus(`Rasterizing ${outputDocument.pages.length} Paper page${outputDocument.pages.length === 1 ? '' : 's'} for CBZ export...`);
         void buildPaperCbzRasterExport(exact.document, {
           fontFaceCss: exact.fontFaceCss,
@@ -1557,6 +1569,7 @@ export function PaperWorkspace() {
           },
         })
           .then((cbz) => {
+            rasterizationGuard();
             downloadBlob(cbz.fileName, cbz.blob);
             setStatus(`Downloaded raster CBZ with ${outputDocument.pages.length} PNG page${outputDocument.pages.length === 1 ? '' : 's'} plus metadata.`);
           })
@@ -3526,20 +3539,23 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       envelopeLabel?: string;
       envelopeIndex?: number;
     } = {},
+    existingRasterizationGuard?: ReturnType<typeof createPaperDocumentRasterizationGuardWithCurrentSources>,
   ): Promise<SourceBinLibraryItem> => {
     // Complete-document capability preflight must happen before source/repository asset reads or
     // the first Source item write, so a PDF on page two cannot leak page one.
-    assertPaperDocumentSupportsRasterizationWithCurrentSources(document, [pageId]);
-    const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
+    const rasterizationGuard = existingRasterizationGuard
+      ?? createPaperDocumentRasterizationGuardWithCurrentSources(document, [pageId]);
+    const outputDocument = await materializePaperRasterOutputDocument(document, rasterizationGuard);
     const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+    rasterizationGuard();
     const item = await publishRasterizedPaperPageSourcePayload(exact.document, pageId, {
       ...options,
       resolveImageSrc: (src) => imageSourceToDataUrl(src),
       fontFaceCss: exact.fontFaceCss,
-    }, addSourceAssetItem);
+    }, addSourceAssetItem, rasterizationGuard);
     setSourceSidebarOpen(true);
     return item;
-  }, [addSourceAssetItem, document, setSourceSidebarOpen, sourceItems]);
+  }, [addSourceAssetItem, document, setSourceSidebarOpen]);
 
   const sendPaperPageToSourceLibraryById = useCallback((pageId: string) => {
     const page = document.pages.find((candidate) => candidate.id === pageId);
@@ -3570,10 +3586,11 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       if (label === null) return;
       const envelopeLabel = label.trim() || `${document.title} flattened pages`;
       const envelopeId = `paper-envelope-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
-      assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+      const rasterizationGuard = createPaperDocumentRasterizationGuardWithCurrentSources(document);
       setStatus(`Flattening ${document.pages.length} page${document.pages.length === 1 ? '' : 's'} into "${envelopeLabel}"...`);
-      const outputDocument = await materializePaperDocumentAssetUrls(document, sourceItems);
+      const outputDocument = await materializePaperRasterOutputDocument(document, rasterizationGuard);
       const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+      rasterizationGuard();
       await publishRasterizedPaperPagesSourcePayloads(
         exact.document,
         document.pages.map((page, envelopeIndex) => ({
@@ -3587,17 +3604,19 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           },
         })),
         addSourceAssetItem,
+        rasterizationGuard,
       );
       setSourceSidebarOpen(true);
       setStatus(`Exported ${document.pages.length} flattened page${document.pages.length === 1 ? '' : 's'} into "${envelopeLabel}".`);
     })().catch((error) => {
       setStatus(error instanceof Error ? error.message : 'Could not export flattened pages into the envelope.');
     });
-  }, [addSourceAssetItem, document, setSourceSidebarOpen, sourceItems]);
+  }, [addSourceAssetItem, document, setSourceSidebarOpen]);
 
   const runWebcomicImageExport = useCallback(async (settings: PaperWebcomicExportSettings) => {
+    let rasterizationGuard: ReturnType<typeof createPaperDocumentRasterizationGuardWithCurrentSources>;
     try {
-      assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+      rasterizationGuard = createPaperDocumentRasterizationGuardWithCurrentSources(document);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Paper page image export is unavailable.';
       setStatus(message);
@@ -3605,7 +3624,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       return;
     }
     if (!await confirmPreflightBeforeExport('webcomic page image export', { rasterTarget: true })) return;
-    const outputDocument = await materializePaperOutputDocument(document);
+    const outputDocument = await materializePaperOutputDocument(document, rasterizationGuard);
     if (!outputDocument) return;
     setWebcomicExportSettings(settings);
     setWebcomicExportOpen(false);
@@ -3617,6 +3636,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       outputWidthPx: settings.outputWidthPx,
       outputDpi: settings.outputDpi,
       quality: settings.quality,
+      rasterizationGuard,
     });
     finishPaperExportNotice(outcome);
     if (outcome.state === 'error') {
@@ -3635,8 +3655,9 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
   ]);
 
   const runKdpImageExport = useCallback(async (settings: PaperKdpExportSettings) => {
+    let rasterizationGuard: ReturnType<typeof createPaperDocumentRasterizationGuardWithCurrentSources>;
     try {
-      assertPaperDocumentSupportsRasterizationWithCurrentSources(document);
+      rasterizationGuard = createPaperDocumentRasterizationGuardWithCurrentSources(document);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'KDP raster export is unavailable.';
       setStatus(message);
@@ -3673,9 +3694,10 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
     setKdpExportSettings(normalizedSettings);
     setKdpExportOpen(false);
     setStatus(`Building KDP asset package: ${plan.interiorPageCount} interior page image${plan.interiorPageCount === 1 ? '' : 's'} plus cover wrap...`);
-    const outputDocument = await materializePaperOutputDocument(document);
+    const outputDocument = await materializePaperOutputDocument(document, rasterizationGuard);
     if (!outputDocument) return;
     const exact = await buildPaperDocumentExactManagedFontOutput(outputDocument);
+    rasterizationGuard();
     void buildPaperKdpImageArchiveExport(exact.document, {
       directoryName: normalizedSettings.directoryName,
       dpi: normalizedSettings.dpi,
@@ -3690,6 +3712,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
       },
     })
       .then((archive) => {
+        rasterizationGuard();
         downloadBlob(archive.fileName, archive.blob);
         const warningCount = archive.plan.warnings.length;
         setStatus(`Downloaded ${archive.fileName} with ${archive.entries.length} KDP files${warningCount ? ` and ${warningCount} preflight note${warningCount === 1 ? '' : 's'}` : ''}.`);

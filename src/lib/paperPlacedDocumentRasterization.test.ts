@@ -6,6 +6,7 @@ import { buildPaperKdpImageArchiveExport } from './paperKdpExport';
 import {
   assertPaperDocumentSupportsRasterization,
   collectPaperPlacedDocumentRasterizationIssues,
+  createPaperPlacedDocumentRasterizationGuard,
   PaperPlacedDocumentRasterizationError,
 } from './paperPlacedDocumentRasterization';
 import { buildFlattenedPaperPageSvgExport, buildFlattenedPaperPageSvgExportWithEmbeddedAssets } from './paperPageFlattenExport';
@@ -140,6 +141,28 @@ describe('placed-document rasterization capability boundary', () => {
     expect(issues[0]).toMatchObject({ frameLabel: 'panel.png', mimeType: 'application/pdf', isPdf: true });
     expect(() => assertPaperDocumentSupportsRasterization(document, undefined, { resolveSourceItemMimeType }))
       .toThrow(PaperPlacedDocumentRasterizationError);
+  });
+
+  it('pins the linked item URL and revision even when its id and compatible MIME stay the same', () => {
+    const base = createDefaultPaperDocument({ title: 'Same MIME replacement transaction' });
+    const document = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 40, heightMm: 30,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    let sourceItems = [{
+      id: 'linked-art', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,OLD', createdAt: 1,
+    }];
+    const guard = createPaperPlacedDocumentRasterizationGuard(document, () => sourceItems);
+
+    expect(guard.sourceItems).toEqual(sourceItems);
+    sourceItems = [{
+      id: 'linked-art', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,NEW', createdAt: 1,
+    }];
+
+    expect(guard).toThrow(PaperPlacedDocumentRasterizationError);
+    expect(guard).toThrow(/changed while this output was being prepared/i);
   });
 
   it('keeps compatible vector/live-print HTML available with the native PDF object placement', () => {

@@ -8,6 +8,7 @@ import {
   bubbleHandlePatch,
   buildPaperEyedropperFrameColorPatch,
   buildPaperPdfRasterExportSettings,
+  createPaperDocumentRasterizationGuardWithCurrentSources,
   deletePaperFrameVertexPatch,
   resolvePaperEyedropperPixelColor,
   exportPaperPdfDocument,
@@ -15,6 +16,7 @@ import {
   exportPaperKdpPdfAndSave,
   exportPaperWebcomicImages,
   insertPaperFrameVertexPatch,
+  materializePaperRasterOutputDocument,
   movePaperFrameVertexPatch,
   resolvePaperEyedropperFrameColor,
   shouldShowPaperVertexHandles,
@@ -972,6 +974,110 @@ describe('current-source placed document boundary for shipping export routes', (
     expect(createElement).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  it.each(['native PDF', 'page images'] as const)(
+    'stops %s output on a same-id same-MIME URL replacement before stale page data ships',
+    async (route) => {
+      sourceStoreMocks.items = [{
+        id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+        assetUrl: 'data:image/png;base64,OLD', createdAt: 1,
+      }];
+      const base = createDefaultPaperDocument({ title: 'Same MIME replacement race' });
+      const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+        kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+        asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+      }).document;
+      const outputDocument = await materializePaperDocumentAssetUrls(paperDoc, sourceStoreMocks.items);
+      const exportPaperPdf = vi.fn();
+      const exportPaperImages = vi.fn();
+      const replaceLinkedItem = () => {
+        sourceStoreMocks.items = [{
+          id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+          assetUrl: 'data:image/png;base64,NEW', createdAt: 1,
+        }];
+      };
+      vi.stubGlobal('window', {
+        signalLoomNative: route === 'native PDF' ? {
+          choosePaperPdfExportPath: vi.fn().mockImplementation(async () => {
+            replaceLinkedItem();
+            return { canceled: false, filePath: '/tmp/Same-MIME-Race.pdf' };
+          }),
+          exportPaperPdf,
+        } : {
+          choosePaperImageExportDirectory: vi.fn().mockImplementation(async () => {
+            replaceLinkedItem();
+            return { canceled: false, directoryPath: '/tmp/Same-MIME-Race-images' };
+          }),
+          exportPaperImages,
+        },
+      });
+
+      const outcome = route === 'native PDF'
+        ? await exportPaperPdfDocument(outputDocument, vi.fn())
+        : await exportPaperWebcomicImages(outputDocument, vi.fn(), { format: 'png' });
+
+      expect(outcome).toMatchObject({ state: 'error', message: expect.stringContaining('changed while this output was being prepared') });
+      expect(exportPaperPdf).not.toHaveBeenCalled();
+      expect(exportPaperImages).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    },
+  );
+
+  it('rejects deletion that lands during caller materialization before any downstream helper can reset the baseline', async () => {
+    sourceStoreMocks.items = [{
+      id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+      assetUrl: 'data:image/png;base64,OLD', createdAt: 1,
+    }];
+    const base = createDefaultPaperDocument({ title: 'Materialization deletion race' });
+    const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+      kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+      asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+    }).document;
+    const guard = createPaperDocumentRasterizationGuardWithCurrentSources(paperDoc);
+
+    const materialization = materializePaperRasterOutputDocument(paperDoc, guard);
+    sourceStoreMocks.items = [];
+
+    await expect(materialization).rejects.toThrow(/no longer available/i);
+  });
+
+  it.each(['native PDF', 'page images'] as const)(
+    'keeps the pre-materialization deletion baseline through the %s shipping helper',
+    async (route) => {
+      sourceStoreMocks.items = [{
+        id: 'linked-art', label: 'Linked art', kind: 'image', mimeType: 'image/png',
+        assetUrl: 'data:image/png;base64,OLD', createdAt: 1,
+      }];
+      const base = createDefaultPaperDocument({ title: 'Shared deletion transaction' });
+      const paperDoc = addFrameToPaperPage(base, base.pages[0].id, {
+        kind: 'image', label: 'Linked art', xMm: 10, yMm: 10, widthMm: 50, heightMm: 40,
+        asset: { sourceBinItemId: 'linked-art', label: 'linked-art.png', kind: 'image', mimeType: 'image/png' },
+      }).document;
+      const guard = createPaperDocumentRasterizationGuardWithCurrentSources(paperDoc);
+      const outputDocument = await materializePaperDocumentAssetUrls(paperDoc, guard.sourceItems);
+      sourceStoreMocks.items = [];
+      const choosePaperPdfExportPath = vi.fn();
+      const choosePaperImageExportDirectory = vi.fn();
+      vi.stubGlobal('window', {
+        signalLoomNative: route === 'native PDF' ? {
+          choosePaperPdfExportPath,
+          exportPaperPdf: vi.fn(),
+        } : {
+          choosePaperImageExportDirectory,
+          exportPaperImages: vi.fn(),
+        },
+      });
+
+      const outcome = route === 'native PDF'
+        ? await exportPaperPdfDocument(outputDocument, vi.fn(), undefined, { rasterizationGuard: guard })
+        : await exportPaperWebcomicImages(outputDocument, vi.fn(), { format: 'png', rasterizationGuard: guard });
+
+      expect(outcome).toMatchObject({ state: 'error', message: expect.stringContaining('no longer available') });
+      expect(choosePaperPdfExportPath).not.toHaveBeenCalled();
+      expect(choosePaperImageExportDirectory).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    },
+  );
 
   it('stops page-image output when its linked item is deleted while the directory chooser is open', async () => {
     sourceStoreMocks.items = [{

@@ -18,12 +18,17 @@ import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
 import {
   createPaperPlacedDocumentRasterizationGuard,
+  type PaperPlacedDocumentRasterizationGuard,
 } from '../../lib/paperPlacedDocumentRasterization';
 import { validatePaperPdfx } from '../../lib/paperPdfxValidate';
 import { exportValidatedPaperPdfx, type PaperProductionPreflightOptions } from '../../lib/paperProductionPreflight';
 import { formatProductionValidationStatus } from '../../lib/paperProductionReport';
 import { normalizePaperPrintProductionSpec } from '../../lib/paperPrintProduction';
-import { buildPaperDocumentExactManagedFontOutput, paperAssetRepository } from '../../features/paper/assets/PaperAssetRuntime';
+import {
+  buildPaperDocumentExactManagedFontOutput,
+  materializePaperDocumentAssetUrls,
+  paperAssetRepository,
+} from '../../features/paper/assets/PaperAssetRuntime';
 import { verifyExactPaperManagedFontReadiness } from '../../lib/paperExactManagedFonts';
 import { verifyBinaryAssetRecord, type BinaryAssetRef } from '../../shared/assets/contentAddressedAsset';
 import { usePaperStore } from '../../store/paperStore';
@@ -871,18 +876,29 @@ export function assertPaperDocumentSupportsRasterizationWithCurrentSources(
   document: PaperDocument,
   pageIds?: readonly string[],
 ): void {
-  createCurrentSourceRasterizationGuard(document, pageIds);
+  createPaperDocumentRasterizationGuardWithCurrentSources(document, pageIds);
 }
 
-function createCurrentSourceRasterizationGuard(
+export function createPaperDocumentRasterizationGuardWithCurrentSources(
   document: PaperDocument,
   pageIds?: readonly string[],
-): () => void {
+): PaperPlacedDocumentRasterizationGuard {
   return createPaperPlacedDocumentRasterizationGuard(
     document,
     () => useSourceBinStore.getState().getAllItems(),
     pageIds,
   );
+}
+
+/** Materialize exactly the linked revisions captured by the guard, then prove they stayed current. */
+export async function materializePaperRasterOutputDocument(
+  document: PaperDocument,
+  guard: PaperPlacedDocumentRasterizationGuard,
+): Promise<PaperDocument> {
+  guard();
+  const outputDocument = await materializePaperDocumentAssetUrls(document, guard.sourceItems);
+  guard();
+  return outputDocument;
 }
 
 export async function exportPaperPdfDocument(
@@ -904,11 +920,14 @@ export async function exportPaperPdfDocument(
 
   // The default native PDF route first builds page rasters. Do not open a destination chooser or
   // report progress until the complete document has passed the PDF-placement capability boundary.
-  const assertCurrentSources = request ? undefined : createCurrentSourceRasterizationGuard(document);
+  const assertCurrentSources = request
+    ? undefined
+    : options.rasterizationGuard ?? createPaperDocumentRasterizationGuardWithCurrentSources(document);
   const recheckCurrentSources = (): void => assertCurrentSources?.();
 
   let result: NativePaperPdfExportResult;
   try {
+    recheckCurrentSources();
     let filePath: string | undefined;
     if (nativeBridge.choosePaperPdfExportPath) {
       setStatus('Choose where to save the PDF...');
@@ -1074,7 +1093,7 @@ export async function exportPaperPdfxAndSave(
   try {
     // Strict production preflight may inspect managed assets. The raster capability boundary comes
     // first so a placed PDF cannot trigger those reads or an overridable generic preflight path.
-    const assertCurrentSources = createCurrentSourceRasterizationGuard(document);
+    const assertCurrentSources = createPaperDocumentRasterizationGuardWithCurrentSources(document);
     setStatus(`Checking managed assets and production constraints for ${standardLabel} (${profileLabel})…`);
     const transaction = await exportValidatedPaperPdfx(document, {
       standard,
@@ -1139,7 +1158,7 @@ export async function exportPaperKdpPdfAndSave(
   const profileLabel = profile?.description ?? 'managed CMYK profile';
   let delivery: NativePaperPdfExportResult | undefined;
   try {
-    const assertCurrentSources = createCurrentSourceRasterizationGuard(document);
+    const assertCurrentSources = createPaperDocumentRasterizationGuardWithCurrentSources(document);
     setStatus(`Checking managed assets and production constraints for a ${dpi} DPI KDP PDF/X-1a…`);
     const kdpDocument = updatePaperDocumentSetup(document, {
       bleedMm: KDP_BLEED_MM,
@@ -1196,6 +1215,8 @@ export async function exportPaperKdpPdfAndSave(
 
 export interface PaperPdfDocumentExportOptions {
   rasterPreset?: PaperPdfRasterPreset;
+  /** Reuse the caller's pre-materialization transaction through the native output handoff. */
+  rasterizationGuard?: PaperPlacedDocumentRasterizationGuard;
 }
 
 export interface PaperPdfRasterExportSettings {
@@ -1248,6 +1269,7 @@ async function buildDefaultRasterPaperPdfRequest(
 ): Promise<PaperPdfExportRequest> {
   assertCurrentSources();
   const exact = await buildPaperDocumentExactManagedFontOutput(document);
+  assertCurrentSources();
   const rasterSettings = buildPaperPdfRasterExportSettings(document, options);
   const pageCount = document.pages.length;
   setStatus(`Rasterizing ${pageCount} Paper page${pageCount === 1 ? '' : 's'} as ${rasterSettings.label} PDF (${rasterSettings.outputDpi} DPI)...`);
@@ -1278,16 +1300,26 @@ async function buildDefaultRasterPaperPdfRequest(
 export async function exportPaperWebcomicImages(
   document: PaperDocument,
   setStatus: (status: string) => void,
-  options: PaperWebcomicImageExportOptions = {},
+  options: PaperWebcomicImageExportOptions & {
+    /** Reuse the caller's pre-materialization transaction through the final file handoff. */
+    rasterizationGuard?: PaperPlacedDocumentRasterizationGuard;
+  } = {},
 ): Promise<PaperExportOutcome> {
-  const assertCurrentSources = createCurrentSourceRasterizationGuard(document);
+  const {
+    rasterizationGuard = createPaperDocumentRasterizationGuardWithCurrentSources(document),
+    ...imageOptions
+  } = options;
+  const assertCurrentSources = rasterizationGuard;
+  assertCurrentSources();
   const exact = await buildPaperDocumentExactManagedFontOutput(document);
+  assertCurrentSources();
   const outputDocument = exact.document;
-  const exactOptions = { ...options, fontFaceCss: exact.fontFaceCss };
+  const exactOptions = { ...imageOptions, fontFaceCss: exact.fontFaceCss };
   const plan = buildPaperWebcomicImageExportPlan(outputDocument, exactOptions);
   const nativeBridge = getSignalLoomNativeBridge();
 
   try {
+    assertCurrentSources();
     if (nativeBridge?.exportPaperImages) {
       let directoryPath: string | undefined;
       if (nativeBridge.choosePaperImageExportDirectory) {
