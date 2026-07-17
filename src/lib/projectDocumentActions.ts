@@ -10,9 +10,11 @@ import { sanitizeProjectDocument } from './projectValidation';
 import { migrateLegacyPaperBinaryFields } from '../features/paper/assets/PaperDocumentAssets';
 import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
 import {
+  PaperAssetPolicyError,
   buildPaperPortableAssetsSection,
   collectMissingPaperAssetDiagnostics,
   importPaperPortableAssetsSection,
+  planPaperPortableAssets,
   type PaperPortableAssetsImportResult,
   type PaperPortableAssetsSection,
 } from '../features/paper/assets/PaperPortableAssets';
@@ -497,6 +499,51 @@ function collectProjectPaperDocuments(paper: FlowProjectDocument['paper']): Pape
     .map((workspaceDocument) => workspaceDocument.document)
     .filter((document): document is PaperDocument => Boolean(document));
   return [paper.document, ...documents];
+}
+
+/**
+ * Applies the same fail-closed policy to an already-saved project that strict live export applies
+ * while building a fresh one. Saved rows cannot be rebuilt from the current workspace, so verify
+ * that every reachable managed Paper record is present in their embedded section and honor any
+ * exclusions or missing records that ordinary Save recorded without blocking.
+ */
+export function assertSavedProjectPaperAssetsPortable(document: FlowProjectDocument): void {
+  const documents = collectProjectPaperDocuments(document.paper);
+  if (documents.length === 0) return;
+
+  const plan = planPaperPortableAssets(documents);
+  const exclusions = [...plan.exclusions];
+  const exclusionKeys = new Set(exclusions.map((entry) => `${entry.faceId}:${entry.assetId}`));
+  for (const exclusion of document.paperAssets?.excludedFonts ?? []) {
+    const key = `${exclusion.faceId}:${exclusion.assetId}`;
+    if (!exclusionKeys.has(key)) {
+      exclusionKeys.add(key);
+      exclusions.push(exclusion);
+    }
+  }
+
+  const packagedRefs = new Map((document.paperAssets?.assets ?? []).map((entry) => [entry.ref.id, entry.ref]));
+  const missing = [...(document.paperAssets?.missingAssets ?? [])];
+  const missingIds = new Set(missing.map((entry) => entry.id));
+  for (const source of plan.sources) {
+    const packagedRef = packagedRefs.get(source.id);
+    const matchesDocumentRef = !source.ref || (
+      packagedRef?.sha256 === source.ref.sha256
+      && packagedRef.byteLength === source.ref.byteLength
+    );
+    if (packagedRef && matchesDocumentRef) continue;
+    if (!missingIds.has(source.id)) {
+      missingIds.add(source.id);
+      missing.push({
+        id: source.id,
+        context: `${source.role} "${source.label}" in document "${source.documentTitle}"`,
+      });
+    }
+  }
+
+  if (exclusions.length > 0 || missing.length > 0) {
+    throw new PaperAssetPolicyError(exclusions, missing);
+  }
 }
 
 async function buildProjectPaperPortableAssets(

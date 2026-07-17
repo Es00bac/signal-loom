@@ -17,6 +17,11 @@ import {
   paperAssetRepository,
 } from '../features/paper/assets/PaperAssetRuntime';
 import {
+  PAPER_PORTABLE_ASSETS_SCHEMA,
+  PAPER_PORTABLE_ASSETS_VERSION,
+  validatePaperPortableAssetsSectionShape,
+} from '../features/paper/assets/PaperPortableAssets';
+import {
   createBinaryAssetRecord,
   verifyBinaryAssetRecord,
   type BinaryAssetRef,
@@ -346,6 +351,27 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
 
     await expect(restoreProjectDocument(saved)).rejects.toThrow(/limit|exceed/i);
     expect(await paperAssetRepository.listRefs()).toHaveLength(0);
+  });
+
+  it('rejects an encoded payload larger than its declared byte length permits before decoding', () => {
+    const sha256 = 'a'.repeat(64);
+    expect(() => validatePaperPortableAssetsSectionShape({
+      schema: PAPER_PORTABLE_ASSETS_SCHEMA,
+      version: PAPER_PORTABLE_ASSETS_VERSION,
+      assets: [{
+        ref: {
+          id: `sha256:${sha256}`,
+          sha256,
+          mimeType: 'image/png',
+          byteLength: 1,
+        },
+        // Canonical base64, but dishonest: 3 KiB of decoded data is declared as one byte.
+        dataBase64: 'AAAA'.repeat(1_024),
+      }],
+    }, {
+      maxAssetBytes: 1,
+      maxTotalBytes: 1,
+    })).toThrow(/encoded payload.*declared byte length/i);
   });
 
   it('rejects a section with more entries than the aggregate limit', async () => {

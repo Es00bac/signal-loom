@@ -172,6 +172,15 @@ describe('ProjectLibraryModal project persistence', () => {
     });
   }
 
+  function clickExactButton(label: string) {
+    const button = [...container.querySelectorAll('button')]
+      .find((candidate) => candidate.textContent?.trim() === label);
+    expect(button, `button exactly matching "${label}" should be rendered`).toBeDefined();
+    act(() => {
+      button!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+  }
+
   async function waitForStatus(fragment: string) {
     for (let attempt = 0; attempt < 200; attempt += 1) {
       if (container.textContent?.includes(fragment)) return;
@@ -265,5 +274,85 @@ describe('ProjectLibraryModal project persistence', () => {
     expect(payload.paper?.document?.title).toBe('Modal Paper Tab');
     expect(payload.usageLedger?.entries).toHaveLength(1);
     expect(payload.imageEditor).toBeDefined();
+  });
+
+  it('blocks saved-row export when ordinary Save recorded excluded and missing Paper assets', async () => {
+    const missingSha256 = '1'.repeat(64);
+    const restrictedSha256 = '2'.repeat(64);
+    const missingRef = {
+      id: `sha256:${missingSha256}`,
+      sha256: missingSha256,
+      mimeType: 'image/png',
+      byteLength: 4,
+      fileName: 'missing-panel.png',
+    } as const;
+    const restrictedFontRef = {
+      id: `sha256:${restrictedSha256}`,
+      sha256: restrictedSha256,
+      mimeType: 'font/ttf',
+      byteLength: 4,
+      fileName: 'restricted.ttf',
+    } as const;
+    const base = createDefaultPaperDocument({ title: 'Incomplete Saved Project' });
+    const withMissingImage = addFrameToPaperPage(base, base.pages[0].id, {
+      id: 'missing-image-frame',
+      kind: 'image',
+      xMm: 10,
+      yMm: 10,
+      widthMm: 60,
+      heightMm: 40,
+      asset: {
+        label: 'Missing Panel',
+        kind: 'image',
+        mimeType: missingRef.mimeType,
+        locator: { kind: 'managed', ref: missingRef },
+      },
+    } as never).document;
+    const incompleteDocument = {
+      ...withMissingImage,
+      importedFonts: [{
+        id: 'restricted-face',
+        familyId: 'restricted-family',
+        familyName: 'Restricted Family',
+        postscriptName: 'RestrictedFamily-Regular',
+        weight: 400,
+        style: 'normal',
+        stretchPercent: 100,
+        collectionIndex: 0,
+        variableAxes: {},
+        unicodeRanges: [],
+        format: 'truetype',
+        fontAsset: restrictedFontRef,
+        embeddability: 'restricted',
+        canSubset: false,
+        source: { kind: 'user-import' },
+        license: {},
+      }],
+    } as never;
+    usePaperStore.getState().restoreSnapshot({
+      document: incompleteDocument,
+      selectedPageId: withMissingImage.pages[0].id,
+      tool: 'select',
+      zoom: 1,
+    });
+
+    renderModal();
+    await flushAsync();
+    clickButton('Save Current Project');
+    await waitForCondition('incomplete project saved without blocking', async () =>
+      (await listProjectSummaries()).length === 1);
+
+    const summaries = await listProjectSummaries();
+    expect(summaries).toHaveLength(1);
+    const saved = await loadProjectDocument(summaries[0].id);
+    expect(saved?.paperAssets?.excludedFonts).toHaveLength(1);
+    expect(saved?.paperAssets?.missingAssets).toHaveLength(1);
+
+    clickExactButton('Export');
+    await waitForStatus('cannot be completed as a self-contained package');
+
+    expect(container.textContent).toContain('Restricted Family');
+    expect(container.textContent).toContain(missingRef.id);
+    expect(downloadedJson.payloads).toHaveLength(0);
   });
 });

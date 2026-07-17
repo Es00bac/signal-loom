@@ -16,6 +16,7 @@ import {
 } from '../../lib/projectLibrary';
 import { exportProjectAssets } from '../../lib/projectAssets';
 import {
+  assertSavedProjectPaperAssetsPortable,
   buildCurrentProjectDocument as buildFullProjectDocument,
   buildDirtyImageReplacementConfirmationMessage,
   replaceProjectDocument,
@@ -278,6 +279,7 @@ export function ProjectLibraryModal({ isOpen, onClose }: ProjectLibraryModalProp
         }
 
         project = stored;
+        assertSavedProjectPaperAssetsPortable(project);
       } else {
         project = await buildFullProjectDocument({
           name: projectName.trim() || selectedProject?.name,

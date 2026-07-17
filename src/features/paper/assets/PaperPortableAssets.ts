@@ -216,6 +216,16 @@ export function validatePaperPortableAssetsSectionShape(
     }
     const ref = entry.ref;
     assertSafePortableAssetFileName(ref.fileName, ref.id);
+    if (ref.byteLength > limits.maxAssetBytes) {
+      throw new PaperPortableAssetsError(`asset ${ref.id} exceeds the per-asset limit (${ref.byteLength} > ${limits.maxAssetBytes}).`);
+    }
+    const maxEncodedLength = 4 * Math.ceil(ref.byteLength / 3);
+    if (!Number.isSafeInteger(maxEncodedLength) || entry.dataBase64.length > maxEncodedLength) {
+      throw new PaperPortableAssetsError(
+        `asset ${ref.id} encoded payload exceeds the length permitted by its declared byte length `
+        + `(${entry.dataBase64.length} > ${maxEncodedLength}).`,
+      );
+    }
     if (!BASE64_PATTERN.test(entry.dataBase64) || entry.dataBase64.length % 4 !== 0) {
       throw new PaperPortableAssetsError(`asset ${ref.id} payload is not canonical base64.`);
     }
@@ -223,9 +233,6 @@ export function validatePaperPortableAssetsSectionShape(
       throw new PaperPortableAssetsError(`duplicate asset entry ${ref.id}.`);
     }
     seen.add(ref.id);
-    if (ref.byteLength > limits.maxAssetBytes) {
-      throw new PaperPortableAssetsError(`asset ${ref.id} exceeds the per-asset limit (${ref.byteLength} > ${limits.maxAssetBytes}).`);
-    }
     declaredTotal += ref.byteLength;
     if (!Number.isSafeInteger(declaredTotal) || declaredTotal > limits.maxTotalBytes) {
       throw new PaperPortableAssetsError(`the section exceeds the total size limit (${declaredTotal} > ${limits.maxTotalBytes}).`);
