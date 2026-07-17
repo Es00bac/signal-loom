@@ -261,6 +261,38 @@ export interface NativeState {
   workspace?: WorkspaceWindowView;
   platform: string;
   isDev: boolean;
+  /** Authoritative project identity/version this window must adopt before it may save (AUD-001). */
+  projectAuthority?: NativeProjectAuthorityDescriptor;
+  /** This window's own webContents id, used to ignore self-initiated authority broadcasts. */
+  webContentsId?: number;
+}
+
+/**
+ * Immutable native project identity plus its monotonic content version. A fresh identity is
+ * minted for every open/switch/Save As/path binding; the version advances only on accepted
+ * saves. A save is authorized only when the sending renderer holds — and has confirmed
+ * adopting — the current descriptor, so a display path alone never grants write access.
+ */
+export interface NativeProjectAuthorityDescriptor {
+  authorityId: string;
+  version: number;
+  filePath?: string;
+}
+
+export type NativeProjectSaveRejectionCode =
+  /** The renderer never adopted any project authority (fresh/reloaded window mid-boot). */
+  | 'unopened'
+  /** The renderer's claim references an identity that is no longer the current project. */
+  | 'switched'
+  /** Right identity, but another window already saved a newer version. */
+  | 'stale'
+  /** The claim looks current but this renderer never confirmed adopting it. */
+  | 'unauthorized';
+
+export interface NativeProjectSaveRejection {
+  code: NativeProjectSaveRejectionCode;
+  message: string;
+  current: NativeProjectAuthorityDescriptor;
 }
 
 export interface NativeProjectFileResult {
@@ -268,6 +300,37 @@ export interface NativeProjectFileResult {
   filePath?: string;
   scratchDirectoryPath?: string;
   document?: FlowProjectDocument;
+  /** The authority descriptor after a successful open/save commit. */
+  authority?: NativeProjectAuthorityDescriptor;
+  /** Present when the main process refused the save; nothing was written or advanced. */
+  rejected?: NativeProjectSaveRejection;
+}
+
+export interface NativeProjectSavePayload {
+  document: FlowProjectDocument;
+  claim?: NativeProjectAuthorityDescriptor;
+}
+
+export type NativeProjectAuthorityChangeReason = 'open' | 'save' | 'save-as' | 'clear';
+
+export interface NativeProjectAuthorityChangedEvent {
+  authority: NativeProjectAuthorityDescriptor;
+  reason: NativeProjectAuthorityChangeReason;
+  initiatorWebContentsId?: number;
+}
+
+export interface NativeProjectAdoptResult {
+  authority: NativeProjectAuthorityDescriptor;
+  filePath?: string;
+  scratchDirectoryPath?: string;
+  /** Canonical snapshot to hydrate; absent for a blank (unsaved) project. */
+  document?: FlowProjectDocument;
+}
+
+export interface NativeProjectAdoptionConfirmation {
+  ok: boolean;
+  stale?: boolean;
+  current?: NativeProjectAuthorityDescriptor;
 }
 
 export interface NativeScratchDirectoryResult {
@@ -491,10 +554,14 @@ export interface LocalUpscalerStatus {
 
 export interface SignalLoomNativeBridge {
   getNativeState: () => Promise<NativeState>;
-  clearProjectPath: () => Promise<{ ok?: boolean }>;
+  clearProjectPath: () => Promise<{ ok?: boolean; authority?: NativeProjectAuthorityDescriptor }>;
   openProjectFile: () => Promise<NativeProjectFileResult>;
-  saveProjectFile: (document: FlowProjectDocument) => Promise<NativeProjectFileResult>;
-  saveProjectFileAs: (document: FlowProjectDocument) => Promise<NativeProjectFileResult>;
+  saveProjectFile: (payload: NativeProjectSavePayload) => Promise<NativeProjectFileResult>;
+  saveProjectFileAs: (payload: NativeProjectSavePayload) => Promise<NativeProjectFileResult>;
+  /** Pull the canonical current-project snapshot for adoption after an authority change (AUD-001). */
+  adoptProject?: () => Promise<NativeProjectAdoptResult>;
+  /** Confirm this window hydrated the claimed authority; required before its saves authorize. */
+  confirmProjectAdoption?: (claim: NativeProjectAuthorityDescriptor) => Promise<NativeProjectAdoptionConfirmation>;
   openImageDocumentFile: () => Promise<NativeImageOpenResult>;
   saveImageDocumentFileAs: (bytes: Uint8Array) => Promise<NativeImageSaveResult>;
   /** Re-read a .slimg by a known path (no dialog) — used by the .slimg Flow node's "Read disk". */
@@ -549,6 +616,8 @@ export interface SignalLoomNativeBridge {
   secretDecrypt?: (ciphertextBase64: string) => Promise<string | null>;
   onMenuCommand: (callback: (command: NativeMenuCommand) => void) => () => void;
   onProjectPathChanged: (callback: (filePath: string | undefined) => void) => () => void;
+  /** Versioned project identity changes; drives adoption/stale-marking in every window. */
+  onProjectAuthorityChanged?: (callback: (event: NativeProjectAuthorityChangedEvent) => void) => () => void;
   onSourceLibraryChanged: (callback: (event: SourceLibraryNativeEvent) => void) => () => void;
 }
 

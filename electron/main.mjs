@@ -11,6 +11,7 @@ import menuModule from './menu.cjs';
 import paperPdfExportModule from './paper-pdf-export.cjs';
 import paperImageExportModule from './paper-image-export.cjs';
 import projectFileModule from './project-files.cjs';
+import projectAuthorityModule from './project-authority.cjs';
 import mediaFormatRegistryModule from './media-format-registry.cjs';
 import startupProjectModule from './startup-project.cjs';
 import vertexAuthModule from './vertex-auth.cjs';
@@ -60,6 +61,7 @@ const {
   sanitizeFileName,
   shouldWriteProjectSaveDirectly,
 } = projectFileModule;
+const { createProjectAuthority, normalizeProjectSavePayload } = projectAuthorityModule;
 const { getElectronDialogFilterGroups } = mediaFormatRegistryModule;
 const {
   buildStartupProjectStatePath,
@@ -554,6 +556,27 @@ function broadcastProjectPathChanged() {
   }
 }
 
+function broadcastProjectAuthorityChanged(event) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send('signal-loom:project-authority-changed', event);
+    }
+  }
+  // Legacy display listeners keep receiving the bare path alongside the versioned event.
+  broadcastProjectPathChanged();
+}
+
+// Authoritative project identity/version arbitration (AUD-001): every open/save/clear commits
+// through this gateway, and saves from renderers that never adopted the current identity and
+// version are rejected before any disk IO.
+const projectAuthority = createProjectAuthority({
+  broadcast: broadcastProjectAuthorityChanged,
+});
+
+function commitStartupProjectAuthority() {
+  return projectAuthority.commitStartup(currentProjectPath);
+}
+
 function createEmptySourceLibrarySnapshot() {
   return {
     bins: [{
@@ -986,6 +1009,11 @@ function createWorkspaceWindow(workspace = 'flow') {
     buildWorkspaceWindowOpenResult(details, workspaceWindow),
   );
 
+  const workspaceWebContentsId = workspaceWindow.webContents.id;
+  workspaceWindow.webContents.once('destroyed', () => {
+    projectAuthority.dropRenderer(workspaceWebContentsId);
+  });
+
   workspaceWindow.webContents.on('did-create-window', (childWindow, details) => {
     if (!isSignalLoomFloatingPanelWindow(details)) {
       return;
@@ -1277,7 +1305,6 @@ async function writeProjectDocument(filePath, document) {
   };
   await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
   await rememberProjectPath(filePath);
-  broadcastProjectPathChanged();
 
   return {
     canceled: false,
@@ -1317,7 +1344,6 @@ async function openProjectDocumentFromPath(filePath) {
   };
   await syncSourceLibraryFromDocument(prepared.document, { broadcast: true });
   await rememberProjectPath(filePath);
-  broadcastProjectPathChanged();
 
   return {
     canceled: false,
@@ -2558,22 +2584,30 @@ function installIpcHandlers() {
       workspace: window ? getWorkspaceForWindow(window) ?? activeWorkspace : activeWorkspace,
       platform: process.platform,
       isDev,
+      projectAuthority: projectAuthority.getCurrent(),
+      webContentsId: event.sender.id,
     };
   });
 
-  ipcMain.handle('signal-loom:clear-project-path', async () => {
-    setCurrentProjectAssetRoots(undefined, undefined, undefined);
-    startupProject = undefined;
-    await resetSourceLibrarySnapshot({ broadcast: true });
-    void forgetRememberedProjectPath().catch(() => undefined);
-    broadcastProjectPathChanged();
-    return { ok: true };
+  ipcMain.handle('signal-loom:clear-project-path', async (event) => {
+    return projectAuthority.clearProject({
+      senderId: event.sender.id,
+      reset: async () => {
+        setCurrentProjectAssetRoots(undefined, undefined, undefined);
+        startupProject = undefined;
+        await resetSourceLibrarySnapshot({ broadcast: true });
+        void forgetRememberedProjectPath().catch(() => undefined);
+      },
+    });
   });
 
   ipcMain.handle('signal-loom:project-open', async (event) => {
     const automationPath = getAutomationProjectOpenPath(process.env);
     if (automationPath) {
-      return openProjectDocumentFromPath(automationPath);
+      return projectAuthority.openProject({
+        senderId: event.sender.id,
+        load: () => openProjectDocumentFromPath(automationPath),
+      });
     }
 
     const result = await dialog.showOpenDialog(getIpcWindow(event), {
@@ -2586,32 +2620,52 @@ function installIpcHandlers() {
       return { canceled: true };
     }
 
-    return openProjectDocumentFromPath(result.filePaths[0]);
+    return projectAuthority.openProject({
+      senderId: event.sender.id,
+      load: () => openProjectDocumentFromPath(result.filePaths[0]),
+    });
   });
 
-  ipcMain.handle('signal-loom:project-save', async (event, document) => {
-    const automationPath = getAutomationProjectSavePath(process.env);
-    const filePath = automationPath
-      ? ensureSignalLoomProjectExtension(automationPath)
-      : shouldWriteProjectSaveDirectly(currentProjectPath)
-      ? currentProjectPath
-      : await chooseProjectSavePath(currentProjectPath, getIpcWindow(event));
+  ipcMain.handle('signal-loom:project-save', async (event, payload) => {
+    const { document, claim } = normalizeProjectSavePayload(payload);
 
-    if (!filePath) {
-      return { canceled: true };
-    }
-
-    return writeProjectDocument(filePath, document);
+    return projectAuthority.saveProject({
+      senderId: event.sender.id,
+      claim,
+      resolveFilePath: (currentFilePath) => {
+        const automationPath = getAutomationProjectSavePath(process.env);
+        if (automationPath) {
+          return ensureSignalLoomProjectExtension(automationPath);
+        }
+        return shouldWriteProjectSaveDirectly(currentFilePath)
+          ? currentFilePath
+          : chooseProjectSavePath(currentFilePath, getIpcWindow(event));
+      },
+      write: (filePath) => writeProjectDocument(filePath, document),
+    });
   });
 
-  ipcMain.handle('signal-loom:project-save-as', async (event, document) => {
-    const filePath = await chooseProjectSavePath(currentProjectPath, getIpcWindow(event));
+  ipcMain.handle('signal-loom:project-save-as', async (event, payload) => {
+    const { document, claim } = normalizeProjectSavePayload(payload);
 
-    if (!filePath) {
-      return { canceled: true };
-    }
+    return projectAuthority.saveProject({
+      senderId: event.sender.id,
+      claim,
+      resolveFilePath: (currentFilePath) => chooseProjectSavePath(currentFilePath, getIpcWindow(event)),
+      write: (filePath) => writeProjectDocument(filePath, document),
+    });
+  });
 
-    return writeProjectDocument(filePath, document);
+  ipcMain.handle('signal-loom:project-adopt', async () => {
+    return projectAuthority.buildAdoptResponse(() => ({
+      filePath: currentProjectPath,
+      scratchDirectoryPath: currentScratchDirectoryPath,
+      document: startupProject?.document,
+    }));
+  });
+
+  ipcMain.handle('signal-loom:project-confirm-adoption', async (event, claim) => {
+    return projectAuthority.confirmAdoption(event.sender.id, claim);
   });
 
   ipcMain.handle('signal-loom:image-open', async (event) => {
@@ -3438,6 +3492,7 @@ app.whenReady().then(async () => {
     }
   }
   await loadRememberedStartupProject();
+  commitStartupProjectAuthority();
   createWorkspaceWindow('flow');
 
   app.on('activate', () => {

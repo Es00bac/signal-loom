@@ -50,7 +50,7 @@ describe('Electron main process source guards', () => {
 
     expect(source).toMatch(/async function rememberProjectPath[\s\S]*isSignalLoomProjectBackupPath\(filePath\)[\s\S]*forgetRememberedProjectPath/);
     expect(source).toContain('getProjectSaveDialogDefaultPath(existingPath)');
-    expect(source).toMatch(/const automationPath = getAutomationProjectSavePath\(process\.env\)[\s\S]*automationPath[\s\S]*ensureSignalLoomProjectExtension\(automationPath\)[\s\S]*shouldWriteProjectSaveDirectly\(currentProjectPath\)/);
+    expect(source).toMatch(/const automationPath = getAutomationProjectSavePath\(process\.env\)[\s\S]*automationPath[\s\S]*ensureSignalLoomProjectExtension\(automationPath\)[\s\S]*shouldWriteProjectSaveDirectly\(currentFilePath\)/);
     expect(source).toMatch(/async function backupExistingProjectBeforeOverwrite[\s\S]*buildProjectOverwriteBackupPath\(filePath\)[\s\S]*copyFile\(filePath, backupPath\)/);
   });
 
@@ -183,5 +183,55 @@ describe('Electron main process source guards', () => {
 
     expect(realProjectSoak).toContain('signal-loom-workspace-window-commands');
     expect(realProjectSoak).toContain("senderId: 'native-real-project-soak-harness'");
+  });
+});
+
+describe('project authority arbitration wiring (AUD-001)', () => {
+  const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+  it('creates the shared project authority gateway from the pure module', () => {
+    expect(source).toMatch(/import projectAuthorityModule from '\.\/project-authority\.cjs'/);
+    expect(source).toMatch(/const \{ createProjectAuthority, normalizeProjectSavePayload \} = projectAuthorityModule/);
+    expect(source).toMatch(/const projectAuthority = createProjectAuthority\(\{/);
+    expect(source).toContain('broadcast: broadcastProjectAuthorityChanged');
+  });
+
+  it('binds startup, open, save, save-as, and clear to authority commits instead of a bare path', () => {
+    expect(source).toMatch(/function commitStartupProjectAuthority\(\)[\s\S]*?projectAuthority\.commitStartup\(currentProjectPath\)/);
+    expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-open', async \(event\) => \{[\s\S]{0,700}?projectAuthority\.openProject\(\{[\s\S]{0,200}?senderId: event\.sender\.id/);
+    expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-save', async \(event, payload\) => \{[\s\S]{0,900}?projectAuthority\.saveProject\(\{[\s\S]{0,300}?senderId: event\.sender\.id[\s\S]{0,300}?claim/);
+    expect(source).toMatch(/ipcMain\.handle\('signal-loom:project-save-as', async \(event, payload\) => \{[\s\S]{0,900}?projectAuthority\.saveProject\(\{[\s\S]{0,300}?senderId: event\.sender\.id[\s\S]{0,300}?claim/);
+    expect(source).toMatch(/ipcMain\.handle\('signal-loom:clear-project-path', async \(event\) => \{[\s\S]{0,500}?projectAuthority\.clearProject\(\{[\s\S]{0,200}?senderId: event\.sender\.id/);
+    expect(source).toContain('normalizeProjectSavePayload');
+  });
+
+  it('exposes adoption pull/confirm handlers and reports authority in native state', () => {
+    expect(source).toContain("ipcMain.handle('signal-loom:project-adopt'");
+    expect(source).toContain("ipcMain.handle('signal-loom:project-confirm-adoption'");
+    expect(source).toMatch(/projectAuthority\.buildAdoptResponse\(/);
+    expect(source).toMatch(/projectAuthority\.confirmAdoption\(event\.sender\.id, claim\)/);
+    expect(source).toMatch(/'signal-loom:get-native-state'[\s\S]{0,500}?projectAuthority: projectAuthority\.getCurrent\(\)/);
+    expect(source).toMatch(/'signal-loom:get-native-state'[\s\S]{0,500}?webContentsId: event\.sender\.id/);
+  });
+
+  it('broadcasts versioned authority changes and drops adoption records with destroyed renderers', () => {
+    expect(source).toMatch(/function broadcastProjectAuthorityChanged\(event\)[\s\S]*?'signal-loom:project-authority-changed', event/);
+    expect(source).toMatch(/webContents\.on\('destroyed'[\s\S]{0,200}?projectAuthority\.dropRenderer|once\('destroyed'[\s\S]{0,200}?projectAuthority\.dropRenderer/);
+  });
+
+  it('routes every project disk write through the arbitration gateway, not directly from IPC handlers', () => {
+    const saveHandler = source.match(/ipcMain\.handle\('signal-loom:project-save',[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
+    const saveAsHandler = source.match(/ipcMain\.handle\('signal-loom:project-save-as',[\s\S]*?\n {2}\}\);/)?.[0] ?? '';
+
+    expect(saveHandler).toContain('projectAuthority.saveProject({');
+    expect(saveAsHandler).toContain('projectAuthority.saveProject({');
+    expect(saveHandler).not.toMatch(/return writeProjectDocument\(/);
+    expect(saveAsHandler).not.toMatch(/return writeProjectDocument\(/);
+
+    // The write helper no longer self-broadcasts: notification ordering (write → version
+    // advance → broadcast) is owned by the gateway commit.
+    const writeHelper = source.match(/async function writeProjectDocument[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(writeHelper.length).toBeGreaterThan(0);
+    expect(writeHelper).not.toContain('broadcastProjectPathChanged()');
   });
 });

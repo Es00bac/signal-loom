@@ -134,7 +134,13 @@ import {
   dispatchNativeRendererCommand,
   getSignalLoomNativeBridge,
   type NativeMenuCommand,
+  type NativeProjectAdoptResult,
 } from './lib/nativeApp';
+import {
+  createProjectAuthorityClient,
+  type ProjectAuthorityClient,
+  type ProjectAuthorityClientState,
+} from './lib/projectAuthorityClient';
 import {
   buildFlowNodePatchForSourceBinItem,
   getFlowNodeTypeForSourceBinItem,
@@ -436,6 +442,9 @@ function FlowApp() {
   const activeIngestSignatureRef = useRef<string | undefined>(undefined);
   const flowOrganizeCancelRef = useRef(false);
   const [nativeProjectPath, setNativeProjectPath] = useState<string | undefined>(undefined);
+  const [projectAuthorityUiState, setProjectAuthorityUiState] = useState<ProjectAuthorityClientState>({ stale: false });
+  const nativeWebContentsIdRef = useRef<number | undefined>(undefined);
+  const projectAuthorityClientRef = useRef<ProjectAuthorityClient | undefined>(undefined);
   const [flowContextMenu, setFlowContextMenu] = useState<{
     x: number;
     y: number;
@@ -1213,6 +1222,69 @@ function FlowApp() {
     setWorkspaceView(targetWorkspace);
   }, [setWorkspaceView]);
 
+  // Desktop project authority (AUD-001): this window may only save the project identity and
+  // version it has adopted. The client hydrates canonical snapshots when another window
+  // opens/switches projects, and marks this window stale/read-only when it falls behind.
+  const getProjectAuthorityClient = useCallback((): ProjectAuthorityClient => {
+    if (!projectAuthorityClientRef.current) {
+      const bridge = getSignalLoomNativeBridge();
+      projectAuthorityClientRef.current = createProjectAuthorityClient({
+        selfWebContentsId: () => nativeWebContentsIdRef.current,
+        bridge: {
+          adoptProject: bridge?.adoptProject,
+          confirmProjectAdoption: bridge?.confirmProjectAdoption,
+        },
+        restoreSnapshot: async (result: NativeProjectAdoptResult) => {
+          if (result.scratchDirectoryPath) {
+            setNativeScratchDirectoryPath(result.scratchDirectoryPath);
+          }
+          resetSourceLibraryNativeSyncTracking();
+          await restoreProjectDocument(result.document);
+        },
+        resetSnapshot: async () => {
+          resetSourceLibraryNativeSyncTracking();
+          await resetProjectDocument();
+          setNativeScratchDirectoryPath(undefined);
+        },
+        onStateChanged: (state) => {
+          setProjectAuthorityUiState(state);
+          setNativeProjectPath(state.filePath);
+        },
+      });
+    }
+    return projectAuthorityClientRef.current;
+  }, [resetSourceLibraryNativeSyncTracking, setNativeScratchDirectoryPath]);
+
+  const requestProjectAuthorityReload = useCallback(async () => {
+    const outcome = await getProjectAuthorityClient().reloadFromDisk();
+    if (!outcome.ok) {
+      await showAlertDialog({
+        title: 'Project Reload Failed',
+        message: outcome.error ?? 'The latest saved project could not be reloaded into this window.',
+        tone: 'danger',
+      });
+    }
+  }, [getProjectAuthorityClient]);
+
+  const confirmStaleProjectReload = useCallback(async () => {
+    const message = describeProjectAuthorityBlock(getProjectAuthorityClient().getState());
+    const confirmed = await useConfirmationStore.getState().requestConfirmation(
+      `${message}\n\nReload the latest saved project into this window now? Unsaved changes in this window will be replaced.`,
+      'Project Out of Date',
+    );
+    if (confirmed) {
+      await requestProjectAuthorityReload();
+    }
+  }, [getProjectAuthorityClient, requestProjectAuthorityReload]);
+
+  const projectSaveBlockedByAuthority = useCallback(async (): Promise<boolean> => {
+    if (!getProjectAuthorityClient().getSaveBlock()) {
+      return false;
+    }
+    await confirmStaleProjectReload();
+    return true;
+  }, [confirmStaleProjectReload, getProjectAuthorityClient]);
+
   const handleAppMenuCommand = useCallback(async (command: NativeMenuCommand, source: ActivityTrailSource = 'menu') => {
     recordCommandActivity(command, source);
     const bridge = getSignalLoomNativeBridge();
@@ -1229,8 +1301,13 @@ function FlowApp() {
 
         resetSourceLibraryNativeSyncTracking();
         await resetProjectDocument({ allowDirtyImageReplacement: true });
-        await bridge?.clearProjectPath();
-        setNativeProjectPath(undefined);
+        const clearResult = await bridge?.clearProjectPath();
+        if (clearResult?.authority) {
+          // This window's freshly reset stores are the new blank project's canonical state.
+          await getProjectAuthorityClient().adoptSnapshot({ authority: clearResult.authority });
+        } else {
+          setNativeProjectPath(undefined);
+        }
         setNativeScratchDirectoryPath(undefined);
         return;
       }
@@ -1247,9 +1324,30 @@ function FlowApp() {
             if (result.scratchDirectoryPath) {
               setNativeScratchDirectoryPath(result.scratchDirectoryPath);
             }
-            resetSourceLibraryNativeSyncTracking();
-            await restoreProjectDocument(result.document);
-            setNativeProjectPath(result.filePath);
+            const openedDocument = result.document;
+            if (result.authority) {
+              try {
+                await getProjectAuthorityClient().adoptSnapshot(
+                  { authority: result.authority, filePath: result.filePath },
+                  async () => {
+                    resetSourceLibraryNativeSyncTracking();
+                    await restoreProjectDocument(openedDocument);
+                  },
+                );
+              } catch (restoreError) {
+                // The main process already switched the authoritative project; this window
+                // failed to hydrate it, so it stays explicitly stale/read-only until a
+                // reload succeeds. A bare title/path change must never stand in for that.
+                getProjectAuthorityClient().noteAdoptionFailure(
+                  restoreError instanceof Error ? restoreError.message : undefined,
+                );
+                throw restoreError;
+              }
+            } else {
+              resetSourceLibraryNativeSyncTracking();
+              await restoreProjectDocument(openedDocument);
+              setNativeProjectPath(result.filePath);
+            }
           }
         } catch (error) {
           await showAlertDialog({
@@ -1266,17 +1364,36 @@ function FlowApp() {
           return;
         }
 
+        const authorityClient = getProjectAuthorityClient();
+        if (await projectSaveBlockedByAuthority()) {
+          return;
+        }
         const document = await buildNativeSaveProjectDocument(getNativeProjectName());
-        const result = await bridge.saveProjectFile(document);
+        const result = await bridge.saveProjectFile({ document, claim: authorityClient.getClaim() });
+        authorityClient.applySaveResult(result);
 
+        if (result.rejected) {
+          await confirmStaleProjectReload();
+          return;
+        }
         if (!result.canceled) {
           if (result.scratchDirectoryPath) {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
-          if (result.document) {
-            await restoreProjectDocument(result.document, { allowDirtyImageReplacement: true });
+          const savedDocument = result.document;
+          if (savedDocument && result.authority) {
+            await authorityClient.adoptSnapshot(
+              { authority: result.authority, filePath: result.filePath },
+              async () => {
+                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+              },
+            );
+          } else {
+            if (savedDocument) {
+              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+            }
+            setNativeProjectPath(result.filePath);
           }
-          setNativeProjectPath(result.filePath);
         }
         return;
       }
@@ -1286,17 +1403,36 @@ function FlowApp() {
           return;
         }
 
+        const authorityClient = getProjectAuthorityClient();
+        if (await projectSaveBlockedByAuthority()) {
+          return;
+        }
         const document = await buildNativeSaveProjectDocument(getNativeProjectName());
-        const result = await bridge.saveProjectFileAs(document);
+        const result = await bridge.saveProjectFileAs({ document, claim: authorityClient.getClaim() });
+        authorityClient.applySaveResult(result);
 
+        if (result.rejected) {
+          await confirmStaleProjectReload();
+          return;
+        }
         if (!result.canceled) {
           if (result.scratchDirectoryPath) {
             setNativeScratchDirectoryPath(result.scratchDirectoryPath);
           }
-          if (result.document) {
-            await restoreProjectDocument(result.document, { allowDirtyImageReplacement: true });
+          const savedDocument = result.document;
+          if (savedDocument && result.authority) {
+            await authorityClient.adoptSnapshot(
+              { authority: result.authority, filePath: result.filePath },
+              async () => {
+                await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+              },
+            );
+          } else {
+            if (savedDocument) {
+              await restoreProjectDocument(savedDocument, { allowDirtyImageReplacement: true });
+            }
+            setNativeProjectPath(result.filePath);
           }
-          setNativeProjectPath(result.filePath);
         }
         return;
       }
@@ -1444,6 +1580,10 @@ function FlowApp() {
       }
       case 'file:export-project': {
         try {
+          if (bridge && await projectSaveBlockedByAuthority()) {
+            return;
+          }
+
           // A portable export promises a self-contained project, so Paper asset policy failures
           // (unpackagable fonts, missing managed records) fail closed here instead of shipping
           // a file that silently loses art, exact fonts, or ICC profiles on another machine.
@@ -1454,7 +1594,15 @@ function FlowApp() {
           });
 
           if (bridge) {
-            await bridge.saveProjectFileAs(document);
+            const authorityClient = getProjectAuthorityClient();
+            const result = await bridge.saveProjectFileAs({
+              document,
+              claim: authorityClient.getClaim(),
+            });
+            authorityClient.applySaveResult(result);
+            if (result.rejected) {
+              await confirmStaleProjectReload();
+            }
           } else {
             downloadJsonFile(getProjectExportFileName(), document);
           }
@@ -1723,10 +1871,12 @@ function FlowApp() {
     }
   }, [
     downloadCurrentProjectDocument,
+    confirmStaleProjectReload,
     copyFlowSelection,
     cutFlowSelection,
     deleteFlowSelection,
     deselectFlow,
+    getProjectAuthorityClient,
     getProjectExportFileName,
     getNativeProjectName,
     getViewportCenterPosition,
@@ -1741,6 +1891,7 @@ function FlowApp() {
     openSettings,
     openWorkspaceView,
     pasteFlowClipboard,
+    projectSaveBlockedByAuthority,
     resetSourceLibraryNativeSyncTracking,
     recordCommandActivity,
     selectAllFlowNodes,
@@ -1903,23 +2054,49 @@ function FlowApp() {
               ? `Loading ${state.startupProject.filePath.split(/[\\/]/).pop()}…`
               : 'Preparing a clean workspace…',
           });
+          nativeWebContentsIdRef.current = state.webContentsId;
+          const authorityClient = getProjectAuthorityClient();
           setNativeProjectPath(state.currentProjectPath);
           setNativeScratchDirectoryPath(state.currentScratchDirectoryPath);
           if (state.startupProject?.document) {
             if (state.startupProject.scratchDirectoryPath) {
               setNativeScratchDirectoryPath(state.startupProject.scratchDirectoryPath);
             }
-            await restoreProjectDocument(state.startupProject.document);
-            if (!cancelled) {
-              setNativeProjectPath(state.startupProject.filePath);
+            const startupDocument = state.startupProject.document;
+            const startupFilePath = state.startupProject.filePath;
+            try {
+              await authorityClient.adoptSnapshot(
+                { authority: state.projectAuthority, filePath: startupFilePath },
+                async () => {
+                  await restoreProjectDocument(startupDocument);
+                },
+              );
+            } catch (bootRestoreError) {
+              // The window keeps running but is explicitly stale/read-only until a reload
+              // from disk succeeds; it must not save state it never adopted.
+              authorityClient.noteAdoptionFailure(
+                bootRestoreError instanceof Error ? bootRestoreError.message : undefined,
+              );
+              throw bootRestoreError;
             }
-          } else if (!state.currentProjectPath && (!windowWorkspaceView || windowWorkspaceView === 'flow')) {
-            await resetProjectDocument();
-            if (!cancelled) {
-              setNativeProjectPath(undefined);
-              setNativeScratchDirectoryPath(undefined);
-              setWorkspaceView(windowWorkspaceView ?? 'flow');
+            if (!cancelled && !state.projectAuthority) {
+              setNativeProjectPath(startupFilePath);
             }
+          } else {
+            if (!state.currentProjectPath && (!windowWorkspaceView || windowWorkspaceView === 'flow')) {
+              await resetProjectDocument();
+              if (!cancelled) {
+                setNativeProjectPath(undefined);
+                setNativeScratchDirectoryPath(undefined);
+                setWorkspaceView(windowWorkspaceView ?? 'flow');
+              }
+            }
+            // Nothing to hydrate: this window's stores already match the current canonical
+            // state (a fresh blank project), so confirm adoption to gain save rights.
+            await authorityClient.adoptSnapshot({
+              authority: state.projectAuthority,
+              filePath: state.currentProjectPath,
+            });
           }
           if (!windowWorkspaceView && state.workspace) {
             setWorkspaceView(state.workspace);
@@ -1936,7 +2113,7 @@ function FlowApp() {
     return () => {
       cancelled = true;
     };
-  }, [setNativeScratchDirectoryPath, setWorkspaceView, windowWorkspaceView]);
+  }, [getProjectAuthorityClient, setNativeScratchDirectoryPath, setWorkspaceView, windowWorkspaceView]);
 
   useEffect(() => {
     const bridge = getSignalLoomNativeBridge();
@@ -1948,15 +2125,23 @@ function FlowApp() {
     const removeMenuListener = bridge.onMenuCommand((command) => {
       void handleAppMenuCommandRef.current(command, 'native-menu');
     });
-    const removeProjectPathListener = bridge.onProjectPathChanged((filePath) => {
-      setNativeProjectPath(filePath);
-    });
+    // Versioned project-authority events drive snapshot adoption or explicit stale-marking in
+    // this window; a bare path string is only a display fallback for legacy shells that lack
+    // the authority bridge, and never grants save rights (AUD-001).
+    const removeProjectListener = bridge.onProjectAuthorityChanged
+      ? bridge.onProjectAuthorityChanged((event) => {
+        void getProjectAuthorityClient().handleAuthorityChanged(event);
+      })
+      : bridge.onProjectPathChanged((filePath) => {
+        // Legacy display-only fallback with no adoption semantics attached.
+        setNativeProjectPath(filePath);
+      });
 
     return () => {
       removeMenuListener();
-      removeProjectPathListener();
+      removeProjectListener();
     };
-  }, []);
+  }, [getProjectAuthorityClient]);
 
   useEffect(() => {
     const bridge = getSignalLoomNativeBridge();
@@ -2374,9 +2559,82 @@ function FlowApp() {
       {startupSplash.visible ? (
         <StartupSplash title={startupSplash.title} detail={startupSplash.detail} />
       ) : null}
+      {projectAuthorityUiState.stale ? (
+        <ProjectAuthorityStaleBanner
+          state={projectAuthorityUiState}
+          onReload={() => void requestProjectAuthorityReload()}
+        />
+      ) : null}
       <FirstRunLanguageGate />
     </div>
   );
+}
+
+function ProjectAuthorityStaleBanner({
+  state,
+  onReload,
+}: {
+  state: ProjectAuthorityClientState;
+  onReload: () => void;
+}) {
+  const { title, detail } = describeProjectAuthorityBanner(state);
+  return (
+    <div
+      className="fixed left-1/2 top-12 z-[110] flex max-w-2xl -translate-x-1/2 items-center gap-3 rounded-lg border border-amber-500/50 bg-[#1b1207]/95 px-4 py-2.5 shadow-xl backdrop-blur"
+      role="alert"
+    >
+      <div className="min-w-0 text-xs leading-5 text-amber-100">
+        <span className="font-semibold">{title}</span>
+        <span className="ml-1.5 text-amber-200/80">{detail}</span>
+      </div>
+      <button
+        className="shrink-0 rounded-md border border-amber-400/60 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-500/30"
+        onClick={onReload}
+        type="button"
+      >
+        Reload From Disk
+      </button>
+    </div>
+  );
+}
+
+function describeProjectAuthorityBlock(state: ProjectAuthorityClientState): string {
+  if (state.lastRejection) {
+    return state.lastRejection.message;
+  }
+  switch (state.staleReason) {
+    case 'saved-elsewhere':
+      return 'This project was saved from another window after this window last loaded it, so saving here was stopped to protect those changes.';
+    case 'adoption-failed':
+      return `This window could not load the current project state${state.lastError ? `: ${state.lastError}` : '.'}`;
+    default:
+      return 'The project was switched in another window, and this window has not adopted it yet, so it cannot save over it.';
+  }
+}
+
+function describeProjectAuthorityBanner(state: ProjectAuthorityClientState): { title: string; detail: string } {
+  switch (state.staleReason) {
+    case 'saved-elsewhere':
+      return {
+        title: 'Project saved in another window',
+        detail: 'Saving here is paused so those changes are not overwritten.',
+      };
+    case 'adoption-failed':
+      return {
+        title: 'Project sync blocked',
+        detail: state.lastError ?? 'This window could not load the current project state.',
+      };
+    case 'save-rejected':
+      return {
+        title: 'Save stopped to protect newer changes',
+        detail: 'This window\'s copy of the project is out of date.',
+      };
+    default:
+      return {
+        title: 'Project changed in another window',
+        detail: 'This window still shows the previous project and cannot save.',
+      };
+  }
 }
 
 function StartupSplash({ title, detail }: { title: string; detail: string }) {
