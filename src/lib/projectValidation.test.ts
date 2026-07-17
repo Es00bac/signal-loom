@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { CURRENT_PROJECT_SCHEMA_VERSION, FLOW_NODE_TYPES } from './projectSchema';
 import { sanitizePaperSnapshot, sanitizeProjectDocument } from './projectValidation';
+import {
+  IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS,
+  IMAGE_SNAPSHOT_MAX_LAYERS,
+} from '../components/ImageEditor/ImageSnapshots';
 
 function projectWith(overrides: Record<string, unknown>) {
   return sanitizeProjectDocument({
@@ -1218,6 +1222,113 @@ describe('sanitizeProjectDocument', () => {
         })),
       },
     })).toThrow(/aggregate pixels exceed/i);
+  });
+
+  it('bounds unavailable and legacy project snapshot structure at the exact layer limit', () => {
+    const layer = (index: number) => ({
+      id: `bounded-layer-${index}`,
+      name: `Layer ${index}`,
+      type: 'image',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      x: 0,
+      y: 0,
+      bitmap: null,
+      mask: null,
+      bitmapVersion: 0,
+    });
+    const snapshot = (
+      layerCount: number,
+      variant: 'unavailable' | 'legacy',
+      overrides: Record<string, unknown> = {},
+    ) => ({
+      id: `${variant}-${layerCount}`,
+      name: `${variant} ${layerCount}`,
+      createdAt: 1,
+      width: 1,
+      height: 1,
+      layers: Array.from({ length: layerCount }, (_, index) => layer(index)),
+      activeLayerId: null,
+      hasSelection: false,
+      selectionVersion: 0,
+      ...(variant === 'unavailable'
+        ? { pixelState: 'unavailable' }
+        : { integrity: { version: 1, layers: [], selection: null } }),
+      ...overrides,
+    });
+    const openSnapshots = (snapshots: unknown[]) => projectWith({
+      imageEditor: {
+        activeDocId: 'structural-bounds-doc',
+        documents: [{
+          id: 'structural-bounds-doc', title: 'Structural bounds', width: 1, height: 1,
+          layers: [], activeLayerId: null, hasSelection: false, selectionVersion: 0,
+          viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+          snapshots,
+        }],
+      },
+    });
+    const open = (namedSnapshot: unknown) => openSnapshots([namedSnapshot]);
+
+    expect(open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS, 'unavailable')).imageEditor?.documents[0].snapshots?.[0].layers)
+      .toHaveLength(IMAGE_SNAPSHOT_MAX_LAYERS);
+    expect(open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS, 'legacy')).imageEditor?.documents[0].snapshots?.[0].layers)
+      .toHaveLength(IMAGE_SNAPSHOT_MAX_LAYERS);
+    expect(() => open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable'))).toThrow(/layer count exceeds/i);
+    expect(() => open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'legacy'))).toThrow(/layer count exceeds/i);
+    expect(() => open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable', {
+      hasSelection: true,
+      selectionMaskData: 'AQ==',
+    }))).toThrow(/layer count exceeds/i);
+    expect(() => open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable', {
+      pixelState: 'complete',
+      integrity: {
+        version: 2,
+        layers: [],
+        selection: { present: false, width: 0, height: 0, byteLength: 0 },
+      },
+    }))).toThrow(/layer count exceeds/i);
+    const duplicateProof = {
+      layerId: 'duplicate-proof',
+      bitmap: { present: false, width: 0, height: 0 },
+      mask: { present: false, width: 0, height: 0 },
+    };
+    expect(() => open(snapshot(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable', {
+      pixelState: 'complete',
+      integrity: {
+        version: 2,
+        layers: [duplicateProof, duplicateProof],
+        selection: { present: true, width: 1, height: 1, byteLength: 1 },
+      },
+      hasSelection: true,
+      selectionMaskData: 'AQ==',
+    }))).toThrow(/layer count exceeds/i);
+
+    const aggregateAtLimit = Array.from(
+      { length: IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS / IMAGE_SNAPSHOT_MAX_LAYERS },
+      (_, index) => ({ ...snapshot(IMAGE_SNAPSHOT_MAX_LAYERS, 'unavailable'), id: `aggregate-${index}` }),
+    );
+    expect(openSnapshots(aggregateAtLimit).imageEditor?.documents[0].snapshots
+      ?.reduce((total, namedSnapshot) => total + namedSnapshot.layers.length, 0))
+      .toBe(IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS);
+    expect(() => openSnapshots([
+      ...aggregateAtLimit,
+      snapshot(1, 'unavailable'),
+    ])).toThrow(/aggregate layer count exceeds/i);
+
+    const proofFlood = (proofCount: number) => snapshot(1, 'legacy', {
+      integrity: {
+        version: 1,
+        layers: Array.from(
+          { length: proofCount },
+          (_, index) => ({ layerId: `unused-proof-${index}` }),
+        ),
+        selection: null,
+      },
+    });
+    expect(open(proofFlood(IMAGE_SNAPSHOT_MAX_LAYERS)).imageEditor?.documents[0].snapshots).toHaveLength(1);
+    expect(() => open(proofFlood(IMAGE_SNAPSHOT_MAX_LAYERS + 1))).toThrow(/proof count exceeds/i);
   });
 
   it('rejects documents without array-shaped flow snapshots', () => {

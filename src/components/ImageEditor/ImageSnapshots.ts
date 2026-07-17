@@ -22,6 +22,18 @@ export const IMAGE_DOCUMENT_MAX_SNAPSHOTS = 12;
 export const IMAGE_PROJECT_MAX_SNAPSHOTS = 96;
 export const IMAGE_SNAPSHOT_MAX_DIMENSION = 16_384;
 export const IMAGE_SNAPSHOT_MAX_LAYERS = 2_048;
+export const IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS = 8_192;
+export const IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS = 65_536;
+export const IMAGE_SNAPSHOT_MAX_STRUCTURAL_RESOURCES = IMAGE_SNAPSHOT_MAX_LAYERS * 4 + 2;
+export const IMAGE_DOCUMENT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES = (
+  IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS * 4 + IMAGE_DOCUMENT_MAX_SNAPSHOTS * 2
+);
+export const IMAGE_PROJECT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES = (
+  IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS * 4 + IMAGE_PROJECT_MAX_SNAPSHOTS * 2
+);
+export const IMAGE_SNAPSHOT_MAX_METADATA_BYTES = 16 * 1024 * 1024;
+export const IMAGE_DOCUMENT_MAX_SNAPSHOT_METADATA_BYTES = 64 * 1024 * 1024;
+export const IMAGE_PROJECT_MAX_SNAPSHOT_METADATA_BYTES = 512 * 1024 * 1024;
 export const IMAGE_SNAPSHOT_MAX_AGGREGATE_BYTES = 768 * 1024 * 1024;
 
 export type ImageSnapshotReadinessIssueCode =
@@ -169,24 +181,90 @@ export function assertImageDocumentSnapshotDecodeBounds(
     transport?: 'project' | 'native' | 'runtime';
     maxSnapshots?: number;
     maxAggregateBytes?: number;
+    maxAggregateLayers?: number;
+    maxAggregateProofs?: number;
+    maxAggregateResources?: number;
+    maxSnapshotMetadataBytes?: number;
+    maxAggregateMetadataBytes?: number;
   } = {},
 ): void {
   const maxSnapshots = options.maxSnapshots ?? IMAGE_DOCUMENT_MAX_SNAPSHOTS;
   const maxAggregateBytes = options.maxAggregateBytes ?? IMAGE_SNAPSHOT_MAX_AGGREGATE_BYTES;
+  const maxAggregateLayers = options.maxAggregateLayers ?? IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS;
+  const maxAggregateProofs = options.maxAggregateProofs ?? IMAGE_DOCUMENT_MAX_SNAPSHOT_LAYERS;
+  const maxAggregateResources = options.maxAggregateResources
+    ?? IMAGE_DOCUMENT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES;
+  const maxSnapshotMetadataBytes = options.maxSnapshotMetadataBytes ?? IMAGE_SNAPSHOT_MAX_METADATA_BYTES;
+  const maxAggregateMetadataBytes = options.maxAggregateMetadataBytes
+    ?? IMAGE_DOCUMENT_MAX_SNAPSHOT_METADATA_BYTES;
   if (snapshots.length > maxSnapshots) {
     throw new Error(`Image snapshot count exceeds ${maxSnapshots}.`);
   }
   let aggregateBytes = 0;
+  let aggregateLayers = 0;
+  let aggregateProofs = 0;
+  let aggregateResources = 0;
+  let aggregateMetadataBytes = 0;
   for (const [snapshotIndex, candidate] of snapshots.entries()) {
-    if (!isRecord(candidate) || candidate.pixelState !== 'complete') continue;
-    const integrity = candidate.integrity;
-    if (!isRecord(integrity) || integrity.version !== 2) continue;
-    const layers = Array.isArray(candidate.layers) ? candidate.layers : [];
+    if (!isRecord(candidate)) {
+      throw new Error(`Image snapshot ${snapshotIndex} is malformed.`);
+    }
+    if (!Array.isArray(candidate.layers)) {
+      throw new Error(`Image snapshot ${snapshotIndex} layer graph is malformed.`);
+    }
+    const layers = candidate.layers;
     if (layers.length > IMAGE_SNAPSHOT_MAX_LAYERS) {
       throw new Error(`Image snapshot ${snapshotIndex} layer count exceeds ${IMAGE_SNAPSHOT_MAX_LAYERS}.`);
     }
+    aggregateLayers = addBoundedStructuralCount(
+      aggregateLayers,
+      layers.length,
+      maxAggregateLayers,
+      'layer count',
+    );
     assertBoundedDimension(candidate.width, `snapshot ${snapshotIndex} width`);
     assertBoundedDimension(candidate.height, `snapshot ${snapshotIndex} height`);
+
+    const integrity = candidate.integrity;
+    const proofs = isRecord(integrity) && Array.isArray(integrity.layers) ? integrity.layers : [];
+    if (proofs.length > IMAGE_SNAPSHOT_MAX_LAYERS) {
+      throw new Error(`Image snapshot ${snapshotIndex} proof count exceeds ${IMAGE_SNAPSHOT_MAX_LAYERS}.`);
+    }
+    aggregateProofs = addBoundedStructuralCount(
+      aggregateProofs,
+      proofs.length,
+      maxAggregateProofs,
+      'proof count',
+    );
+    const snapshotResources = countRawSnapshotStructuralResources(candidate, layers, proofs);
+    if (snapshotResources > IMAGE_SNAPSHOT_MAX_STRUCTURAL_RESOURCES) {
+      throw new Error(
+        `Image snapshot ${snapshotIndex} structural resource count exceeds ${IMAGE_SNAPSHOT_MAX_STRUCTURAL_RESOURCES}.`,
+      );
+    }
+    aggregateResources = addBoundedStructuralCount(
+      aggregateResources,
+      snapshotResources,
+      maxAggregateResources,
+      'structural resource count',
+    );
+    const metadataBytes = measureRawSnapshotMetadataBytes(
+      candidate,
+      options.transport ?? 'runtime',
+      maxSnapshotMetadataBytes,
+    );
+    if (metadataBytes > maxSnapshotMetadataBytes) {
+      throw new Error(`Image snapshot ${snapshotIndex} metadata exceeds ${maxSnapshotMetadataBytes} bytes.`);
+    }
+    aggregateMetadataBytes = addBoundedStructuralCount(
+      aggregateMetadataBytes,
+      metadataBytes,
+      maxAggregateMetadataBytes,
+      'metadata',
+      'bytes',
+    );
+
+    if (candidate.pixelState !== 'complete' || !isRecord(integrity) || integrity.version !== 2) continue;
     if (!Array.isArray(integrity.layers)) {
       throw new Error(`Image snapshot ${snapshotIndex} has no current integrity manifest.`);
     }
@@ -256,6 +334,156 @@ export function assertImageDocumentSnapshotDecodeBounds(
       throw new Error(`Image snapshot ${snapshotIndex} has an unexpected selection payload outside its integrity proof.`);
     }
   }
+}
+
+function addBoundedStructuralCount(
+  total: number,
+  amount: number,
+  maximum: number,
+  label: string,
+  unit = '',
+): number {
+  const next = total + amount;
+  if (!Number.isSafeInteger(next) || next > maximum) {
+    throw new Error(`Image snapshot aggregate ${label} exceeds ${maximum}${unit ? ` ${unit}` : ''}.`);
+  }
+  return next;
+}
+
+function countRawSnapshotStructuralResources(
+  snapshot: UnknownRecord,
+  layers: readonly unknown[],
+  proofs: readonly unknown[],
+): number {
+  let resources = 0;
+  const countPresent = (record: UnknownRecord, keys: readonly string[]) => {
+    for (const key of keys) {
+      if (record[key] !== undefined && record[key] !== null) resources += 1;
+    }
+  };
+  for (const layer of layers) {
+    if (isRecord(layer)) countPresent(layer, ['bitmap', 'mask', 'bitmapData', 'maskData']);
+  }
+  for (const proof of proofs) {
+    if (isRecord(proof)) countPresent(proof, ['bitmap', 'mask']);
+  }
+  countPresent(snapshot, ['selectionMask', 'selectionMaskData']);
+  if (isRecord(snapshot.integrity) && snapshot.integrity.selection !== undefined && snapshot.integrity.selection !== null) {
+    resources += 1;
+  }
+  return resources;
+}
+
+type MetadataTraversalKind = 'snapshot' | 'layer-array' | 'layer' | 'generic';
+
+function measureRawSnapshotMetadataBytes(
+  snapshot: UnknownRecord,
+  transport: 'project' | 'native' | 'runtime',
+  maximum: number,
+): number {
+  const seen = new WeakSet<object>();
+  const stack: Array<{ value: unknown; kind: MetadataTraversalKind }> = [{ value: snapshot, kind: 'snapshot' }];
+  let bytes = 0;
+  const add = (amount: number) => {
+    bytes += amount;
+    return bytes > maximum;
+  };
+
+  while (stack.length > 0 && bytes <= maximum) {
+    const { value, kind } = stack.pop()!;
+    if (value === null) {
+      add(4);
+      continue;
+    }
+    if (typeof value === 'string') {
+      add(jsonStringByteLengthAtMost(value, maximum - bytes));
+      continue;
+    }
+    if (typeof value === 'number') {
+      add(Number.isFinite(value) ? String(value).length : 4);
+      continue;
+    }
+    if (typeof value === 'boolean') {
+      add(value ? 4 : 5);
+      continue;
+    }
+    if (typeof value === 'bigint') {
+      add(String(value).length);
+      continue;
+    }
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') continue;
+    if (ArrayBuffer.isView(value)) {
+      add(Math.min(maximum + 1, value.byteLength * 4 + 2));
+      continue;
+    }
+    if (typeof value !== 'object') continue;
+    if (seen.has(value)) {
+      add(4);
+      continue;
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+      if (add(2 + Math.max(0, value.length - 1))) continue;
+      const childKind: MetadataTraversalKind = kind === 'layer-array' ? 'layer' : 'generic';
+      for (let index = value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: value[index], kind: childKind });
+      }
+      continue;
+    }
+
+    const record = value as UnknownRecord;
+    const keys = Object.keys(record);
+    if (add(2 + Math.max(0, keys.length - 1))) continue;
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index];
+      if (add(jsonStringByteLengthAtMost(key, maximum - bytes) + 1)) break;
+      if (shouldSkipSnapshotPixelMetadataValue(kind, key, transport)) continue;
+      stack.push({
+        value: record[key],
+        kind: kind === 'snapshot' && key === 'layers' ? 'layer-array' : 'generic',
+      });
+    }
+  }
+  return bytes;
+}
+
+function shouldSkipSnapshotPixelMetadataValue(
+  kind: MetadataTraversalKind,
+  key: string,
+  transport: 'project' | 'native' | 'runtime',
+): boolean {
+  if (kind === 'layer' && (key === 'bitmapData' || key === 'maskData')) return true;
+  if (kind === 'snapshot' && key === 'selectionMaskData') return true;
+  if (transport === 'native') return false;
+  if (kind === 'layer' && (key === 'bitmap' || key === 'mask')) return true;
+  return kind === 'snapshot' && key === 'selectionMask';
+}
+
+function jsonStringByteLengthAtMost(value: string, maximum: number): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code === 0x08 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d) bytes += 2;
+    else if (code <= 0x1f) bytes += 6;
+    else if (code <= 0x7f) bytes += 1;
+    else if (code <= 0x7ff) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 6;
+      }
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      bytes += 6;
+    } else {
+      bytes += 3;
+    }
+    if (bytes > maximum) return maximum + 1;
+  }
+  return bytes;
 }
 
 function assertTransportAssetMatchesProof(
@@ -550,6 +778,11 @@ function inspectSnapshotStructure(
   snapshot: ImageDocumentSnapshot,
 ): ImageDocumentSnapshotIntegrityResult {
   const reasons: string[] = [];
+  try {
+    assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
+  } catch {
+    return { complete: false, selectionComplete: false, reasons: ['snapshot-bounds-invalid'] };
+  }
   const integrity = snapshot.integrity;
   if (snapshot.pixelState !== 'complete') reasons.push('pixel-state-unavailable');
   if (!integrity || integrity.version !== 2) {
@@ -616,11 +849,6 @@ export function verifyImageDocumentSnapshotIntegrity(
 ): ImageDocumentSnapshotIntegrityResult {
   const structure = inspectSnapshotStructure(snapshot);
   if (!structure.complete) return structure;
-  try {
-    assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
-  } catch {
-    return { complete: false, selectionComplete: structure.selectionComplete, reasons: ['snapshot-bounds-invalid'] };
-  }
   const integrity = snapshot.integrity!;
   const reasons: string[] = [];
   const layerProofById = new Map(integrity.layers.map((layer) => [layer.layerId, layer] as const));
@@ -669,8 +897,6 @@ export function verifyImageDocumentSnapshotIntegrity(
 export function inspectImageDocumentSnapshotIntegrity(
   snapshot: ImageDocumentSnapshot,
 ): ImageDocumentSnapshotIntegrityResult {
-  const structure = inspectSnapshotStructure(snapshot);
-  if (!structure.complete) return structure;
   const cached = verifiedNamedSnapshots.get(snapshot);
   if (cached) {
     return verifiedBindingMatches(snapshot, cached)
@@ -681,6 +907,8 @@ export function inspectImageDocumentSnapshotIntegrity(
           reasons: ['verified-snapshot-binding-changed'],
         };
   }
+  const structure = inspectSnapshotStructure(snapshot);
+  if (!structure.complete) return structure;
   const result = verifyImageDocumentSnapshotIntegrity(snapshot);
   if (result.complete && ownedNamedSnapshots.has(snapshot)) cacheVerifiedOwnedSnapshot(snapshot, result);
   return result;
@@ -698,7 +926,6 @@ export function markImageDocumentSnapshotVerifiedOwned(snapshot: ImageDocumentSn
   if (!structure.complete) {
     throw new Error(`Image snapshot cannot enter verified state: ${structure.reasons.join(', ')}.`);
   }
-  assertImageDocumentSnapshotDecodeBounds([snapshot], { transport: 'runtime' });
   cacheVerifiedOwnedSnapshot(snapshot, { complete: true, selectionComplete: true, reasons: [] });
   return snapshot;
 }

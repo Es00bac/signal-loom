@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deserializeSlimg, serializeSlimg, type SlimgCodec } from './ImageSlimgFormat';
 import type { ImageDocument, LayerBitmap } from '../../types/imageEditor';
-import { buildImageDocumentSnapshotIntegrity } from './ImageSnapshots';
+import { buildImageDocumentSnapshotIntegrity, IMAGE_SNAPSHOT_MAX_LAYERS } from './ImageSnapshots';
 
 // A fake LayerBitmap: only width/height matter to the serializer. We tag it for round-trip checks.
 function fakeBitmap(width: number, height: number, tag: string): LayerBitmap {
@@ -340,6 +340,106 @@ describe('ImageSlimgFormat', () => {
         mask: { present: false, width: 0, height: 0 },
       }));
     });
+  });
+
+  it('bounds unavailable and legacy native snapshot structure at the exact layer limit before decode', async () => {
+    const { packContainer } = await import('../../shared/files/SignalLoomContainer');
+    let decodeCalls = 0;
+    const trackedCodec: SlimgCodec = {
+      encode: codec.encode,
+      decode: async (...args) => {
+        decodeCalls += 1;
+        return codec.decode(...args);
+      },
+    };
+    const layer = (index: number) => ({
+      id: `native-bounded-layer-${index}`,
+      name: `Layer ${index}`,
+      type: 'image',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      blendMode: 'normal',
+      x: 0,
+      y: 0,
+      bitmap: null,
+      mask: null,
+      bitmapVersion: 0,
+    });
+    const open = (
+      layerCount: number,
+      variant: 'unavailable' | 'legacy',
+      overrides: Record<string, unknown> = {},
+    ) => deserializeSlimg(packContainer({
+      format: 'signal-loom-image',
+      formatVersion: 1,
+      kind: 'image',
+      document: {
+        id: 'native-structural-bounds-doc',
+        title: 'Native structural bounds',
+        width: 1,
+        height: 1,
+        layers: [],
+        activeLayerId: null,
+        hasSelection: false,
+        selectionVersion: 0,
+        viewport: { zoom: 1, panX: 0, panY: 0 },
+        dirty: false,
+        snapshots: [{
+          id: `${variant}-${layerCount}`,
+          name: `${variant} ${layerCount}`,
+          createdAt: 1,
+          width: 1,
+          height: 1,
+          layers: Array.from({ length: layerCount }, (_, index) => layer(index)),
+          activeLayerId: null,
+          hasSelection: false,
+          selectionVersion: 0,
+          ...(variant === 'unavailable'
+            ? { pixelState: 'unavailable' }
+            : { integrity: { version: 1, layers: [], selection: null } }),
+          ...overrides,
+        }],
+      },
+      assets: [],
+    }, new Map()), trackedCodec);
+
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS, 'unavailable')).resolves.toMatchObject({
+      snapshots: [expect.objectContaining({ pixelState: 'unavailable' })],
+    });
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS, 'legacy')).resolves.toMatchObject({
+      snapshots: [expect.objectContaining({ pixelState: 'unavailable' })],
+    });
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable')).rejects.toThrow(/layer count exceeds/i);
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'legacy')).rejects.toThrow(/layer count exceeds/i);
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable', {
+      hasSelection: true,
+      selectionMask: { asset: 'oversized-selection.alpha', width: 1, height: 1 },
+    })).rejects.toThrow(/layer count exceeds/i);
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable', {
+      pixelState: 'complete',
+      integrity: {
+        version: 2,
+        layers: [],
+        selection: { present: false, width: 0, height: 0, byteLength: 0 },
+      },
+    })).rejects.toThrow(/layer count exceeds/i);
+    const duplicateProof = {
+      layerId: 'duplicate-proof',
+      bitmap: { present: false, width: 0, height: 0 },
+      mask: { present: false, width: 0, height: 0 },
+    };
+    await expect(open(IMAGE_SNAPSHOT_MAX_LAYERS + 1, 'unavailable', {
+      pixelState: 'complete',
+      integrity: {
+        version: 2,
+        layers: [duplicateProof, duplicateProof],
+        selection: { present: true, width: 1, height: 1, byteLength: 1 },
+      },
+      hasSelection: true,
+      selectionMask: { asset: 'oversized-selection.alpha', width: 1, height: 1 },
+    })).rejects.toThrow(/layer count exceeds/i);
+    expect(decodeCalls).toBe(0);
   });
 
   it('disposes every partially decoded native resource exactly once on snapshot digest failure', async () => {

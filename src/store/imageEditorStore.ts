@@ -55,6 +55,9 @@ import {
   assertImageDocumentSnapshotDecodeBounds,
   disposeImageDocumentNamedSnapshots,
   disposeImageDocumentSnapshotResources,
+  IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS,
+  IMAGE_PROJECT_MAX_SNAPSHOT_METADATA_BYTES,
+  IMAGE_PROJECT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES,
   IMAGE_PROJECT_MAX_SNAPSHOTS,
 } from '../components/ImageEditor/ImageSnapshots';
 import {
@@ -1157,7 +1160,14 @@ export const useImageEditorStore = create<ImageEditorState & ImageEditorActions>
       const state = get();
       assertImageDocumentSnapshotDecodeBounds(
         state.documents.flatMap((document) => document.snapshots ?? []),
-        { transport: 'runtime', maxSnapshots: IMAGE_PROJECT_MAX_SNAPSHOTS },
+        {
+          transport: 'runtime',
+          maxSnapshots: IMAGE_PROJECT_MAX_SNAPSHOTS,
+          maxAggregateLayers: IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS,
+          maxAggregateProofs: IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS,
+          maxAggregateResources: IMAGE_PROJECT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES,
+          maxAggregateMetadataBytes: IMAGE_PROJECT_MAX_SNAPSHOT_METADATA_BYTES,
+        },
       );
       const documents = await Promise.all(state.documents.map(async (document) => {
         assertImageDocumentSnapshotDecodeBounds(document.snapshots ?? [], { transport: 'runtime' });

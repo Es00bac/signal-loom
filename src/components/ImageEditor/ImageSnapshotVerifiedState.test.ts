@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageDocument, ImageDocumentSnapshot, ImageLayer, LayerBitmap } from '../../types/imageEditor';
 import {
+  assertImageDocumentSnapshotDecodeBounds,
   buildImageDocumentSnapshotIntegrity,
   buildImageSnapshotReadinessDescriptor,
   disposeImageDocumentSnapshotResources,
@@ -129,9 +130,20 @@ describe('Image snapshot verified-state lifecycle', () => {
   });
 
   it('serves rerender/readiness queries from the exact verified binding without rehashing', () => {
-    const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+    const value = snapshot();
+    let metadataReads = 0;
+    Object.defineProperty(value.layers[0], 'metadataProbe', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        metadataReads += 1;
+        return { note: 'structural metadata' };
+      },
+    });
+    markImageDocumentSnapshotVerifiedOwned(value);
     const doc = documentWith(value);
     CountingBitmap.imageDataReads = 0;
+    metadataReads = 0;
     const startedAt = performance.now();
     for (let index = 0; index < 100; index += 1) {
       expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
@@ -140,10 +152,12 @@ describe('Image snapshot verified-state lifecycle', () => {
     const elapsedMs = performance.now() - startedAt;
 
     expect(CountingBitmap.imageDataReads).toBe(0);
+    expect(metadataReads).toBe(0);
     expect(elapsedMs).toBeGreaterThanOrEqual(0);
 
     expect(verifyImageDocumentSnapshotIntegrity(value).complete).toBe(true);
     expect(CountingBitmap.imageDataReads).toBe(4);
+    expect(metadataReads).toBeGreaterThan(0);
   });
 
   it('rejects hostile creation dimensions and aggregate pixels before source readback', () => {
@@ -160,6 +174,99 @@ describe('Image snapshot verified-state lifecycle', () => {
       value.mask = null;
     }
     expect(() => buildImageDocumentSnapshotIntegrity(aggregateLayers)).toThrow(/aggregate pixels exceed/i);
+    expect(CountingBitmap.imageDataReads).toBe(0);
+  });
+
+  it('accounts unavailable structural resources and metadata at exact aggregate boundaries', () => {
+    const structuralSnapshot = {
+      id: 'structural-only',
+      name: 'Structural only',
+      createdAt: 1,
+      width: 1,
+      height: 1,
+      layers: [{
+        id: 'structural-layer',
+        name: 'Structural layer',
+        bitmap: { ignoredRuntimeBitmap: true },
+        bitmapData: 'ignored-pixel-payload',
+        mask: { ignoredRuntimeMask: true },
+        maskData: 'ignored-mask-payload',
+        metadata: { note: 'bounded metadata' },
+      }],
+      activeLayerId: null,
+      hasSelection: false,
+      selectionVersion: 0,
+      selectionMask: { ignoredRuntimeSelection: true },
+      selectionMaskData: 'ignored-selection-payload',
+      pixelState: 'unavailable',
+    };
+
+    expect(() => assertImageDocumentSnapshotDecodeBounds([structuralSnapshot], {
+      transport: 'runtime',
+      maxAggregateResources: 6,
+    })).not.toThrow();
+    expect(() => assertImageDocumentSnapshotDecodeBounds([structuralSnapshot], {
+      transport: 'runtime',
+      maxAggregateResources: 5,
+    })).toThrow(/aggregate structural resource count exceeds 5/i);
+
+    let lower = 0;
+    let upper = 4_096;
+    while (lower < upper) {
+      const midpoint = Math.floor((lower + upper) / 2);
+      try {
+        assertImageDocumentSnapshotDecodeBounds([structuralSnapshot], {
+          transport: 'runtime',
+          maxSnapshotMetadataBytes: midpoint,
+          maxAggregateMetadataBytes: 4_096,
+        });
+        upper = midpoint;
+      } catch {
+        lower = midpoint + 1;
+      }
+    }
+    const exactMetadataBytes = lower;
+    expect(() => assertImageDocumentSnapshotDecodeBounds([structuralSnapshot], {
+      transport: 'runtime',
+      maxSnapshotMetadataBytes: exactMetadataBytes,
+      maxAggregateMetadataBytes: exactMetadataBytes,
+    })).not.toThrow();
+    expect(() => assertImageDocumentSnapshotDecodeBounds([structuralSnapshot], {
+      transport: 'runtime',
+      maxSnapshotMetadataBytes: exactMetadataBytes - 1,
+      maxAggregateMetadataBytes: 4_096,
+    })).toThrow(/metadata exceeds/i);
+    expect(() => assertImageDocumentSnapshotDecodeBounds([structuralSnapshot, structuralSnapshot], {
+      transport: 'runtime',
+      maxSnapshotMetadataBytes: exactMetadataBytes,
+      maxAggregateMetadataBytes: exactMetadataBytes * 2,
+    })).not.toThrow();
+    expect(() => assertImageDocumentSnapshotDecodeBounds([structuralSnapshot, structuralSnapshot], {
+      transport: 'runtime',
+      maxSnapshotMetadataBytes: exactMetadataBytes,
+      maxAggregateMetadataBytes: exactMetadataBytes * 2 - 1,
+    })).toThrow(/aggregate metadata exceeds/i);
+  });
+
+  it('blocks oversized unavailable snapshots in readiness and Restore without reading pixels', () => {
+    const value = snapshot();
+    value.pixelState = 'unavailable';
+    value.layers = Array.from({ length: 2_049 }, (_, index) => ({
+      ...value.layers[0],
+      id: `unavailable-layer-${index}`,
+      bitmap: null,
+      mask: null,
+    }));
+    const doc = documentWith(value);
+    CountingBitmap.imageDataReads = 0;
+
+    expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-bounds-invalid'],
+    });
+    expect(buildImageSnapshotReadinessDescriptor({ doc }).namedSnapshots.snapshots[0].restorable).toBe(false);
+    expect(restoreImageDocumentSnapshot(doc, value.id)).toBe(doc);
     expect(CountingBitmap.imageDataReads).toBe(0);
   });
 

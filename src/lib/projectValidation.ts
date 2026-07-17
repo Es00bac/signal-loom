@@ -36,6 +36,9 @@ import { sanitizeProjectUsageLedgerSnapshot } from './projectUsageLedger';
 import { sanitizeImageLayerLocks } from './imageLayerLocks';
 import {
   assertImageDocumentSnapshotDecodeBounds,
+  IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS,
+  IMAGE_PROJECT_MAX_SNAPSHOT_METADATA_BYTES,
+  IMAGE_PROJECT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES,
   IMAGE_PROJECT_MAX_SNAPSHOTS,
 } from '../components/ImageEditor/ImageSnapshots';
 import {
@@ -643,6 +646,10 @@ export function sanitizeImageEditorSnapshot(snapshot: unknown): ImageEditorProje
   assertImageDocumentSnapshotDecodeBounds(projectSnapshots, {
     transport: 'project',
     maxSnapshots: IMAGE_PROJECT_MAX_SNAPSHOTS,
+    maxAggregateLayers: IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS,
+    maxAggregateProofs: IMAGE_PROJECT_MAX_SNAPSHOT_LAYERS,
+    maxAggregateResources: IMAGE_PROJECT_MAX_SNAPSHOT_STRUCTURAL_RESOURCES,
+    maxAggregateMetadataBytes: IMAGE_PROJECT_MAX_SNAPSHOT_METADATA_BYTES,
   });
   const documents = rawDocuments.length > 0
     ? rawDocuments.flatMap((doc, index) => {
