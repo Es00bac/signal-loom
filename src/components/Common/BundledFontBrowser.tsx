@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, LoaderCircle, Search, ShieldCheck, Type } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ensureBundledFontFaceRegistered,
   loadBundledFontCatalog,
@@ -31,16 +31,29 @@ interface BridgeScopedCatalogState {
   error: string | null;
 }
 
-interface BridgeScopedErrorState {
-  bridge: SignalLoomNativeBridge | undefined;
+/**
+ * A selection remains authoritative only while its exact bridge and selection turn remain
+ * current. Async consumers may retain this small check across their own awaits.
+ */
+export interface BundledFontSelectionAuthority {
+  isCurrent: () => boolean;
+}
+
+interface SelectionScopedErrorState {
+  authority: BundledFontSelectionAuthority;
   error: string | null;
+}
+
+interface SelectionScopedBusyState {
+  authority: BundledFontSelectionAuthority;
+  faceId: string;
 }
 
 export interface BundledFontBrowserProps {
   catalog?: BundledFontCatalog;
   disabled?: boolean;
   initiallyOpen?: boolean;
-  onSelect: (family: BundledFontFamily, face: BundledFontFace) => void | Promise<void>;
+  onSelect: (family: BundledFontFamily, face: BundledFontFace, authority: BundledFontSelectionAuthority) => void | Promise<void>;
   style?: PaperManagedFontStyle;
   value: string;
   weight?: number;
@@ -63,14 +76,16 @@ export function BundledFontBrowser({
   const [catalogState, setCatalogState] = useState<BridgeScopedCatalogState>({ bridge, error: null });
   const [query, setQuery] = useState('');
   const [role, setRole] = useState<'' | BundledFontRole>('');
-  const [busyFace, setBusyFace] = useState<string | null>(null);
-  const [selectionErrorState, setSelectionErrorState] = useState<BridgeScopedErrorState>({ bridge, error: null });
+  const [busyState, setBusyState] = useState<SelectionScopedBusyState | null>(null);
+  const [selectionErrorState, setSelectionErrorState] = useState<SelectionScopedErrorState | null>(null);
+  const selectionTurn = useRef(0);
 
   // A catalog/error has authority only while the exact bridge that loaded it remains current.
   // This makes bridge replacement fail closed even in the render before effects can clean up.
   const loadedCatalog = catalogState.bridge === bridge ? catalogState.catalog : undefined;
   const catalogError = catalogState.bridge === bridge ? catalogState.error : null;
-  const selectionError = selectionErrorState.bridge === bridge ? selectionErrorState.error : null;
+  const selectionError = selectionErrorState?.authority.isCurrent() ? selectionErrorState.error : null;
+  const busyFace = busyState?.authority.isCurrent() ? busyState.faceId : null;
   const error = catalogError ?? selectionError;
   const catalog = suppliedCatalog ?? loadedCatalog;
 
@@ -101,20 +116,31 @@ export function BundledFontBrowser({
   }, [catalog, query, role]);
 
   const choose = async (family: BundledFontFamily, face: BundledFontFace) => {
-    setBusyFace(face.id);
-    setSelectionErrorState({ bridge, error: null });
+    const turn = ++selectionTurn.current;
+    const authority: BundledFontSelectionAuthority = {
+      isCurrent: () => getSignalLoomNativeBridge() === bridge && selectionTurn.current === turn,
+    };
+    if (!authority.isCurrent()) return;
+    setBusyState({ authority, faceId: face.id });
+    setSelectionErrorState(null);
     try {
       await ensureBundledFontFaceRegistered(family, face);
-      await onSelect(family, face);
+      // Registration can outlive a bridge replacement. Check both directly after it settles and
+      // at the ordinary-callback boundary so no stale renderer authority can publish selection.
+      if (!authority.isCurrent()) return;
+      if (!authority.isCurrent()) return;
+      await onSelect(family, face, authority);
     } catch (reason) {
-      if (getSignalLoomNativeBridge() === bridge) {
+      if (authority.isCurrent()) {
         setSelectionErrorState({
-          bridge,
+          authority,
           error: reason instanceof Error ? reason.message : 'The font face could not be selected.',
         });
       }
     } finally {
-      setBusyFace(null);
+      // A replacement bridge can begin a new selection while this old registration settles.
+      // Only the exact selection that published the busy state may clear it.
+      setBusyState((current) => current?.authority === authority ? null : current);
     }
   };
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowser';
+import { BundledFontBrowser, type BundledFontSelectionAuthority } from '../../../components/Common/BundledFontBrowser';
 import { installBundledPaperFontFace, type BundledFontFace, type BundledFontFamily } from '../../../lib/bundledFontLibrary';
 import { usePaperStore } from '../../../store/paperStore';
 import type { PaperManagedFontStyle, PaperTypography } from '../../../types/paper';
@@ -48,7 +48,7 @@ export function PaperBundledFontFaceBrowser({
   fontStyle: PaperManagedFontStyle;
   fontWeight: number;
   initiallyOpen?: boolean;
-  onSelect: (family: BundledFontFamily, face: BundledFontFace) => void | Promise<void>;
+  onSelect: (family: BundledFontFamily, face: BundledFontFace, authority: BundledFontSelectionAuthority) => void | Promise<void>;
 }) {
   const addImportedFont = usePaperStore((state) => state.addImportedFont);
   const [notice, setNotice] = useState<string | null>(null);
@@ -57,11 +57,17 @@ export function PaperBundledFontFaceBrowser({
     <div className="space-y-1.5">
       <BundledFontBrowser
         initiallyOpen={initiallyOpen}
-        onSelect={async (family, face) => {
+        onSelect={async (family, face, authority) => {
+          if (!authority.isCurrent()) return;
           setNotice(null);
           const installed = await installBundledPaperFontFace({ family, face, repository: paperAssetRepository });
+          // Pinning bytes has its own async boundary. The browser could have moved to another
+          // renderer bridge while it was in flight, so no document or notice state may publish.
+          if (!authority.isCurrent()) return;
           addImportedFont(installed);
-          await onSelect(family, face);
+          if (!authority.isCurrent()) return;
+          await onSelect(family, face, authority);
+          if (!authority.isCurrent()) return;
           setNotice(`${face.fullName} pinned to this document for exact print output.`);
         }}
         style={fontStyle}
