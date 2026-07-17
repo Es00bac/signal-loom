@@ -1,5 +1,17 @@
 # Image snapshot content-digest final repair
 
+> **Correction after Terra's third BLOCK:** this note's claim that `37cc1fb`
+> was the final repair, its approval of every trusted verification path, and
+> its performance characterization are retracted. Terra proved that duplicate
+> snapshot layer ids could leave a valid proof unused, and measured repeated
+> React/readiness hashing at about 2.1 seconds for twelve one-layer 4096×2160
+> snapshots (roughly 405 MiB) before Canvas readback. The SHA-256 byte/role/
+> dimension/layer binding itself remains valid. Production/tests commit
+> `71d7f1168ead19f14984f703e2432f47d07daf51` repairs identity bijection,
+> verified-state caching/immutability, decode bounds, and the lint failure. See
+> `915-image-snapshot-verified-state-final-repair.md` and the new top section of
+> the lineage ledger for corrected evidence.
+
 Terra's final Image snapshot BLOCK is repaired in production/tests commit
 `37cc1fb61fad41b1503ab96d38567056d4b75921`. The existing evidence ledger at
 `docs/notes/overlap-sol-image-snapshot-integrity-2026-07-16.md` now retracts the

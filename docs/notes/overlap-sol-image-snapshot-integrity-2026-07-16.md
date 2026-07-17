@@ -1,5 +1,99 @@
 # AUD-021 / AUD-022 Image snapshot pixel-integrity repair — 2026-07-16
 
+## Terra final gate third BLOCK follow-up
+
+### Retraction of the `830da48` final approval and performance claims
+
+Evidence commit `830da48` correctly retracted the earlier content-blind
+approval and correctly recorded the version-2 SHA-256 byte/role/dimension/
+layer binding. It nevertheless made a third false final-approval claim.
+`inspectImageDocumentSnapshotIntegrity` did not require unique snapshot layer
+ids or an exact one-to-one layer/proof id set, so a duplicate layer could reuse
+one proof while another proof remained unused. It also synchronously reread
+and hashed every snapshot bitmap/mask from React render, History descriptors,
+and repeated readiness queries. Terra measured hash-only time of about 2.1
+seconds for twelve one-layer 4096×2160 snapshots (roughly 405 MiB), excluding
+Canvas readback. The statement that synchronous hashing made readiness safely
+race-free was incomplete and the performance risk was materially understated.
+Those approval and performance claims are retracted. Terra's third BLOCK was
+correct.
+
+Production/tests commit
+`71d7f1168ead19f14984f703e2432f47d07daf51` repairs the three reported issues
+without amending, rebasing, integrating, or changing the earlier lineage.
+
+### Final identity and verified-state correction
+
+- Every current-format verifier first requires nonempty, unique snapshot layer
+  ids; nonempty, unique proof ids; exact cardinality; and exact set equality.
+  Identity failure returns before any bitmap readback or content hashing.
+  Reordered proofs remain valid. The invariant is enforced by the direct
+  verifier, project sanitizer/decode, native `.slimg` preflight/decode, save,
+  Restore, creation, and history materialization.
+- Deep SHA-256 verification is now an explicit creation/decode/history/save/
+  Restore boundary. Repeated React, History, automation, and readiness queries
+  use a cached result bound to the exact snapshot object, layer array and
+  objects, bitmap/mask resources and dimensions, selection object/private
+  bytes, integrity object/arrays/proofs, digest fields, and structural scalar
+  values. Replacement or disposal invalidates the binding without hashing.
+- Verified owned snapshot canvases expose no writable instance 2D context,
+  reject dimension writes and transfer, and remain readable through private
+  clone/hash/encode paths. Verified selection reads return copies backed by
+  private immutable bytes. This prevents ordinary same-object payload mutation
+  while cached; fresh save and Restore verification still rejects changed
+  bytes. Disposal clears the cache, releases the read-only canvas facade before
+  zero-sizing, and releases private selection bytes. Existing shared-resource
+  protection and exact once-only ownership behavior remain intact.
+- Snapshot creation/build, project JSON sanitation/decode, and native `.slimg`
+  preflight reject more than 12 snapshots per document, more than 96 across a
+  project, more than 2,048 layers per snapshot, dimensions over 16,384, and
+  more than 768 MiB of aggregate decoded snapshot pixels. The aggregate cap is
+  checked across the full project as well as per document. Native asset refs
+  and project payload presence must match proof dimensions/presence before
+  codec allocation; production PNG codecs validate IHDR dimensions and a
+  compressed-input budget before browser image decode.
+- Version-1, proof-less, and other legacy snapshots remain unavailable rather
+  than being upgraded. Current version-2 identity, digest, presence, dimension,
+  and bound failures throw transactionally before store replacement; partial
+  resources retain the established exact disposal/rollback behavior.
+- The changed-file lint blocker in
+  `ImageSnapshotResources.test.ts:119` was corrected honestly by retaining the
+  first returned document for the second deletion and not assigning the second
+  unused return value. No lint suppression was added.
+
+### Corrected final green evidence
+
+- Prior 20-file/207-test matrix plus the new verified-state suite, all with
+  `--configLoader runner`: **21 files passed; 217 tests passed**. The new cases
+  cover direct duplicate/empty layer ids, duplicate/missing/extra proofs,
+  project JSON, native `.slimg`, valid reordered proofs, zero readbacks across
+  100 repeated readiness calls and two React renders, fresh deep verification,
+  immutable same-object resource access, replacement/disposal invalidation,
+  valid decode/Restore, changed-payload Restore rejection, per-document and
+  project-wide count/dimension/aggregate limits, zero codec calls before native
+  rejection, and PNG IHDR rejection before browser allocation.
+- Focused digest/mutation/swap/identity/cache/bounds gate:
+  `npx vitest run --configLoader runner src/components/ImageEditor/ImageSnapshotContentIntegrity.test.ts src/components/ImageEditor/ImageSnapshotVerifiedState.test.ts src/components/ImageEditor/ImageLayerProjectPixels.test.ts src/components/ImageEditor/ImageSlimgFormat.test.ts src/components/ImageEditor/ImageSlimgCodec.test.ts src/components/ImageEditor/ImageSnapshots.test.ts src/components/ImageEditor/ImageEditorHistoryPanel.test.tsx src/lib/projectValidation.test.ts -t "digest|SHA-256|same-size|swap|mutation|identity|proof|verified|rerender|hostile|bounds|allocation"`
+  — **6 files passed, 2 skipped; 18 tests passed, 68 skipped**.
+- `npx tsc -p tsconfig.app.json --noEmit --incremental false` — passed.
+- `npx tsc -p tsconfig.node.json --noEmit --incremental false` — passed.
+- Changed-file ESLint — **exit 0, 0 errors, 0 warnings**.
+- `git diff --check`, staged `git diff --cached --check`, and
+  `CI=1 npm run build` — passed. The build retained only the existing Vite
+  runtime-URL, browser-module externalization, deprecation, and chunk-size
+  warnings.
+
+### Residuals after the third correction
+
+SHA-256 remains an integrity proof, not an authenticity signature against an
+attacker who can rewrite both payload and manifest. Snapshot creation, explicit
+save, explicit Restore, and decode still perform O(pixel) Canvas readback and
+hashing; they are no longer React-render or repeated-readiness work, but a
+single very large valid boundary operation can still be noticeable within the
+document/project caps. Canvas backing-store reclamation timing remains browser/
+GPU-driver managed after the proven ownership-safe zero-size release. No
+Windows, macOS, Android, or GPU-memory trace was captured in this worktree.
+
 ## Final Terra digest BLOCK follow-up
 
 ### Retraction of the second false approval
