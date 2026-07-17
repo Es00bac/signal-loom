@@ -299,7 +299,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    await expect(restoreProjectDocument(saved)).rejects.toThrow(/required license text|partial restore/i);
+    await expect(restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    })).rejects.toThrow(/required license text|partial restore/i);
     expect(await paperAssetRepository.get(refs.font.id)).toBeUndefined();
   });
 
@@ -310,7 +312,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     await resetAllStores();
     await wipePaperAssetRepository();
 
-    await expect(restoreProjectDocument(saved)).rejects.toThrow(/required license text.*missing/i);
+    await expect(restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    })).rejects.toThrow(/required license text.*missing/i);
     expect(await paperAssetRepository.get(refs.font.id)).toBeUndefined();
   });
 
@@ -515,7 +519,9 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
 
     await resetAllStores();
     await wipePaperAssetRepository();
-    await expect(restoreProjectDocument(saved)).rejects.toThrow(/missing required managed font|declares required managed font missing/i);
+    await expect(restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    })).rejects.toThrow(/missing required managed font|declares required managed font missing/i);
   });
 
   it('packages an unknown-rights face only with a byte-bound packaging attestation', async () => {

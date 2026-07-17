@@ -16,6 +16,13 @@ export interface PaperEditableSaveDependencies {
   serialize?: typeof serializeSlppr;
 }
 
+/** BlobPart must own an ArrayBuffer; serialized views may be backed by SharedArrayBuffer. */
+function copyBytesToOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 /**
  * Saves one editable Paper tab. Dirty truth changes only after the native bridge acknowledges that
  * bytes reached a standalone path. Browser/Capacitor downloads remain useful exports, but cannot
@@ -68,7 +75,7 @@ export async function savePaperDocumentEditable(
     if (options.allowUnacknowledgedDownload) {
       const download = dependencies.download ?? downloadBlob;
       download(
-        new Blob([bytes as BlobPart], { type: 'application/octet-stream' }),
+        new Blob([copyBytesToOwnedArrayBuffer(bytes)], { type: 'application/octet-stream' }),
         buildWorkspaceDownloadFilename(workspaceDocument.document.title, 'slppr'),
       );
     }

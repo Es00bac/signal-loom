@@ -1310,15 +1310,19 @@ export async function exportPaperWebcomicImages(
     ...imageOptions
   } = options;
   const assertCurrentSources = rasterizationGuard;
-  assertCurrentSources();
-  const exact = await buildPaperDocumentExactManagedFontOutput(document);
-  assertCurrentSources();
-  const outputDocument = exact.document;
-  const exactOptions = { ...imageOptions, fontFaceCss: exact.fontFaceCss };
-  const plan = buildPaperWebcomicImageExportPlan(outputDocument, exactOptions);
   const nativeBridge = getSignalLoomNativeBridge();
 
   try {
+    // Keep exact-font preparation inside the export transaction. The supplied guard still owns
+    // the immutable, pre-materialization Source Library snapshot; rebuilding the materialized
+    // document for managed fonts must neither replace that baseline nor let its typed failure
+    // escape the normal Paper export outcome contract.
+    assertCurrentSources();
+    const exact = await buildPaperDocumentExactManagedFontOutput(document);
+    assertCurrentSources();
+    const outputDocument = exact.document;
+    const exactOptions = { ...imageOptions, fontFaceCss: exact.fontFaceCss };
+    const plan = buildPaperWebcomicImageExportPlan(outputDocument, exactOptions);
     assertCurrentSources();
     if (nativeBridge?.exportPaperImages) {
       let directoryPath: string | undefined;

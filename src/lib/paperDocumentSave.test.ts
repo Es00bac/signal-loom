@@ -113,6 +113,8 @@ describe('savePaperDocumentEditable', () => {
     });
 
     expect(download).toHaveBeenCalledTimes(1);
+    const downloadedBlob = download.mock.calls[0]?.[0] as Blob;
+    expect(Array.from(new Uint8Array(await downloadedBlob.arrayBuffer()))).toEqual([8, 9]);
     expect(result.status).toBe('unacknowledged');
     expect(usePaperStore.getState().isDocumentDirty(documentId)).toBe(true);
   });

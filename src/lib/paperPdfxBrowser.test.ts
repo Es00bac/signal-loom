@@ -5,6 +5,7 @@ import { PaperPlacedDocumentRasterizationError } from './paperPlacedDocumentRast
 const mocks = vi.hoisted(() => ({
   resolveProfile: vi.fn(),
   materialize: vi.fn(),
+  exact: vi.fn(),
   exportPdfx: vi.fn(),
   buildPage: vi.fn(),
   rasterize: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('./paperIccEngine', () => ({ createRgbToCmykTransform: vi.fn() }));
 vi.mock('./paperPdfxPipeline', () => ({ exportPaperDocumentToPdfx: mocks.exportPdfx }));
 vi.mock('./paperManagedIccProfiles', () => ({ resolveExactPaperOutputProfile: mocks.resolveProfile }));
 vi.mock('../features/paper/assets/PaperAssetRuntime', () => ({
+  buildPaperDocumentExactManagedFontOutput: mocks.exact,
   materializePaperDocumentAssetUrls: mocks.materialize,
   paperAssetRepository: { get: vi.fn() },
 }));
@@ -33,6 +35,7 @@ describe('exportPaperDocumentToPdfxInBrowser placed-document boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.sourceItems = [];
+    mocks.exact.mockImplementation(async (document) => ({ document }));
   });
 
   it('returns the same typed capability outcome before profile/materialization/raster work', async () => {
