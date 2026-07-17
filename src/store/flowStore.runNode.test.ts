@@ -592,6 +592,41 @@ describe('runNode list expansion regression (FBL-017 follow-up)', () => {
     expect(useFlowStore.getState().nodes.find((node) => node.id === root.id)?.data.result).toBeDefined();
   });
 
+  it('AUD-013: expands a multi-image result into ordered envelopeItems with distinct MIME (store/envelope consumer)', async () => {
+    // The proxy result envelope carries ordered additionalResults with distinct MIME; the store/envelope
+    // consumer must surface every image (not just the first) into envelopeItems and the Source Library.
+    const prompt = createNode('prompt', 'textNode', { mode: 'prompt', prompt: 'three cohesive studies' });
+    const root = createNode('root', 'imageGen', { mediaMode: 'generate', provider: 'byteplus', modelId: 'seedream-4.5' });
+    vi.mocked(executeNodeRequest).mockImplementation(async (node, context, settings) => {
+      capturedContexts.push({ nodeId: node.id, context, index: capturedContexts.length, provider: node.data.provider, modelId: node.data.modelId, settings });
+      if (node.id !== root.id) {
+        return { result: 'three cohesive studies', resultType: 'text', statusMessage: 'Done' };
+      }
+      return {
+        result: imageResultDataUrl(node.id, 1),
+        resultType: 'image',
+        mimeType: 'image/png',
+        statusMessage: 'Three images',
+        additionalResults: [
+          { result: imageResultDataUrl(node.id, 2), mimeType: 'image/webp' },
+          { result: imageResultDataUrl(node.id, 3), mimeType: 'image/jpeg' },
+        ],
+      };
+    });
+    useFlowStore.setState({ nodes: [prompt, root], edges: [{ id: 'prompt-root', source: prompt.id, target: root.id }] });
+
+    await useFlowStore.getState().runNode(root.id);
+
+    const finalRoot = useFlowStore.getState().nodes.find((node) => node.id === root.id);
+    expect(finalRoot?.data.error).toBeUndefined();
+    const envelopeItems = finalRoot?.data.envelopeItems ?? [];
+    expect(envelopeItems).toHaveLength(3);
+    expect(envelopeItems.map((item) => item.mimeType)).toEqual(['image/png', 'image/webp', 'image/jpeg']);
+    expect(envelopeItems.map((item) => item.index)).toEqual([0, 1, 2]);
+    const rootItems = useSourceBinStore.getState().getAllItems().filter((item) => item.originNodeId === root.id);
+    expect(rootItems).toHaveLength(3);
+  });
+
   it('projects one Atlas Sequential Envelope axis into exactly three paid root calls', async () => {
     const upstream = createNode('seedream', 'imageGen', {
       mediaMode: 'generate', provider: 'atlas', modelId: 'bytedance/seedream-v4.5/sequential',

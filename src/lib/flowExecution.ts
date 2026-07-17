@@ -130,6 +130,7 @@ import {
   buildBackendProxyExecuteRequest,
   shouldUseBackendProxy,
 } from './backendProxy';
+import { decodeBackendProxyResultEnvelope } from './backendProxyResultEnvelope';
 import {
   buildGeminiTextConfig,
   buildGeminiTextInlinePart,
@@ -263,7 +264,6 @@ import { HttpStatusError, NonRetryableError, withExponentialBackoff } from './ex
 import { getProviderLimiter } from './providerRateLimiter';
 
 const FLOW_PROVIDER_RETRY_BUDGET_MS = 5 * 60_000;
-const VALID_RESULT_TYPES = new Set<ResultType>(['text', 'number', 'boolean', 'json', 'image', 'video', 'audio', 'package', 'list', 'envelope']);
 
 export async function executeNodeRequest(
   node: AppNode,
@@ -794,7 +794,6 @@ async function executeNodeViaBackendProxy(
   }
 
   const payload = await decodeBackendProxyExecutionPayload(response);
-  const payloadResult = payload.result;
 
   if (node.type === 'visionVerifyNode') {
     const verification = validateBackendProxyVisionVerificationResult(payload);
@@ -815,20 +814,12 @@ async function executeNodeViaBackendProxy(
     };
   }
 
-  if (payload.error) {
-    throw new Error(String(payload.error));
-  }
-
-  if (typeof payloadResult !== 'string' || typeof payload.resultType !== 'string' || !VALID_RESULT_TYPES.has(payload.resultType)) {
-    throw new NonRetryableError('Backend proxy returned an invalid execution payload.');
-  }
-
-  return {
-    result: payloadResult as string,
-    resultType: payload.resultType as ResultType,
-    statusMessage: payload.statusMessage ?? 'Generated through backend proxy',
-    usage: payload.usage,
-  };
+  // Every remaining field of a full ExecutionResult (MIME/extension/file name, JSON-safe output
+  // metadata, a reconstructed Blob, and ordered additionalResults) is validated and carried through
+  // the versioned envelope so a proxied result is semantically equivalent to the same direct result.
+  // A malformed or unsupported envelope is a processed terminal response: it throws a non-retryable
+  // error here, and is never resubmitted through the outer retry wrapper.
+  return decodeBackendProxyResultEnvelope(payload);
 }
 
 type BackendProxyExecutionPayload = Record<string, unknown> & Partial<ExecutionResult>;
