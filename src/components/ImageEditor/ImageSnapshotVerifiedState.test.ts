@@ -7,6 +7,7 @@ import {
   buildImageSnapshotReadinessDescriptor,
   disposeImageDocumentSnapshotResources,
   inspectImageDocumentSnapshotIntegrity,
+  markImageDocumentSnapshotOwned,
   markImageDocumentSnapshotVerifiedOwned,
   restoreImageDocumentSnapshot,
   verifyImageDocumentSnapshotIntegrity,
@@ -14,6 +15,7 @@ import {
 
 class CountingBitmap {
   static imageDataReads = 0;
+  static codecCalls = 0;
 
   width: number;
   height: number;
@@ -32,6 +34,11 @@ class CountingBitmap {
         return { width: 1, height: 1, data: new Uint8ClampedArray(this.#bytes) };
       },
     };
+  }
+
+  async convertToBlob(): Promise<Blob> {
+    CountingBitmap.codecCalls += 1;
+    return new Blob();
   }
 }
 
@@ -92,6 +99,165 @@ function documentWith(snapshotValue: ImageDocumentSnapshot): ImageDocument {
 }
 
 describe('Image snapshot verified-state lifecycle', () => {
+  it.each(['bitmap', 'mask'] as const)(
+    'rejects a cached %s resource expando without pixel readback or codec work',
+    (role) => {
+      const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+      const resource = value.layers[0][role]! as LayerBitmap & { evilMetadata?: string };
+      resource.evilMetadata = 'x'.repeat(16 * 1024 * 1024);
+
+      CountingBitmap.imageDataReads = 0;
+      CountingBitmap.codecCalls = 0;
+      expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['snapshot-bounds-invalid'],
+      });
+      expect(buildImageSnapshotReadinessDescriptor({ doc: documentWith(value) })
+        .namedSnapshots.snapshots[0].restorable).toBe(false);
+      expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
+        complete: false,
+        selectionComplete: false,
+        reasons: ['snapshot-bounds-invalid'],
+      });
+      expect(CountingBitmap.imageDataReads).toBe(0);
+      expect(CountingBitmap.codecCalls).toBe(0);
+    },
+  );
+
+  it('rejects an uncached 20 MiB resource expando before explicit verification reads pixels', () => {
+    const value = snapshot();
+    const resource = value.layers[0].bitmap! as LayerBitmap & { evilMetadata?: string };
+    resource.evilMetadata = 'x'.repeat(20 * 1024 * 1024);
+
+    CountingBitmap.imageDataReads = 0;
+    CountingBitmap.codecCalls = 0;
+    expect(verifyImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-bounds-invalid'],
+    });
+    expect(CountingBitmap.imageDataReads).toBe(0);
+    expect(CountingBitmap.codecCalls).toBe(0);
+  });
+
+  it('counts runtime resource metadata at the exact configured size boundary', () => {
+    const maxMetadataBytes = 4_096;
+    const value = snapshot();
+    const resource = value.layers[0].bitmap! as LayerBitmap & { legitimateMetadata?: unknown };
+    const accepts = (length: number) => {
+      resource.legitimateMetadata = { nested: { padding: 'x'.repeat(length) } };
+      try {
+        assertImageDocumentSnapshotDecodeBounds([value], {
+          transport: 'runtime',
+          maxSnapshotMetadataBytes: maxMetadataBytes,
+          maxAggregateMetadataBytes: maxMetadataBytes,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let lower = 0;
+    let upper = maxMetadataBytes;
+    while (lower < upper) {
+      const midpoint = Math.ceil((lower + upper) / 2);
+      if (accepts(midpoint)) lower = midpoint;
+      else upper = midpoint - 1;
+    }
+
+    expect(accepts(lower - 1)).toBe(true);
+    expect(accepts(lower)).toBe(true);
+    expect(accepts(lower + 1)).toBe(false);
+  });
+
+  it('supports bounded pre-existing resource metadata and binds later changes', () => {
+    const value = snapshot();
+    const metadata: {
+      label: string;
+      nested: { value: number };
+      self?: unknown;
+    } = { label: 'camera profile', nested: { value: 7 } };
+    metadata.self = metadata;
+    const resource = value.layers[0].bitmap! as LayerBitmap & {
+      legitimateMetadata?: typeof metadata;
+    };
+    resource.legitimateMetadata = metadata;
+    markImageDocumentSnapshotVerifiedOwned(value);
+
+    CountingBitmap.imageDataReads = 0;
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+    expect(CountingBitmap.imageDataReads).toBe(0);
+
+    resource.legitimateMetadata.nested.value = 8;
+    expect(inspectImageDocumentSnapshotIntegrity(value)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['verified-snapshot-binding-changed'],
+    });
+    expect(CountingBitmap.imageDataReads).toBe(0);
+  });
+
+  it('fails closed on resource getters, Proxies, and replacement while ignoring excluded key classes', () => {
+    const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
+    const original = value.layers[0].bitmap!;
+    const mutable = original as unknown as Record<PropertyKey, unknown>;
+    const symbolKey = Symbol('resource-metadata');
+    const originalPrototype = Object.getPrototypeOf(original);
+    let getterCalls = 0;
+
+    Object.defineProperty(original, 'hiddenMetadata', {
+      configurable: true,
+      value: 'x'.repeat(20 * 1024 * 1024),
+    });
+    mutable[symbolKey] = 'x'.repeat(20 * 1024 * 1024);
+    Object.setPrototypeOf(original, { inheritedMetadata: 'x'.repeat(20 * 1024 * 1024) });
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(true);
+
+    Object.defineProperty(original, 'hostileMetadata', {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        getterCalls += 1;
+        throw new Error('resource getter must not run');
+      },
+    });
+    expect(() => inspectImageDocumentSnapshotIntegrity(value)).not.toThrow();
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    expect(getterCalls).toBe(0);
+
+    delete mutable.hostileMetadata;
+    delete mutable.hiddenMetadata;
+    delete mutable[symbolKey];
+    Object.setPrototypeOf(original, originalPrototype);
+    value.layers[0].bitmap = new Proxy(original, {
+      ownKeys: () => {
+        throw new Error('resource Proxy inspection failed');
+      },
+    });
+    CountingBitmap.imageDataReads = 0;
+    expect(() => inspectImageDocumentSnapshotIntegrity(value)).not.toThrow();
+    expect(inspectImageDocumentSnapshotIntegrity(value).complete).toBe(false);
+    expect(CountingBitmap.imageDataReads).toBe(0);
+  });
+
+  it('fails closed when a sealed Canvas-like resource cannot be hardened', () => {
+    const explicit = markImageDocumentSnapshotOwned(snapshot());
+    Object.preventExtensions(explicit.layers[0].bitmap!);
+
+    expect(verifyImageDocumentSnapshotIntegrity(explicit)).toEqual({
+      complete: false,
+      selectionComplete: false,
+      reasons: ['snapshot-resource-hardening-failed'],
+    });
+
+    const trustedBuilderPath = snapshot();
+    Object.preventExtensions(trustedBuilderPath.layers[0].bitmap!);
+    expect(() => markImageDocumentSnapshotVerifiedOwned(trustedBuilderPath)).toThrow(
+      /could not enter immutable verified state/i,
+    );
+  });
+
   it('rejects oversized enumerable metadata added after the verified cache is populated', () => {
     const value = markImageDocumentSnapshotVerifiedOwned(snapshot());
     (value as ImageDocumentSnapshot & { untrustedMetadata?: string }).untrustedMetadata = 'x'.repeat(
