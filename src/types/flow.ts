@@ -1,5 +1,5 @@
 import type { Edge, Node, NodeProps } from '@xyflow/react';
-import type { ManagedBundledFontFaceReference } from './managedFont';
+import type { ManagedBundledFontFaceIssue, ManagedBundledFontFaceReference } from './managedFont';
 
 export const FLOW_NODE_TYPES = [
   'textNode',
@@ -502,6 +502,7 @@ export interface EditorTextDefaults {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic' | 'oblique';
   managedFace?: ManagedBundledFontFaceReference;
+  managedFaceIssue?: ManagedBundledFontFaceIssue;
   fontSizePx: number;
   color: string;
   textEffect: TextClipEffect;
@@ -518,6 +519,7 @@ export interface EditorTextTypography {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic' | 'oblique';
   managedFace?: ManagedBundledFontFaceReference;
+  managedFaceIssue?: ManagedBundledFontFaceIssue;
   fontKerning?: 'auto' | 'normal' | 'none';
   lineHeightPercent?: number;
   letterSpacingPx?: number;
@@ -673,6 +675,7 @@ export interface EditorTextStageObject extends EditorStageObjectBase {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic' | 'oblique';
   managedFace?: ManagedBundledFontFaceReference;
+  managedFaceIssue?: ManagedBundledFontFaceIssue;
   fontSizePx: number;
   color: string;
 }

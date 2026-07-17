@@ -136,7 +136,7 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
       cropRotationDeg: 0, filterStack: [], transitionIn: 'none', transitionOut: 'none',
       transitionDurationMs: 0, textContent: 'Timeline title', textFontFamily: family.family,
       textSizePx: 72, textColor: '#f8fafc', textEffect: 'shadow', textBackgroundOpacityPercent: 0,
-      textTypography: { fontWeight: face.weight, fontStyle: 'normal', managedFace },
+      textTypography: { fontWeight: face.weight, fontStyle: 'normal', managedFace, arcPercent: 35 },
     };
     const stageObject: EditorStageObject = {
       id: 'stage-text', kind: 'text', x: 0, y: 0, width: 400, height: 120, rotationDeg: 0,
@@ -182,7 +182,9 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
     expect(refs).toHaveLength(5);
     expect(new Set(refs.map((ref) => ref.faceId))).toEqual(new Set([face.id]));
     expect(refs[0]).toEqual({
-      kind: 'bundled', faceId: face.id, family: family.family, weight: 400, style: 'normal', stretchPercent: 100,
+      kind: 'bundled', schemaVersion: 2, faceId: face.id, family: family.family,
+      weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0,
+      sha256: face.sha256, byteLength: face.byteLength,
     });
     expect(restoredImage.documents[0].layers[0].text?.managedFace).toEqual(managedFace);
     expect(restoredImage.documents[0].layers[1].text?.managedFace).toEqual(managedFace);
@@ -202,9 +204,14 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
     const fontFaceSources: unknown[] = [];
     const fontFaceRecords: Array<{ family: string; descriptors: FontFaceDescriptors }> = [];
     const renderedFonts: string[] = [];
+    const measuredFonts: string[] = [];
     const canvasContext = {
-      measureText: (text: string) => ({ width: text.length * 10 }),
+      measureText: (text: string) => {
+        measuredFonts.push(renderedFonts.at(-1) ?? '');
+        return { width: text.length * 10 };
+      },
       save: vi.fn(), restore: vi.fn(), fillText: vi.fn(), strokeText: vi.fn(),
+      translate: vi.fn(), rotate: vi.fn(),
       fontKerning: 'auto', fontStretch: '', fillStyle: '', strokeStyle: '', lineWidth: 0, lineJoin: 'round',
       textAlign: 'left', textBaseline: 'alphabetic', globalAlpha: 1,
       shadowColor: '', shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0,
@@ -275,6 +282,7 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
     );
     const freshMedia = await import('./mediaComposition');
     const restoredClip = restoredNode.data.editorVisualClips![0];
+    measuredFonts.length = 0;
     const rendered = await freshMedia.renderTextCard({
       text: restoredClip.textContent ?? '',
       fontFamily: restoredClip.textFontFamily,
@@ -287,6 +295,8 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
     expect(rendered).toBe('data:image/png;base64,ZXhhY3Q=');
     expect(renderedFonts).toContain(`400 72px "${runtimeFamily}"`);
     expect(renderedFonts).not.toContain('400 72px "Liberation Sans"');
+    expect(measuredFonts.length).toBeGreaterThan(1);
+    expect(measuredFonts.every((font) => font.includes(`"${runtimeFamily}"`))).toBe(true);
     expect((canvasContext as unknown as { fontStretch: string }).fontStretch).toBe('100%');
   });
 
@@ -308,5 +318,94 @@ describe('FBL-011 fresh-process bundled face persistence', () => {
     await expect(runtime.ensureBundledFontFaceReferencesRegistered([ref], { fetchImpl })).rejects.toThrow(
       /Liberation Sans.*unavailable or unauthorized.*reinstall.*font library/i,
     );
+  });
+
+  it('preserves malformed Image and every Video managed reference as blocking diagnostics through restore/save', async () => {
+    vi.resetModules();
+    const malformed = {
+      kind: 'bundled', schemaVersion: 2, faceId: 'previously-exact', family: 'Duplicate Family',
+      weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0,
+      sha256: 'truncated-hash', byteLength: 100,
+    };
+    const textStyle = {
+      content: 'Blocked Image text', fontFamily: malformed.family, fontSize: 48, fontWeight: '400',
+      fontStyle: 'normal', fontKerning: 'auto', fontVariantCaps: 'normal', letterSpacing: 0,
+      baselineShift: 0, boxWidth: null, boxHeight: null, wrap: true, color: '#fff', lineHeight: 1.15,
+      align: 'left', verticalAlign: 'top', warp: 'none', managedFace: malformed,
+    };
+    const videoDefaults = {
+      text: 'Blocked asset', fontFamily: malformed.family, fontWeight: 400, fontStyle: 'normal',
+      fontSizePx: 72, color: '#fff', textEffect: 'none', textBackgroundOpacityPercent: 0,
+      managedFace: malformed,
+    };
+    const rawProject = {
+      schemaVersion: 1, id: 'malformed-managed-fonts', name: 'Malformed managed fonts', savedAt: 1,
+      flow: {
+        nodes: [{
+          id: 'composition', type: 'composition', position: { x: 0, y: 0 },
+          data: {
+            editorAssets: [{ id: 'asset', kind: 'text', label: 'Asset', createdAt: 1, updatedAt: 1, textDefaults: videoDefaults }],
+            editorVisualClips: [{
+              id: 'clip', sourceNodeId: 'asset', sourceKind: 'text', trackIndex: 0, startMs: 0,
+              textFontFamily: malformed.family, textTypography: { fontWeight: 400, fontStyle: 'normal', managedFace: malformed },
+            }],
+            editorStageObjects: [{
+              id: 'stage', kind: 'text', x: 0, y: 0, width: 320, height: 120, rotationDeg: 0,
+              opacityPercent: 100, blendMode: 'normal', text: 'Blocked stage', fontFamily: malformed.family,
+              fontWeight: 400, fontStyle: 'normal', fontSizePx: 72, color: '#fff', managedFace: malformed,
+            }],
+          },
+        }],
+        edges: [],
+      },
+      imageEditor: {
+        documents: [{
+          id: 'image', title: 'Malformed Image', width: 640, height: 360,
+          layers: [{
+            id: 'image-text', name: 'Blocked', type: 'text', visible: true, locked: false, opacity: 1,
+            blendMode: 'normal', x: 0, y: 0, bitmap: null, bitmapVersion: 1, mask: null, text: textStyle,
+          }],
+          activeLayerId: 'image-text', activeLayerEditTarget: 'layer', hasSelection: false, selectionVersion: 0,
+          savedSelectionChannels: [], spotChannels: [], viewport: { zoom: 1, panX: 0, panY: 0 }, dirty: false,
+          snapshots: [],
+        }],
+        activeDocId: 'image', quickActionMacros: [],
+      },
+    };
+
+    const actions = await import('./projectDocumentActions');
+    await actions.restoreProjectDocument(rawProject, { allowDirtyImageReplacement: true });
+    const imageStore = await import('../store/imageEditorStore');
+    const flowStore = await import('../store/flowStore');
+    const collectors = await import('./managedBundledFonts');
+    const runtime = await import('./bundledFontLibrary');
+    const imageDocument = imageStore.useImageEditorStore.getState().documents[0];
+    const node = flowStore.useFlowStore.getState().nodes[0];
+    const imageIssue = imageDocument.layers[0].text?.managedFaceIssue;
+    const assetIssue = node.data.editorAssets?.[0]?.textDefaults?.managedFaceIssue;
+    const clipIssue = node.data.editorVisualClips?.[0]?.textTypography?.managedFaceIssue;
+    const stageIssue = node.data.editorStageObjects?.[0]?.kind === 'text'
+      ? node.data.editorStageObjects[0].managedFaceIssue
+      : undefined;
+    for (const issue of [imageIssue, assetIssue, clipIssue, stageIssue]) {
+      expect(issue).toMatchObject({ kind: 'bundled-font-issue', reason: 'invalid-reference' });
+      expect(issue?.original).toMatchObject({ faceId: 'previously-exact', sha256: 'truncated-hash' });
+    }
+
+    const videoDependencies = collectors.collectVideoBundledFontDependencies({
+      assets: node.data.editorAssets,
+      visualClips: node.data.editorVisualClips,
+      stageObjects: node.data.editorStageObjects,
+    });
+    expect(videoDependencies).toHaveLength(3);
+    await expect(runtime.ensureBundledFontDependenciesReady(videoDependencies)).rejects.toThrow(/malformed managed-font reference/i);
+    const imageExport = await import('../components/ImageEditor/ImageDocumentExport');
+    await expect(imageExport.imageDocumentToBlob(imageDocument)).rejects.toThrow(/malformed managed-font reference/i);
+
+    const saved = await actions.buildCurrentProjectDocument({ id: 'saved-malformed', name: 'Saved malformed' });
+    expect(saved.imageEditor?.documents[0].layers[0].text?.managedFaceIssue).toEqual(imageIssue);
+    expect(saved.flow.nodes[0].data.editorAssets?.[0]?.textDefaults?.managedFaceIssue).toEqual(assetIssue);
+    expect(saved.flow.nodes[0].data.editorVisualClips?.[0]?.textTypography?.managedFaceIssue).toEqual(clipIssue);
+    expect(saved.flow.nodes[0].data.editorStageObjects?.[0]).toMatchObject({ managedFaceIssue: stageIssue });
   });
 });

@@ -13,6 +13,18 @@ const fakeMeasure: VideoTextMeasurer = (text, font) =>
   text.length * 10 + Math.max(0, text.length - 1) * font.letterSpacingPx;
 
 describe('layoutVideoText', () => {
+  it('refuses to measure an unresolved previously-managed face', () => {
+    expect(() => layoutVideoText({
+      text: 'Blocked', fontFamily: 'Duplicate Family', fontSizePx: 20,
+      typography: {
+        managedFaceIssue: {
+          kind: 'bundled-font-issue', reason: 'invalid-reference',
+          message: 'The managed reference is malformed.', original: { sha256: 'short' },
+        },
+      },
+    }, fakeMeasure)).toThrow(/measurement is blocked/i);
+  });
+
   it('word-wraps to fit a bounded width, matching a greedy line-fill', () => {
     const result = layoutVideoText(
       { text: 'alpha beta gamma delta', fontFamily: 'Inter', fontSizePx: 20, maxWidthPx: 130 },

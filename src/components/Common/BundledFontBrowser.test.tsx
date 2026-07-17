@@ -24,10 +24,10 @@ const catalog: BundledFontCatalog = {
       faces: [{ id: 'editorial:regular', file: 'collection/base/editorial/Regular.ttf', collectionIndex: 0, sha256: testFontSha256, byteLength: testFontBytes.byteLength, family: 'Editorial Serif', subfamily: 'Regular', fullName: 'Editorial Serif Regular', postscriptName: 'EditorialSerif-Regular', version: '1', weight: 400, style: 'normal', stretchPercent: 100, glyphCount: 100, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: false }],
     },
     {
-      id: 'base:tokyo', family: 'Tokyo Gothic', slug: 'tokyo', collection: 'base', role: 'japanese',
+      id: 'base:tokyo', family: 'Liberation Sans', slug: 'tokyo', collection: 'base', role: 'japanese',
       sourceUrl: 'https://example.test', sourceVersion: '1', licenseId: 'OFL-1.1', licenseFile: 'licenses/tokyo.txt',
       licenseSha256: 'c'.repeat(64), licenseByteLength: 1, warnings: [],
-      faces: [{ id: 'tokyo:regular', file: 'collection/base/tokyo/Regular.ttf', collectionIndex: 0, sha256: testFontSha256, byteLength: testFontBytes.byteLength, family: 'Tokyo Gothic', subfamily: 'Regular', fullName: 'Tokyo Gothic Regular', postscriptName: 'TokyoGothic-Regular', version: '1', weight: 400, style: 'normal', stretchPercent: 100, glyphCount: 1000, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: true }],
+      faces: [{ id: 'tokyo:regular', file: 'collection/base/tokyo/Regular.ttf', collectionIndex: 0, sha256: testFontSha256, byteLength: testFontBytes.byteLength, family: 'Liberation Sans', subfamily: 'Tokyo Regular', fullName: 'Liberation Sans Tokyo Regular', postscriptName: 'LiberationSans-Regular', version: '1', weight: 400, style: 'normal', stretchPercent: 100, glyphCount: 1000, variable: false, axes: {}, canSubset: true, hasVerticalSubstitution: true }],
     },
   ],
 };
@@ -61,8 +61,8 @@ describe('BundledFontBrowser', () => {
     });
 
     expect(host.textContent).not.toContain('Editorial Serif');
-    const tokyo = host.querySelector<HTMLButtonElement>('button[aria-label^="Tokyo Gothic"]')!;
-    expect(tokyo.style.fontFamily).toBe('"Tokyo Gothic"');
+    const tokyo = host.querySelector<HTMLButtonElement>('button[aria-label*="Tokyo Regular"]')!;
+    expect(tokyo.style.fontFamily).toBe('"Liberation Sans"');
     await act(async () => tokyo.click());
 
     await act(async () => {

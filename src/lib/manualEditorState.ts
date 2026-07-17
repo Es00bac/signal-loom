@@ -17,7 +17,7 @@ import {
   visualKeyframesToOpacityAutomation,
 } from './editorKeyframes';
 import { normalizeFontWeight } from './formatFontFamily';
-import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
+import { normalizeBundledFontFaceState, normalizeBundledFontFaceStateForTypography } from './bundledFontLibrary';
 import {
   normalizeClipBlendMode,
   normalizeClipChromaKey,
@@ -539,22 +539,22 @@ function normalizeEditorTextTypography(value: unknown, fontFamily: string): Edit
   if (typeof value.fontWeight === 'number' && Number.isFinite(value.fontWeight)) {
     typography.fontWeight = normalizeFontWeight(value.fontWeight);
   }
-  const managedFace = normalizeBundledFontFaceReference(value.managedFace);
-  const fontStyle = value.fontStyle === 'italic' || (value.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+  const initialManagedFaceState = normalizeBundledFontFaceState(value.managedFace, value.managedFaceIssue);
+  const fontStyle = value.fontStyle === 'italic' || (value.fontStyle === 'oblique' && initialManagedFaceState.managedFace?.style === 'oblique')
     ? value.fontStyle
     : 'normal';
   if (
     value.fontStyle === 'normal'
     || value.fontStyle === 'italic'
-    || (value.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+    || (value.fontStyle === 'oblique' && initialManagedFaceState.managedFace?.style === 'oblique')
   ) {
     typography.fontStyle = value.fontStyle;
   }
-  if (managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+  Object.assign(typography, normalizeBundledFontFaceStateForTypography(value.managedFace, value.managedFaceIssue, {
     family: fontFamily,
     weight: normalizeFontWeight(value.fontWeight),
     style: fontStyle,
-  })) typography.managedFace = managedFace;
+  }));
   if (value.fontKerning === 'auto' || value.fontKerning === 'normal' || value.fontKerning === 'none') {
     typography.fontKerning = value.fontKerning;
   }

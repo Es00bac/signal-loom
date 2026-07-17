@@ -195,7 +195,7 @@ export function TextPanel() {
         <label className="mb-1 block">Weight</label>
         <select
           className="w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1.5 text-xs text-cyan-100/85"
-          onChange={(e) => set({ fontWeight: e.target.value, managedFace: undefined })}
+          onChange={(e) => set({ fontWeight: e.target.value, managedFace: undefined, managedFaceIssue: undefined })}
           value={settings.fontWeight}
         >
           <option value="300">Light</option>
@@ -238,7 +238,7 @@ export function TextPanel() {
       />
       <div className="grid grid-cols-3 gap-1">
         {(['normal', 'italic'] as const).map((fontStyle) => (
-          <button className={`rounded border px-2 py-1 text-[11px] font-semibold capitalize ${settings.fontStyle === fontStyle ? 'border-cyan-300/45 bg-cyan-400/15 text-cyan-100' : 'border-cyan-300/10 bg-[#252630] text-cyan-100/55 hover:border-cyan-300/30'}`} key={fontStyle} onClick={() => set({ fontStyle, managedFace: undefined })} type="button">{fontStyle}</button>
+          <button className={`rounded border px-2 py-1 text-[11px] font-semibold capitalize ${settings.fontStyle === fontStyle ? 'border-cyan-300/45 bg-cyan-400/15 text-cyan-100' : 'border-cyan-300/10 bg-[#252630] text-cyan-100/55 hover:border-cyan-300/30'}`} key={fontStyle} onClick={() => set({ fontStyle, managedFace: undefined, managedFaceIssue: undefined })} type="button">{fontStyle}</button>
         ))}
         <button className={`rounded border px-2 py-1 text-[11px] font-semibold ${settings.wrap ? 'border-cyan-300/45 bg-cyan-400/15 text-cyan-100' : 'border-cyan-300/10 bg-[#252630] text-cyan-100/55 hover:border-cyan-300/30'}`} onClick={() => set({ wrap: !settings.wrap })} type="button">Wrap</button>
       </div>

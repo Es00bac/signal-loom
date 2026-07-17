@@ -41,7 +41,7 @@ import {
 } from '../components/ImageEditor/ImageSelectionChannels';
 import { sanitizeImageSpotChannelName } from '../components/ImageEditor/ImageSpotChannels';
 import { isPaperManagedIccProfile } from './paperManagedIccProfiles';
-import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
+import { normalizeBundledFontFaceState, normalizeBundledFontFaceStateForTypography } from './bundledFontLibrary';
 import { getEditorAssets } from './editorAssets';
 import { getEditorVisualClips } from './manualEditorState';
 import { getEditorStageObjects } from './editorStageObjects';
@@ -860,19 +860,20 @@ function sanitizeImageLayer(layer: UnknownRecord, layerIndex: number): ImageLaye
 
 function sanitizeImageTextLayerStyle(value: unknown): ImageLayer['text'] {
   if (!isRecord(value)) return undefined;
-  const managedFace = normalizeBundledFontFaceReference(value.managedFace);
-  const fontStyle = value.fontStyle === 'italic' || (value.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+  const initialManagedFaceState = normalizeBundledFontFaceState(value.managedFace, value.managedFaceIssue);
+  const fontStyle = value.fontStyle === 'italic' || (value.fontStyle === 'oblique' && initialManagedFaceState.managedFace?.style === 'oblique')
     ? value.fontStyle
     : 'normal';
-  const matchingManagedFace = managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+  const managedFaceState = normalizeBundledFontFaceStateForTypography(value.managedFace, value.managedFaceIssue, {
     family: typeof value.fontFamily === 'string' ? value.fontFamily : '',
     weight: value.fontWeight as string | number | undefined,
     style: fontStyle,
-  }) ? managedFace : undefined;
+  });
   return {
     ...(value as unknown as NonNullable<ImageLayer['text']>),
     fontStyle,
-    managedFace: matchingManagedFace,
+    managedFace: managedFaceState.managedFace,
+    managedFaceIssue: managedFaceState.managedFaceIssue,
   };
 }
 

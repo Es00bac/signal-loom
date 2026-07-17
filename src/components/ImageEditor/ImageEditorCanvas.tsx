@@ -2051,7 +2051,11 @@ export function ImageTextEditOverlay({
         spellCheck={false}
         style={{
           color: text.color,
-          fontFamily: formatFontFamily(text.managedFace ? bundledFontFaceRuntimeFamilyName(text.managedFace) : text.fontFamily),
+          fontFamily: formatFontFamily(text.managedFace
+            ? bundledFontFaceRuntimeFamilyName(text.managedFace)
+            : text.managedFaceIssue
+              ? 'Sloom Managed Face Blocked'
+              : text.fontFamily),
           fontSize: Math.max(11, text.fontSize * zoom),
           fontStyle: text.fontStyle,
           fontWeight: text.fontWeight,

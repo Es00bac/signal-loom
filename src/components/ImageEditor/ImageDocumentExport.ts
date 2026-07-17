@@ -20,8 +20,8 @@ import {
   encodeImageDataToStaticGif,
   encodeImageDataToTiff,
 } from './ImageFileFormats';
-import { ensureBundledFontFaceReferencesRegistered } from '../../lib/bundledFontLibrary';
-import { collectImageBundledFontFaceReferences } from '../../lib/managedBundledFonts';
+import { ensureBundledFontDependenciesReady } from '../../lib/bundledFontLibrary';
+import { collectImageBundledFontDependencies } from '../../lib/managedBundledFonts';
 
 export interface ImageExportFormat {
   label: string;
@@ -1181,7 +1181,7 @@ export async function imageDocumentToBlob(
   doc: ImageDocument,
   mimeType = 'image/png',
 ): Promise<Blob> {
-  await ensureBundledFontFaceReferencesRegistered(collectImageBundledFontFaceReferences([doc]));
+  await ensureBundledFontDependenciesReady(collectImageBundledFontDependencies([doc]));
   const normalized = normalizeImageExportMimeType(mimeType);
   if (normalized === IMAGE_TIFF_MIME_TYPE) {
     const imageData = getBitmapImageData(flattenImageDocumentToBitmap(doc));

@@ -168,10 +168,13 @@ import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowse
 import {
   bundledFontFaceRuntimeFamilyName,
   createBundledFontFaceReference,
-  ensureBundledFontFaceReferencesRegistered,
 } from '../../../lib/bundledFontLibrary';
-import { collectVideoBundledFontFaceReferences } from '../../../lib/managedBundledFonts';
-import type { ManagedBundledFontFaceReference } from '../../../types/managedFont';
+import { collectVideoBundledFontDependencies } from '../../../lib/managedBundledFonts';
+import type { ManagedBundledFontFaceIssue, ManagedBundledFontFaceReference } from '../../../types/managedFont';
+import {
+  useManagedFontRegistrationGate,
+  type ManagedFontRegistrationGateState,
+} from './useManagedFontRegistrationGate';
 import {
   getEditorStageObjects,
   getStageObjectBlendModes,
@@ -469,6 +472,7 @@ interface TextEditDraft {
   fontWeight: number;
   fontStyle: 'normal' | 'italic' | 'oblique';
   managedFace?: ManagedBundledFontFaceReference;
+  managedFaceIssue?: ManagedBundledFontFaceIssue;
   fontSizePx: number;
   color: string;
   textEffect: TextClipEffect;
@@ -801,7 +805,6 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     selectedProperties: VisualClipCopiedProperty[];
   } | null>(null);
   const [textEditDialog, setTextEditDialog] = useState<TextEditDialogState | null>(null);
-  const [managedFontError, setManagedFontError] = useState<string>();
   const [selectedStageObjectId, setSelectedStageObjectId] = useState<string | undefined>(undefined);
   const [selectedTimelineGap, setSelectedTimelineGap] = useState<TimelineGap | null>(null);
   const [sourceBinPreview, setSourceBinPreview] = useState<{
@@ -810,8 +813,8 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     label: string;
   } | null>(null);
   const [editorHistory, setEditorHistory] = useState(createEditorHistoryState);
-  const managedFontReferences = useMemo(
-    () => collectVideoBundledFontFaceReferences({
+  const managedFontDependencies = useMemo(
+    () => collectVideoBundledFontDependencies({
       assets: compositionEditorAssets,
       visualClips,
       stageObjects,
@@ -819,16 +822,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     [compositionEditorAssets, stageObjects, visualClips],
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    void ensureBundledFontFaceReferencesRegistered(managedFontReferences).then(
-      () => { if (!cancelled) setManagedFontError(undefined); },
-      (error) => {
-        if (!cancelled) setManagedFontError(error instanceof Error ? error.message : 'A bundled font face is unavailable.');
-      },
-    );
-    return () => { cancelled = true; };
-  }, [managedFontReferences]);
+  const managedFontGate = useManagedFontRegistrationGate(managedFontDependencies);
 
   const applyEditorHistorySnapshot = useCallback((
     compositionId: string,
@@ -1597,11 +1591,11 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
       availableSourceIds: sourceItemByNodeId.keys(),
       dirtySpanSummary: incrementalRenderSummary,
       hasComposition: Boolean(activeComposition),
-      managedFontError,
+      managedFontState: managedFontGate,
       stageObjectCount: stageObjects.length,
       visualClips,
     }).summary,
-    [activeComposition, audioClips, incrementalRenderSummary, managedFontError, sourceItemByNodeId, stageObjects.length, visualClips],
+    [activeComposition, audioClips, incrementalRenderSummary, managedFontGate, sourceItemByNodeId, stageObjects.length, visualClips],
   );
   const renderBackendStatus = useMemo(
     () => summarizeVideoRenderBackend(renderBackendPreference),
@@ -2096,6 +2090,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                   fontWeight: draft.fontWeight,
                   fontStyle: draft.fontStyle,
                   managedFace: draft.managedFace,
+                  managedFaceIssue: draft.managedFaceIssue,
                   fontSizePx: draft.fontSizePx,
                   color: draft.color,
                   textEffect: draft.textEffect,
@@ -2119,6 +2114,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           fontWeight: draft.fontWeight,
           fontStyle: draft.fontStyle,
           managedFace: draft.managedFace,
+          managedFaceIssue: draft.managedFaceIssue,
         },
       });
     }
@@ -3636,7 +3632,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     ? activeComposition.data.error
     : undefined;
   const renderActiveComposition = () => {
-    if (!activeComposition || isCompositionRendering) {
+    if (!activeComposition || isCompositionRendering || managedFontGate.status !== 'ready') {
       return;
     }
 
@@ -4045,6 +4041,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
             canvas={programCanvas}
             errorMessage={compositionRenderError}
             exportReadiness={exportReadiness}
+            managedFontGate={managedFontGate}
             incrementalRenderSummary={incrementalRenderSummary}
             isRunning={isCompositionRendering}
             onAddEditorAsset={addEditorAsset}
@@ -4366,6 +4363,35 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     // Image and Paper workspaces. pt-3 keeps the gutter symmetric with px-3/pb-3.
     : 'pt-3';
 
+  if (managedFontGate.status !== 'ready') {
+    return (
+      <div
+        className={`absolute inset-0 z-30 flex items-center justify-center bg-[#080b12] p-6 ${workspaceChromePaddingClassName}`}
+        data-video-managed-font-workspace-gate={managedFontGate.status}
+      >
+        <div className="max-w-lg rounded-2xl border border-cyan-300/20 bg-[#0f1724] p-6 text-center shadow-2xl">
+          <div className="text-base font-semibold text-white">
+            {managedFontGate.status === 'loading' ? 'Verifying managed fonts…' : 'Managed font unavailable'}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-gray-400">
+            {managedFontGate.status === 'loading'
+              ? 'Video preview, measurement, and export remain gated until every referenced face is registered from verified bytes.'
+              : managedFontGate.error}
+          </p>
+          {managedFontGate.status === 'error' ? (
+            <button
+              className="mt-4 rounded-lg border border-red-300/30 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-100 hover:bg-red-500/20"
+              onClick={managedFontGate.retry}
+              type="button"
+            >
+              Retry managed font registration
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   if (mobilePhoneInterface.enabled) {
     // Phone: a multi-pane desktop NLE can't fit. Owner directive (2026-07-03): lead with an
     // honest advisory pointing at the desktop app / served-browser session / DeX before showing
@@ -4669,6 +4695,7 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                         canvas={programCanvas}
                         errorMessage={compositionRenderError}
                         exportReadiness={exportReadiness}
+                        managedFontGate={managedFontGate}
                         incrementalRenderSummary={incrementalRenderSummary}
                         isRunning={isCompositionRendering}
                         onAddEditorAsset={addEditorAsset}
@@ -5817,6 +5844,7 @@ export function ProgramMonitorPanel({
   sequenceSummary,
   exportPresetPlan,
   exportReadiness,
+  managedFontGate = { status: 'ready', retry: () => {} },
   renderBackendStatus,
   monitorParityNotices,
   parityDiagnostics,
@@ -5866,6 +5894,7 @@ export function ProgramMonitorPanel({
   sequenceSummary: ReturnType<typeof buildVideoSequenceSummary>;
   exportPresetPlan: VideoExportPresetPlanData;
   exportReadiness: VideoExportReadinessSummary;
+  managedFontGate?: ManagedFontRegistrationGateState;
   renderBackendStatus: VideoRenderBackendSummary;
   monitorParityNotices: string[];
   parityDiagnostics: ReturnType<typeof buildVideoParityDiagnostics>;
@@ -5921,7 +5950,13 @@ export function ProgramMonitorPanel({
     errorMessage,
     isImageSequenceOutput,
   });
-  const renderBlockedReason = exportReadiness.tone === 'error' ? exportReadiness.detail : undefined;
+  const renderBlockedReason = managedFontGate.status === 'loading'
+    ? 'Managed font faces are still being verified and registered.'
+    : managedFontGate.status === 'error'
+      ? managedFontGate.error
+      : exportReadiness.tone === 'error'
+        ? exportReadiness.detail
+        : undefined;
   const renderedPreviewPlaceholderState: 'waiting' | 'error' | 'empty' | 'idle' = isRunning
     ? 'waiting'
     : errorMessage
@@ -6144,6 +6179,30 @@ export function ProgramMonitorPanel({
                   )}
                 </div>
               </div>
+            </div>
+          ) : managedFontGate.status !== 'ready' ? (
+            <div
+              className="flex h-full w-full flex-col items-center justify-center bg-[#0a0d14] p-6 text-center"
+              data-video-managed-font-gate={managedFontGate.status}
+            >
+              <div className="text-sm font-semibold text-white">
+                {managedFontGate.status === 'loading' ? 'Verifying managed fonts…' : 'Managed font unavailable'}
+              </div>
+              <p className="mt-2 max-w-md text-xs leading-5 text-gray-400">
+                {managedFontGate.status === 'loading'
+                  ? 'Exact Video text stays hidden until every referenced face is registered from verified bytes.'
+                  : managedFontGate.error}
+              </p>
+              {managedFontGate.status === 'error' ? (
+                <button
+                  className="mt-4 rounded-lg border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-500/20"
+                  data-video-managed-font-retry="true"
+                  onClick={managedFontGate.retry}
+                  type="button"
+                >
+                  Retry managed font registration
+                </button>
+              ) : null}
             </div>
           ) : (
             <div className="flex flex-col h-full w-full min-h-0 justify-center">
@@ -8361,7 +8420,9 @@ function ArcTextPreview({
   const fontStyle = typography.fontStyle ?? 'normal';
   const letterSpacingPx = typography.letterSpacingPx ?? 0;
   const font = {
-    fontFamily,
+    fontFamily: typography.managedFace
+      ? bundledFontFaceRuntimeFamilyName(typography.managedFace)
+      : fontFamily,
     fontSizePx,
     fontWeight,
     fontStyle,
@@ -8437,6 +8498,7 @@ function TypographyAdvancedControls({
           onChange={(value) => updateTypography({
             fontWeight: Math.max(100, Math.min(900, Math.round(value / 100) * 100)),
             managedFace: undefined,
+            managedFaceIssue: undefined,
           })}
           step={100}
           value={fontWeight}
@@ -8446,7 +8508,7 @@ function TypographyAdvancedControls({
             <button
               className={`flex-1 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${fontStyle === style ? 'border-cyan-300/50 bg-cyan-500/10 text-cyan-100' : 'border-gray-700/60 text-gray-400 hover:text-gray-200'}`}
               key={style}
-              onClick={() => updateTypography({ fontStyle: style, managedFace: undefined })}
+              onClick={() => updateTypography({ fontStyle: style, managedFace: undefined, managedFaceIssue: undefined })}
               type="button"
             >
               {style === 'normal' ? 'Normal' : 'Italic'}
@@ -8770,6 +8832,7 @@ function StageObjectInspector({
               fontWeight: face.weight,
               fontStyle: face.style,
               managedFace: createBundledFontFaceReference(family, face),
+              managedFaceIssue: undefined,
             } as Partial<EditorStageObject>)}
             style={object.fontStyle ?? 'normal'}
             value={object.fontFamily}
@@ -8779,7 +8842,7 @@ function StageObjectInspector({
             <span>Font family</span>
             <input
               className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
-              onChange={(event) => onUpdate({ fontFamily: event.target.value, managedFace: undefined } as Partial<EditorStageObject>)}
+              onChange={(event) => onUpdate({ fontFamily: event.target.value, managedFace: undefined, managedFaceIssue: undefined } as Partial<EditorStageObject>)}
               type="text"
               value={object.fontFamily}
             />
@@ -9097,6 +9160,7 @@ function buildTextDraftFromAsset(asset: EditorAsset): TextEditDraft {
     fontWeight: asset.textDefaults?.fontWeight ?? 400,
     fontStyle: asset.textDefaults?.fontStyle ?? 'normal',
     managedFace: asset.textDefaults?.managedFace,
+    managedFaceIssue: asset.textDefaults?.managedFaceIssue,
     fontSizePx: asset.textDefaults?.fontSizePx ?? 72,
     color: asset.textDefaults?.color ?? '#f8fafc',
     textEffect: asset.textDefaults?.textEffect ?? 'shadow',
@@ -9114,6 +9178,7 @@ function buildTextDraftFromClip(
     fontWeight: clip.textTypography?.fontWeight ?? asset?.textDefaults?.fontWeight ?? 400,
     fontStyle: clip.textTypography?.fontStyle ?? asset?.textDefaults?.fontStyle ?? 'normal',
     managedFace: clip.textTypography?.managedFace ?? asset?.textDefaults?.managedFace,
+    managedFaceIssue: clip.textTypography?.managedFaceIssue ?? asset?.textDefaults?.managedFaceIssue,
     fontSizePx: clip.textSizePx || asset?.textDefaults?.fontSizePx || 72,
     color: clip.textColor || asset?.textDefaults?.color || '#f8fafc',
     textEffect: clip.textEffect || asset?.textDefaults?.textEffect || 'shadow',
@@ -9127,6 +9192,7 @@ function normalizeTextEditDraft(draft: TextEditDraft): TextEditDraft {
     fontWeight: typeof draft.fontWeight === 'number' && Number.isFinite(draft.fontWeight) ? draft.fontWeight : 400,
     fontStyle: draft.fontStyle === 'italic' || draft.fontStyle === 'oblique' ? draft.fontStyle : 'normal',
     managedFace: draft.managedFace,
+    managedFaceIssue: draft.managedFaceIssue,
     fontSizePx: Math.max(8, Math.min(320, Math.round(draft.fontSizePx))),
     color: /^#[0-9a-f]{6}$/i.test(draft.color) ? draft.color : '#f8fafc',
     textEffect: draft.textEffect,
@@ -9926,7 +9992,7 @@ export function InspectorPanel({
                     className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
                     onChange={(event) => onUpdateVisualClip({
                       textFontFamily: event.target.value,
-                      textTypography: { ...visualClip.textTypography, managedFace: undefined },
+                      textTypography: { ...visualClip.textTypography, managedFace: undefined, managedFaceIssue: undefined },
                     })}
                     type="text"
                     value={visualClip.textFontFamily}
@@ -9940,6 +10006,7 @@ export function InspectorPanel({
                       fontWeight: face.weight,
                       fontStyle: face.style,
                       managedFace: createBundledFontFaceReference(family, face),
+                      managedFaceIssue: undefined,
                     },
                   })}
                   style={visualClip.textTypography?.fontStyle ?? 'normal'}
@@ -11296,6 +11363,7 @@ function TextEditDialog({
               fontWeight: face.weight,
               fontStyle: face.style,
               managedFace: createBundledFontFaceReference(family, face),
+              managedFaceIssue: undefined,
             })}
             style={draft.fontStyle}
             value={draft.fontFamily}
@@ -11305,7 +11373,7 @@ function TextEditDialog({
             <span>Font family</span>
             <input
               className="w-full rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-sm text-gray-100 outline-none"
-              onChange={(event) => onChange({ fontFamily: event.target.value, managedFace: undefined })}
+              onChange={(event) => onChange({ fontFamily: event.target.value, managedFace: undefined, managedFaceIssue: undefined })}
               type="text"
               value={draft.fontFamily}
             />

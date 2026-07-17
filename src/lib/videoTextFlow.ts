@@ -28,7 +28,7 @@
 import { flowPaperText, type PaperTextFlowTypeSpec, type PaperTextMeasurer } from './paperTextFlow';
 import { formatFontFamily } from './formatFontFamily';
 import { bundledFontFaceRuntimeFamilyName } from './bundledFontLibrary';
-import type { ManagedBundledFontFaceReference } from '../types/managedFont';
+import type { ManagedBundledFontFaceIssue, ManagedBundledFontFaceReference } from '../types/managedFont';
 
 /** Resolved font description a measurer needs — mirrors the subset of canvas `font` + tracking. */
 export interface VideoTextFont {
@@ -52,6 +52,7 @@ export interface VideoTextTypesetting {
   fontWeight?: number;
   fontStyle?: 'normal' | 'italic' | 'oblique';
   managedFace?: ManagedBundledFontFaceReference;
+  managedFaceIssue?: ManagedBundledFontFaceIssue;
   fontKerning?: 'auto' | 'normal' | 'none';
   lineHeightPercent?: number;
   letterSpacingPx?: number;
@@ -161,6 +162,9 @@ export function layoutVideoText(
   options: VideoTextLayoutOptions,
   measure: VideoTextMeasurer,
 ): VideoTextLayoutResult {
+  if (options.typography?.managedFaceIssue) {
+    throw new Error(`${options.typography.managedFaceIssue.message} Video text measurement is blocked.`);
+  }
   const { fontWeight, fontStyle, fontKerning, fontStretchPercent, lineHeightPercent, letterSpacingPx, textAlign } = resolveTypesetting(options.typography);
   const fontSizePx = Math.max(1, options.fontSizePx);
   const lineHeightPx = fontSizePx * (lineHeightPercent / 100);

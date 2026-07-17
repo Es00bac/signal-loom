@@ -5,7 +5,7 @@ import type {
   NodeData,
 } from '../types/flow';
 import { normalizeFontWeight } from './formatFontFamily';
-import { bundledFontFaceReferenceMatchesTypography, normalizeBundledFontFaceReference } from './bundledFontLibrary';
+import { normalizeBundledFontFaceState, normalizeBundledFontFaceStateForTypography } from './bundledFontLibrary';
 
 export interface StageCanvasSize {
   width: number;
@@ -47,12 +47,17 @@ export function getEditorStageObjects(nodeData: Partial<NodeData>): EditorStageO
     };
 
     if (object.kind === 'text') {
-      const managedFace = normalizeBundledFontFaceReference(object.managedFace);
-      const fontStyle = object.fontStyle === 'italic' || (object.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+      const initialManagedFaceState = normalizeBundledFontFaceState(object.managedFace, object.managedFaceIssue);
+      const fontStyle = object.fontStyle === 'italic' || (object.fontStyle === 'oblique' && initialManagedFaceState.managedFace?.style === 'oblique')
         ? object.fontStyle
         : 'normal';
       const fontFamily = typeof object.fontFamily === 'string' ? object.fontFamily : 'Inter, system-ui, sans-serif';
       const fontWeight = normalizeFontWeight(object.fontWeight);
+      const managedFaceState = normalizeBundledFontFaceStateForTypography(
+        object.managedFace,
+        object.managedFaceIssue,
+        { family: fontFamily, weight: fontWeight, style: fontStyle },
+      );
       return [{
         ...base,
         kind: 'text',
@@ -60,11 +65,8 @@ export function getEditorStageObjects(nodeData: Partial<NodeData>): EditorStageO
         fontFamily,
         fontWeight,
         fontStyle,
-        managedFace: managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
-          family: fontFamily,
-          weight: fontWeight,
-          style: fontStyle,
-        }) ? managedFace : undefined,
+        managedFace: managedFaceState.managedFace,
+        managedFaceIssue: managedFaceState.managedFaceIssue,
         fontSizePx: Math.max(8, normalizeNumber(object.fontSizePx, 64)),
         color: normalizeColor(object.color, '#f8fafc'),
       } satisfies EditorStageObject];

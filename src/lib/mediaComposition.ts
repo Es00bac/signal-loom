@@ -18,7 +18,8 @@ import type {
 } from '../types/flow';
 import { buildAutomationExpression } from './clipAutomation';
 import { formatFontFamily } from './formatFontFamily';
-import { bundledFontFaceRuntimeFamilyName, ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary';
+import { bundledFontFaceRuntimeFamilyName, ensureBundledFontDependenciesReady } from './bundledFontLibrary';
+import { managedBundledFontDependenciesForState } from './managedBundledFonts';
 import type { ManagedBundledFontFaceReference } from '../types/managedFont';
 import {
   audioKeyframesToVolumeAutomation,
@@ -1326,9 +1327,10 @@ export async function renderComicCard(
   },
   tailSample?: ComicCardTailSample,
 ): Promise<string> {
-  await ensureBundledFontFaceReferencesRegistered(
-    clip.textTypography?.managedFace ? [clip.textTypography.managedFace] : [],
-  );
+  await ensureBundledFontDependenciesReady(managedBundledFontDependenciesForState(
+    clip.textTypography?.managedFace,
+    clip.textTypography?.managedFaceIssue,
+  ));
   const canvas = document.createElement('canvas');
   canvas.width = COMIC_CARD_WIDTH;
   canvas.height = COMIC_CARD_HEIGHT;
@@ -1388,9 +1390,10 @@ export async function renderStageObjectImage(
   object: EditorStageObject,
   canvasSize: SequenceCanvas,
 ): Promise<string> {
-  await ensureBundledFontFaceReferencesRegistered(
-    object.kind === 'text' && object.managedFace ? [object.managedFace] : [],
-  );
+  await ensureBundledFontDependenciesReady(managedBundledFontDependenciesForState(
+    object.kind === 'text' ? object.managedFace : undefined,
+    object.kind === 'text' ? object.managedFaceIssue : undefined,
+  ));
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize.width;
   canvas.height = canvasSize.height;
@@ -1553,7 +1556,9 @@ function paintArcTextRun(
 ): void {
   const measurer = getVideoTextMeasurer();
   const font = {
-    fontFamily: style.fontFamily,
+    fontFamily: style.managedFace
+      ? bundledFontFaceRuntimeFamilyName(style.managedFace)
+      : style.fontFamily,
     fontSizePx: style.fontSizePx,
     fontWeight: style.fontWeight,
     fontStyle: style.fontStyle,
@@ -1601,6 +1606,7 @@ export function drawTextStageObject(
         fontWeight,
         fontStyle,
         managedFace: typography?.managedFace ?? object.managedFace,
+        managedFaceIssue: typography?.managedFaceIssue ?? object.managedFaceIssue,
         fontKerning: typography?.fontKerning,
         lineHeightPercent: typography?.lineHeightPercent ?? 115,
         letterSpacingPx: typography?.letterSpacingPx ?? 0,
@@ -2423,7 +2429,10 @@ export async function renderTextCard({
   opacityPercent: number;
   typography?: EditorTextTypography;
 }): Promise<string> {
-  await ensureBundledFontFaceReferencesRegistered(typography?.managedFace ? [typography.managedFace] : []);
+  await ensureBundledFontDependenciesReady(managedBundledFontDependenciesForState(
+    typography?.managedFace,
+    typography?.managedFaceIssue,
+  ));
   const resolved: EditorTextTypography = { ...legacyTextEffectTypography(effect), ...(typography ?? {}) };
   const fontWeight = resolved.fontWeight ?? TEXT_CARD_DEFAULT_FONT_WEIGHT;
   const fontStyle = resolved.fontStyle ?? 'normal';
@@ -2440,6 +2449,7 @@ export async function renderTextCard({
         fontWeight,
         fontStyle,
         managedFace: resolved.managedFace,
+        managedFaceIssue: resolved.managedFaceIssue,
         fontKerning: resolved.fontKerning,
         lineHeightPercent: resolved.lineHeightPercent ?? TEXT_CARD_DEFAULT_LINE_HEIGHT_PERCENT,
         letterSpacingPx,

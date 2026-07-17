@@ -126,4 +126,17 @@ describe('videoExportReadiness', () => {
     expect(readiness.summary.detail).toMatch(/Liberation Sans.*unavailable or unauthorized.*Reinstall/i);
     expect(readiness.issues[0]).toMatchObject({ severity: 'error', title: 'Missing bundled font face' });
   });
+
+  it('blocks preview and export while managed face registration is loading', () => {
+    const readiness = analyzeVideoExportReadiness({
+      hasComposition: true,
+      visualClips: [],
+      audioClips: [],
+      stageObjectCount: 1,
+      availableSourceIds: [],
+      managedFontState: { status: 'loading' },
+    });
+
+    expect(readiness.summary).toMatchObject({ tone: 'error', label: 'Loading fonts', issueCount: 1 });
+  });
 });

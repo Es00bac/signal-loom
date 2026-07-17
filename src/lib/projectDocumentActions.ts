@@ -23,6 +23,7 @@ import { ensureBundledFontFaceReferencesRegistered } from './bundledFontLibrary'
 import {
   collectImageBundledFontFaceReferences,
   collectVideoBundledFontFaceReferences,
+  upgradeLegacyBundledFontIssuesInProject,
 } from './managedBundledFonts';
 
 export interface ProjectDocumentReplacementOptions {
@@ -80,6 +81,7 @@ export async function restoreProjectDocument(
     ? (document as { name: string }).name
     : DEFAULT_PROJECT_NAME;
   const sanitizedDocument = sanitizeProjectDocument(document, fallbackName);
+  await upgradeLegacyBundledFontIssuesInProject(sanitizedDocument);
   const imageFontReferences = collectImageBundledFontFaceReferences(sanitizedDocument.imageEditor?.documents ?? []);
   const flowSnapshots = [
     sanitizedDocument.flow,

@@ -1,5 +1,5 @@
 import type { PaperComicSfxDesign } from '../lib/paperComicSfx';
-import type { ManagedBundledFontFaceReference } from './managedFont';
+import type { ManagedBundledFontFaceIssue, ManagedBundledFontFaceReference } from './managedFont';
 
 export type EditorTool =
   | 'hand'
@@ -627,6 +627,7 @@ export interface TextLayerStyle {
   fontWeight: string;
   fontStyle: 'normal' | 'italic' | 'oblique';
   managedFace?: ManagedBundledFontFaceReference;
+  managedFaceIssue?: ManagedBundledFontFaceIssue;
   fontKerning: 'auto' | 'normal' | 'none';
   fontVariantCaps: 'normal' | 'small-caps' | 'all-small-caps';
   letterSpacing: number;

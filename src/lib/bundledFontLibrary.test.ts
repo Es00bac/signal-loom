@@ -3,11 +3,17 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryPaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
 import {
+  createBundledFontFaceReference,
+  ensureBundledFontFaceReferencesRegistered,
+  normalizeBundledFontFaceState,
   bundledFontResourceUrl,
   bundledFontFaceCssDescriptor,
+  bundledFontFaceRuntimeFamilyName,
   installBundledPaperFontFace,
   parseBundledFontInventory,
+  resolveBundledFontFaceReference,
   selectBundledFontFace,
+  upgradeLegacyBundledFontFaceIssue,
 } from './bundledFontLibrary';
 
 function sampleInventory() {
@@ -39,6 +45,7 @@ function sampleInventory() {
           postscriptName: 'LiberationSans-Regular',
           version: 'Version 2.1.5',
           weight: 400,
+          stretchPercent: 100,
           glyphCount: 2327,
           variable: false,
           axes: [],
@@ -59,6 +66,7 @@ function sampleInventory() {
           postscriptName: 'LiberationSans-BoldItalic',
           version: 'Version 2.1.5',
           weight: 700,
+          stretchPercent: 100,
           glyphCount: 2327,
           variable: false,
           axes: [],
@@ -99,6 +107,96 @@ describe('bundled font library', () => {
     const unsafe = sampleInventory();
     unsafe.families[0].faces[0].file = '../outside.ttf';
     expect(() => parseBundledFontInventory(unsafe)).toThrow(/path/i);
+  });
+
+  it('resolves duplicate face IDs and family names only by the complete content and collection identity', () => {
+    const inventory = sampleInventory();
+    const duplicateFamily = structuredClone(inventory.families[0]);
+    duplicateFamily.slug = 'liberationsans-collection';
+    duplicateFamily.faces = [duplicateFamily.faces[0]];
+    duplicateFamily.faces[0].file = 'collection/base/liberationsans/LiberationSans-Regular-collection.ttc';
+    duplicateFamily.faces[0].collectionIndex = 1;
+    duplicateFamily.faces[0].sha256 = 'c'.repeat(64);
+    duplicateFamily.faces[0].byteLength = 900000;
+    inventory.families.push(duplicateFamily);
+    inventory.catalogFamilyCount = 2;
+    inventory.faceCount = 3;
+    const catalog = parseBundledFontInventory(inventory);
+    const first = catalog.families[0].faces.find((face) => face.weight === 400)!;
+    const secondFamily = catalog.families[1];
+    const second = secondFamily.faces[0];
+    second.id = first.id;
+
+    const secondReference = createBundledFontFaceReference(secondFamily, second);
+    const firstReference = createBundledFontFaceReference(catalog.families[0], first);
+    expect(bundledFontFaceRuntimeFamilyName(secondReference)).not.toBe(bundledFontFaceRuntimeFamilyName(firstReference));
+    expect(resolveBundledFontFaceReference(secondReference, catalog)).toEqual({ family: secondFamily, face: second });
+    expect(() => resolveBundledFontFaceReference({ ...secondReference, collectionIndex: 0 }, catalog)).toThrow(/collection\/content identity/i);
+    expect(() => resolveBundledFontFaceReference({ ...secondReference, sha256: first.sha256 }, catalog)).toThrow(/collection\/content identity/i);
+
+    secondFamily.faces.push({ ...second });
+    expect(() => resolveBundledFontFaceReference(secondReference, catalog)).toThrow(/duplicate complete identity/i);
+  });
+
+  it('rejects truncated hashes and every canonical metadata mismatch instead of normalizing them exact', async () => {
+    const catalog = parseBundledFontInventory(sampleInventory());
+    const family = catalog.families[0];
+    const face = family.faces.find((candidate) => candidate.weight === 400)!;
+    const reference = createBundledFontFaceReference(family, face);
+
+    expect(normalizeBundledFontFaceState({ ...reference, sha256: reference.sha256.slice(0, 12) })).toMatchObject({
+      managedFaceIssue: { reason: 'invalid-reference' },
+    });
+    await expect(ensureBundledFontFaceReferencesRegistered([
+      { ...reference, sha256: reference.sha256.slice(0, 12) } as typeof reference,
+    ], { catalog })).rejects.toThrow(/truncated content identity/i);
+    for (const changed of [
+      { ...reference, family: 'Same Name System Font' },
+      { ...reference, weight: 500 },
+      { ...reference, style: 'italic' as const },
+      { ...reference, stretchPercent: 87.5 },
+      { ...reference, collectionIndex: 1 },
+      { ...reference, sha256: 'd'.repeat(64) },
+      { ...reference, byteLength: reference.byteLength + 1 },
+    ]) {
+      expect(() => resolveBundledFontFaceReference(changed, catalog)).toThrow(/identity/i);
+    }
+  });
+
+  it('rejects a full-hash byte mutation before FontFace registration', async () => {
+    const catalog = parseBundledFontInventory(sampleInventory());
+    const family = catalog.families[0];
+    const face = family.faces.find((candidate) => candidate.weight === 400)!;
+    const reference = createBundledFontFaceReference(family, face);
+    const bytes = new Uint8Array(readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf')));
+    bytes[bytes.length - 1] ^= 1;
+    const fetchImpl = vi.fn(async () => new Response(bytes)) as unknown as typeof fetch;
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    vi.stubGlobal('document', { fonts: { add: vi.fn() } });
+
+    await expect(ensureBundledFontFaceReferencesRegistered([reference], { catalog, fetchImpl })).rejects.toThrow(/integrity verification/i);
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps v1 references unverified until catalog and full bytes promote them to v2', async () => {
+    const catalog = parseBundledFontInventory(sampleInventory());
+    const family = catalog.families[0];
+    const face = family.faces.find((candidate) => candidate.weight === 400)!;
+    const legacy = {
+      kind: 'bundled', faceId: face.id, family: family.family, weight: face.weight,
+      style: face.style, stretchPercent: face.stretchPercent,
+    };
+    const state = normalizeBundledFontFaceState(legacy);
+    expect(state).toMatchObject({ managedFaceIssue: { reason: 'legacy-reference', original: legacy } });
+    const bytes = readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf'));
+    const fetchImpl = vi.fn(async () => new Response(bytes)) as unknown as typeof fetch;
+    vi.stubGlobal('FontFace', class { async load() { return this; } });
+    vi.stubGlobal('document', { fonts: { add: vi.fn() } });
+
+    const upgraded = await upgradeLegacyBundledFontFaceIssue(state.managedFaceIssue!, { catalog, fetchImpl });
+    expect(upgraded).toEqual(createBundledFontFaceReference(family, face));
+    expect(upgraded?.sha256).toHaveLength(64);
+    vi.unstubAllGlobals();
   });
 
   it('pins exact bundled bytes and license evidence into a Paper document repository', async () => {

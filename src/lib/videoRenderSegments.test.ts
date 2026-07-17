@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ManagedBundledFontFaceReference } from '../types/managedFont';
 import {
   buildVideoRenderClipSignature,
   buildVideoRenderDirtyPlan,
@@ -61,8 +62,9 @@ describe('buildVideoRenderClipSignature', () => {
         fontWeight: 400,
         fontStyle: 'normal',
         managedFace: {
-          kind: 'bundled', faceId: 'liberation:regular', family: 'Liberation Sans',
-          weight: 400, style: 'normal', stretchPercent: 100,
+          kind: 'bundled', schemaVersion: 2, faceId: 'liberation:regular', family: 'Liberation Sans',
+          weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0,
+          sha256: 'a'.repeat(64), byteLength: 123,
         },
       },
     });
@@ -70,6 +72,24 @@ describe('buildVideoRenderClipSignature', () => {
     expect(changedText).not.toBe(base);
     expect(changedStyle).not.toBe(base);
     expect(changedManagedFace).not.toBe(base);
+  });
+
+  it('varies the clip cache signature for every canonical managed-face identity field', () => {
+    const managedFace = {
+      kind: 'bundled' as const, schemaVersion: 2 as const, faceId: 'face-a', family: 'Duplicate Family',
+      weight: 400, style: 'normal' as const, stretchPercent: 100, collectionIndex: 0,
+      sha256: 'a'.repeat(64), byteLength: 100,
+    };
+    const signatureFor = (reference: ManagedBundledFontFaceReference) => buildVideoRenderClipSignature({
+      sourceNodeId: 'title', sourceKind: 'text', textTypography: { managedFace: reference },
+    });
+    const base = signatureFor(managedFace);
+    for (const changed of [
+      { ...managedFace, faceId: 'face-b' }, { ...managedFace, family: 'Other Family' },
+      { ...managedFace, weight: 500 }, { ...managedFace, style: 'italic' as const },
+      { ...managedFace, stretchPercent: 87.5 }, { ...managedFace, collectionIndex: 1 },
+      { ...managedFace, sha256: 'b'.repeat(64) }, { ...managedFace, byteLength: 101 },
+    ]) expect(signatureFor(changed)).not.toBe(base);
   });
 });
 

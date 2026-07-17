@@ -12,9 +12,10 @@ import { createBitmap } from './LayerBitmap';
 import { getVectorPathDocumentPoints } from './ImageVectorShape';
 import { formatFontFamily } from '../../lib/formatFontFamily';
 import {
+  bundledFontFaceIdentitySignature,
   bundledFontFaceRuntimeFamilyName,
-  bundledFontFaceReferenceMatchesTypography,
-  normalizeBundledFontFaceReference,
+  normalizeBundledFontFaceState,
+  normalizeBundledFontFaceStateForTypography,
 } from '../../lib/bundledFontLibrary';
 
 export type ImageTextAlign = 'left' | 'center' | 'right' | 'justify';
@@ -448,6 +449,7 @@ export interface ImageTextSpellcheckReadabilityPlan extends Omit<ImageTextWorkfl
 export type ImageTextTypographyReadinessStatus = 'ready' | 'limited' | 'blocked';
 
 export type ImageTextTypographyReadinessBlockerCode =
+  | 'unresolved-managed-font'
   | 'missing-retained-text'
   | 'non-editable-text-metadata'
   | 'locked-layer'
@@ -672,7 +674,7 @@ export const DEFAULT_IMAGE_TEXT_STYLE: ImageTextLayerStyle = {
 export function normalizeImageTextStyle(
   patch: Partial<ImageTextLayerStyle> = {},
 ): ImageTextLayerStyle {
-  const managedFace = normalizeBundledFontFaceReference(patch.managedFace);
+  const initialManagedFaceState = normalizeBundledFontFaceState(patch.managedFace, patch.managedFaceIssue);
   const fontSize = clampNumber(patch.fontSize, 4, 512, DEFAULT_IMAGE_TEXT_STYLE.fontSize);
   const lineHeight = clampNumber(patch.lineHeight, 0.75, 3, DEFAULT_IMAGE_TEXT_STYLE.lineHeight);
   const letterSpacing = clampNumber(patch.letterSpacing, -20, 100, DEFAULT_IMAGE_TEXT_STYLE.letterSpacing);
@@ -689,7 +691,7 @@ export function normalizeImageTextStyle(
     fontFamily: patch.fontFamily?.trim() || DEFAULT_IMAGE_TEXT_STYLE.fontFamily,
     fontSize,
     fontWeight: patch.fontWeight?.trim() || DEFAULT_IMAGE_TEXT_STYLE.fontWeight,
-    fontStyle: patch.fontStyle === 'italic' || (patch.fontStyle === 'oblique' && managedFace?.style === 'oblique')
+    fontStyle: patch.fontStyle === 'italic' || (patch.fontStyle === 'oblique' && initialManagedFaceState.managedFace?.style === 'oblique')
       ? patch.fontStyle
       : 'normal',
     fontKerning: normalizeFontKerning(patch.fontKerning),
@@ -711,13 +713,12 @@ export function normalizeImageTextStyle(
   if (openTypeFeatures) {
     style.openTypeFeatures = openTypeFeatures;
   }
-  if (managedFace && bundledFontFaceReferenceMatchesTypography(managedFace, {
+  const managedFaceState = normalizeBundledFontFaceStateForTypography(patch.managedFace, patch.managedFaceIssue, {
     family: style.fontFamily,
     weight: style.fontWeight,
     style: style.fontStyle,
-  })) {
-    style.managedFace = managedFace;
-  }
+  });
+  Object.assign(style, managedFaceState);
   if (Object.prototype.hasOwnProperty.call(patch, 'pathReference')) {
     style.pathReference = patch.pathReference ?? null;
   }
@@ -727,13 +728,17 @@ export function normalizeImageTextStyle(
   return style;
 }
 
-export function imageTextCanvasFont(style: Pick<ImageTextLayerStyle, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontVariantCaps' | 'managedFace'>): string {
+export function imageTextCanvasFont(style: Pick<ImageTextLayerStyle, 'fontFamily' | 'fontSize' | 'fontWeight' | 'fontStyle' | 'fontVariantCaps' | 'managedFace' | 'managedFaceIssue'>): string {
   // Canvas font shorthand accepts `small-caps` but not `all-small-caps`. The latter is applied
   // through the CanvasRenderingContext2D `fontVariantCaps` property after the font shorthand is set
   // so the retained text content stays unchanged.
   const shorthandVariant = style.fontVariantCaps === 'small-caps' ? 'small-caps' : undefined;
   const caps = shorthandVariant ? `${shorthandVariant} ` : '';
-  const family = style.managedFace ? bundledFontFaceRuntimeFamilyName(style.managedFace) : style.fontFamily;
+  const family = style.managedFace
+    ? bundledFontFaceRuntimeFamilyName(style.managedFace)
+    : style.managedFaceIssue
+      ? 'Sloom Managed Face Blocked'
+      : style.fontFamily;
   return `${style.fontStyle} ${caps}${style.fontWeight} ${style.fontSize}px ${formatFontFamily(family)}`;
 }
 
@@ -2938,6 +2943,14 @@ function buildImageTextTypographyLayerBlockers(
   editable: boolean,
 ): ImageTextTypographyReadinessIssue[] {
   const blockers: ImageTextTypographyReadinessIssue[] = [];
+  if (layer.text?.managedFaceIssue) {
+    blockers.push({
+      code: 'unresolved-managed-font',
+      scope: 'layer',
+      layerId: layer.id,
+      message: layer.text.managedFaceIssue.message,
+    });
+  }
   if (!retainedText) {
     blockers.push({
       code: 'missing-retained-text',
@@ -3130,6 +3143,8 @@ function buildImageTextStylePreview(
     style.fontKerning,
     style.warp,
   ];
+  if (style.managedFace) signatureParts.push(bundledFontFaceIdentitySignature(style.managedFace));
+  if (style.managedFaceIssue) signatureParts.push(JSON.stringify(style.managedFaceIssue));
   if (isVerticalImageTextStyle(style)) {
     signatureParts.push(style.orientation!);
   }

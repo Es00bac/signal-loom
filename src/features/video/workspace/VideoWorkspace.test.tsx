@@ -11,6 +11,7 @@ import type { VideoRenderBackendSummary } from '../../../lib/videoRenderBackendS
 import type { AspectRatio, VideoResolution } from '../../../types/flow';
 import { ProgramMonitorPanel, SourceItemCard, TrackAddControl, buildTrackMenuOptions, resolveClipFitState } from './VideoWorkspace';
 import type { SourceBinItem } from '../../../lib/sourceBin';
+import type { ManagedFontRegistrationGateState } from './useManagedFontRegistrationGate';
 
 function renderProgramMonitor({
   aspectRatio = '16:9',
@@ -41,6 +42,7 @@ function renderProgramMonitor({
   onCreateStarterSequence,
   onRevealSourceBin,
   initialSidebarTab,
+  managedFontGate,
 }: {
   aspectRatio?: AspectRatio;
   videoResolution?: VideoResolution;
@@ -61,6 +63,7 @@ function renderProgramMonitor({
   onCreateStarterSequence?: () => void;
   onRevealSourceBin?: () => void;
   initialSidebarTab?: 'tools' | 'info' | 'output';
+  managedFontGate?: ManagedFontRegistrationGateState;
 } = {}): string {
   const visualClips = stageClips.map((stageClip) => stageClip.clip);
   const durationSeconds = Math.max(0, ...stageClips.map((stageClip) => stageClip.durationSeconds));
@@ -82,6 +85,7 @@ function renderProgramMonitor({
       onRevealSourceBin={onRevealSourceBin}
       incrementalRenderSummary={incrementalRenderSummary}
       isRunning={isRunning}
+      managedFontGate={managedFontGate}
       monitorParityNotices={[]}
       onAddEditorAsset={vi.fn()}
       onAspectRatioChange={vi.fn()}
@@ -572,6 +576,37 @@ describe('ProgramMonitorPanel text preview', () => {
     expect(html).toContain('font-family:&quot;M PLUS 1&quot;, sans-serif');
     expect(html).toContain('font-weight:700');
     expect(html).toContain('font-style:italic');
+  });
+
+  it('does not paint managed text or a stale rendered preview while registration is loading or failed', () => {
+    const clip = createEditorVisualClip('asset-managed', 'text', {
+      textContent: 'Must stay gated',
+      textFontFamily: 'Duplicate Family',
+      textTypography: {
+        managedFace: {
+          kind: 'bundled', schemaVersion: 2, faceId: 'face-a', family: 'Duplicate Family',
+          weight: 400, style: 'normal', stretchPercent: 100, collectionIndex: 0,
+          sha256: 'a'.repeat(64), byteLength: 100,
+        },
+      },
+    });
+    const loading = renderProgramMonitor({
+      managedFontGate: { status: 'loading', retry: vi.fn() },
+      previewUrl: 'blob:stale-preview',
+      stageClips: [makeTextStageClip(clip)],
+    });
+    expect(loading).toContain('data-video-managed-font-gate="loading"');
+    expect(loading).not.toContain('Must stay gated');
+    expect(loading).not.toContain('blob:stale-preview');
+
+    const failed = renderProgramMonitor({
+      managedFontGate: { status: 'error', error: 'Full hash mismatch', retry: vi.fn() },
+      stageClips: [makeTextStageClip(clip)],
+    });
+    expect(failed).toContain('data-video-managed-font-gate="error"');
+    expect(failed).toContain('Full hash mismatch');
+    expect(failed).toContain('Retry managed font registration');
+    expect(failed).not.toContain('Must stay gated');
   });
 });
 

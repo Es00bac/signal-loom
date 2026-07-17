@@ -148,11 +148,15 @@ describe('editor history', () => {
   it('preserves an exact bundled face through Video history copies', () => {
     const managedFace = {
       kind: 'bundled' as const,
+      schemaVersion: 2 as const,
       faceId: 'liberationsans:LiberationSans-Regular:baccc64becc3',
       family: 'Liberation Sans',
       weight: 400,
       style: 'normal' as const,
       stretchPercent: 100,
+      collectionIndex: 0,
+      sha256: 'baccc64becc3eb7d104b7c84d99f5314a0a1f896e2b3ea6c2f22fc08d2003bee',
+      byteLength: 410820,
     };
     const source = createVisualClip({
       id: 'managed-title',

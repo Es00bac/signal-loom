@@ -28,6 +28,7 @@ export function analyzeVideoExportReadiness({
   dirtySpanSummary,
   hasComposition,
   managedFontError,
+  managedFontState,
   stageObjectCount,
   visualClips,
 }: {
@@ -36,17 +37,29 @@ export function analyzeVideoExportReadiness({
   dirtySpanSummary?: string;
   hasComposition: boolean;
   managedFontError?: string;
+  managedFontState?: { status: 'ready' | 'loading' | 'error'; error?: string };
   stageObjectCount: number;
   visualClips: EditorVisualClip[];
 }): VideoExportReadinessReport {
   const availableSources = new Set(availableSourceIds);
   const issues: VideoExportReadinessIssue[] = [];
 
-  if (managedFontError) {
+  if (managedFontState?.status === 'loading') {
+    issues.push({
+      severity: 'error',
+      title: 'Registering bundled font faces',
+      detail: 'Referenced managed font faces are still being verified. Preview and export stay blocked until registration succeeds.',
+    });
+  }
+
+  const resolvedManagedFontError = managedFontState?.status === 'error'
+    ? managedFontState.error ?? 'A bundled font face is unavailable.'
+    : managedFontError;
+  if (resolvedManagedFontError) {
     issues.push({
       severity: 'error',
       title: 'Missing bundled font face',
-      detail: `${managedFontError} Exact Video typography cannot be previewed or exported until this face is restored.`,
+      detail: `${resolvedManagedFontError} Exact Video typography cannot be previewed or exported until this face is restored.`,
     });
   }
 
@@ -117,11 +130,14 @@ function summarizeVideoExportReadiness(issues: VideoExportReadinessIssue[]): Vid
   const errorCount = issues.filter((issue) => issue.severity === 'error').length;
   if (errorCount > 0) {
     const fontError = issues.find((issue) => issue.severity === 'error' && issue.title === 'Missing bundled font face');
+    const fontLoading = issues.find((issue) => issue.severity === 'error' && issue.title === 'Registering bundled font faces');
     return {
       tone: 'error',
-      label: fontError ? 'Missing font' : 'Missing media',
+      label: fontError ? 'Missing font' : fontLoading ? 'Loading fonts' : 'Missing media',
       detail: fontError
         ? fontError.detail
+        : fontLoading
+          ? fontLoading.detail
         : `${errorCount} missing timeline source${errorCount === 1 ? '' : 's'} must be restored before export is reliable.`,
       issueCount: errorCount,
     };

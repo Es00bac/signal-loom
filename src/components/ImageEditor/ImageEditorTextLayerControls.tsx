@@ -23,7 +23,7 @@ import {
   type ImageTextPresetId,
 } from './ImageTextPresets';
 
-type TextFontStackPatch = Partial<Pick<TextLayerStyle, 'fontFamily' | 'fontWeight' | 'fontStyle' | 'managedFace'>>;
+type TextFontStackPatch = Partial<Pick<TextLayerStyle, 'fontFamily' | 'fontWeight' | 'fontStyle' | 'managedFace' | 'managedFaceIssue'>>;
 
 export function TextFontStackControls({
   customAriaLabel,
@@ -55,6 +55,7 @@ export function TextFontStackControls({
           fontWeight: String(face.weight),
           fontStyle: face.style,
           managedFace: createBundledFontFaceReference(family, face),
+          managedFaceIssue: undefined,
         })}
         style={style}
         value={value}
@@ -68,7 +69,7 @@ export function TextFontStackControls({
           disabled={disabled}
           onChange={(event) => {
             if (event.target.value !== '__custom__') {
-              onChange({ fontFamily: event.target.value, managedFace: undefined });
+              onChange({ fontFamily: event.target.value, managedFace: undefined, managedFaceIssue: undefined });
             }
           }}
           value={selectedValue}
@@ -87,7 +88,7 @@ export function TextFontStackControls({
           aria-label={customAriaLabel}
           className="w-full rounded border border-cyan-300/10 bg-[#252630] px-2 py-1.5 text-xs text-cyan-100/85 outline-none focus:border-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled}
-          onChange={(event) => onChange({ fontFamily: event.target.value, managedFace: undefined })}
+          onChange={(event) => onChange({ fontFamily: event.target.value, managedFace: undefined, managedFaceIssue: undefined })}
           value={value}
         />
       </label>
@@ -334,6 +335,11 @@ export function EditableTextLayerControls({
         value={text.fontFamily}
         weight={text.fontWeight}
       />
+      {text.managedFaceIssue ? (
+        <div className="mt-2 rounded border border-red-300/25 bg-red-500/10 px-2 py-1.5 text-[11px] leading-4 text-red-100">
+          {text.managedFaceIssue.message}
+        </div>
+      ) : null}
       <div className="mt-2 grid grid-cols-2 gap-2">
         <label className="block">
           <span className="mb-1 block text-cyan-100/40">Kerning</span>

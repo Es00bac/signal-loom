@@ -1,7 +1,12 @@
 import type { PaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
 import { createBinaryAssetRecord } from '../shared/assets/contentAddressedAsset';
 import type { PaperManagedFontFace, PaperManagedFontStyle } from '../types/paper';
-import type { ManagedBundledFontFaceReference } from '../types/managedFont';
+import type {
+  ManagedBundledFontFaceIssue,
+  ManagedBundledFontFaceReference,
+  ManagedBundledFontFaceState,
+  ManagedBundledFontSerializableValue,
+} from '../types/managedFont';
 import { buildImportedFont } from './paperFontLibrary';
 import { normalizePaperFontFamilyId } from './paperManagedFonts';
 import { vetFontBytes } from './paperFontVetting';
@@ -163,7 +168,7 @@ export function parseBundledFontInventory(input: unknown): BundledFontCatalog {
       return {
         id: `${slug}:${postscriptName}:${sha256.slice(0, 12)}`,
         file,
-        collectionIndex: Math.max(0, Math.round(number(face.collectionIndex, `${postscriptName} collection index`))),
+        collectionIndex: nonNegativeInteger(face.collectionIndex, `${postscriptName} collection index`),
         sha256,
         byteLength: Math.max(1, Math.round(number(face.byteLength, `${postscriptName} byte length`))),
         family: text(face.family, `${postscriptName} family`),
@@ -237,17 +242,73 @@ const browserFontPromises = new Map<string, Promise<FontFace>>();
 const browserFontErrors = new Map<string, string>();
 const registeredFaceStretch = new Map<string, number>();
 
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+function nonNegativeInteger(value: unknown, label: string): number {
+  const parsed = number(value, label);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative integer.`);
+  return parsed;
+}
+
+function serializableValue(value: unknown, depth = 0): ManagedBundledFontSerializableValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
+  if (depth >= 12) return '[maximum depth exceeded]';
+  if (Array.isArray(value)) return value.slice(0, 200).map((entry) => serializableValue(entry, depth + 1));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .slice(0, 200)
+      .map(([key, entry]) => [key, serializableValue(entry, depth + 1)]));
+  }
+  return String(value);
+}
+
+function issue(
+  reason: ManagedBundledFontFaceIssue['reason'],
+  message: string,
+  original: unknown,
+): ManagedBundledFontFaceIssue {
+  return { kind: 'bundled-font-issue', reason, message, original: serializableValue(original) };
+}
+
+export function bundledFontFaceIdentitySignature(reference: ManagedBundledFontFaceReference): string {
+  return JSON.stringify([
+    reference.schemaVersion,
+    reference.faceId,
+    reference.family,
+    reference.weight,
+    reference.style,
+    reference.stretchPercent,
+    reference.collectionIndex,
+    reference.sha256,
+    reference.byteLength,
+  ]);
+}
+
 export function bundledFontFaceRuntimeFamilyName(
-  reference: Pick<ManagedBundledFontFaceReference, 'faceId'>,
+  reference: ManagedBundledFontFaceReference,
 ): string {
-  return `Sloom Managed Face ${reference.faceId}`;
+  return `Sloom Managed Face ${encodeURIComponent(bundledFontFaceIdentitySignature(reference))}`;
+}
+
+function bundledFaceBelongsToFamily(family: BundledFontFamily, face: BundledFontFace): boolean {
+  return family.faces.some((candidate) => (
+    candidate.id === face.id
+    && candidate.collectionIndex === face.collectionIndex
+    && candidate.sha256 === face.sha256
+    && candidate.byteLength === face.byteLength
+    && candidate.family === face.family
+    && candidate.weight === face.weight
+    && candidate.style === face.style
+    && candidate.stretchPercent === face.stretchPercent
+  ));
 }
 
 export function createBundledFontFaceReference(
   family: BundledFontFamily,
   face: BundledFontFace,
 ): ManagedBundledFontFaceReference {
-  if (!family.faces.some((candidate) => candidate.id === face.id)) {
+  if (!bundledFaceBelongsToFamily(family, face)) {
     throw new Error('The selected face does not belong to the bundled family.');
   }
   if (face.stretchVerified !== true) {
@@ -255,11 +316,15 @@ export function createBundledFontFaceReference(
   }
   return {
     kind: 'bundled',
+    schemaVersion: 2,
     faceId: face.id,
     family: family.family,
     weight: face.weight,
     style: face.style,
     stretchPercent: face.stretchPercent,
+    collectionIndex: face.collectionIndex,
+    sha256: face.sha256,
+    byteLength: face.byteLength,
   };
 }
 
@@ -268,24 +333,117 @@ export function normalizeBundledFontFaceReference(value: unknown): ManagedBundle
   const candidate = value as Record<string, unknown>;
   if (
     candidate.kind !== 'bundled'
+    || candidate.schemaVersion !== 2
     || typeof candidate.faceId !== 'string'
     || !candidate.faceId.trim()
     || typeof candidate.family !== 'string'
     || !candidate.family.trim()
     || typeof candidate.weight !== 'number'
     || !Number.isFinite(candidate.weight)
+    || !Number.isInteger(candidate.weight)
+    || candidate.weight < 1
+    || candidate.weight > 1000
     || (candidate.style !== 'normal' && candidate.style !== 'italic' && candidate.style !== 'oblique')
     || typeof candidate.stretchPercent !== 'number'
     || !Number.isFinite(candidate.stretchPercent)
+    || candidate.stretchPercent < 50
+    || candidate.stretchPercent > 200
+    || typeof candidate.collectionIndex !== 'number'
+    || !Number.isInteger(candidate.collectionIndex)
+    || candidate.collectionIndex < 0
+    || typeof candidate.sha256 !== 'string'
+    || !SHA256_PATTERN.test(candidate.sha256)
+    || typeof candidate.byteLength !== 'number'
+    || !Number.isInteger(candidate.byteLength)
+    || candidate.byteLength < 1
   ) return undefined;
   return {
     kind: 'bundled',
+    schemaVersion: 2,
     faceId: candidate.faceId.trim(),
     family: candidate.family.trim(),
-    weight: Math.max(1, Math.min(1000, Math.round(candidate.weight))),
+    weight: candidate.weight,
     style: candidate.style,
-    stretchPercent: Math.max(50, Math.min(200, candidate.stretchPercent)),
+    stretchPercent: candidate.stretchPercent,
+    collectionIndex: candidate.collectionIndex,
+    sha256: candidate.sha256,
+    byteLength: candidate.byteLength,
   };
+}
+
+function isLegacyBundledFontFaceReference(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.kind === 'bundled'
+    && candidate.schemaVersion === undefined
+    && typeof candidate.faceId === 'string'
+    && typeof candidate.family === 'string'
+    && typeof candidate.weight === 'number'
+    && (candidate.style === 'normal' || candidate.style === 'italic' || candidate.style === 'oblique')
+    && typeof candidate.stretchPercent === 'number';
+}
+
+export function normalizeBundledFontFaceIssue(value: unknown): ManagedBundledFontFaceIssue | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.kind !== 'bundled-font-issue'
+    || (candidate.reason !== 'invalid-reference'
+      && candidate.reason !== 'legacy-reference'
+      && candidate.reason !== 'typography-mismatch')
+    || typeof candidate.message !== 'string'
+    || !candidate.message.trim()
+  ) return undefined;
+  return issue(candidate.reason, candidate.message.trim(), candidate.original);
+}
+
+export function normalizeBundledFontFaceState(
+  managedFace: unknown,
+  managedFaceIssue?: unknown,
+): ManagedBundledFontFaceState {
+  const reference = normalizeBundledFontFaceReference(managedFace);
+  if (reference) return { managedFace: reference };
+  const preservedIssue = normalizeBundledFontFaceIssue(managedFaceIssue);
+  if (preservedIssue) return { managedFaceIssue: preservedIssue };
+  if (managedFace === undefined || managedFace === null) return {};
+  if (isLegacyBundledFontFaceReference(managedFace)) {
+    return {
+      managedFaceIssue: issue(
+        'legacy-reference',
+        'This project contains a legacy managed-font reference without a full content hash or collection identity. Sloom Studio must verify and upgrade it before exact rendering.',
+        managedFace,
+      ),
+    };
+  }
+  return {
+    managedFaceIssue: issue(
+      'invalid-reference',
+      'This text item contains a malformed managed-font reference. Reselect an audited bundled face before preview or export.',
+      managedFace,
+    ),
+  };
+}
+
+export function managedBundledFontFaceIssueForTypographyMismatch(
+  reference: ManagedBundledFontFaceReference,
+): ManagedBundledFontFaceIssue {
+  return issue(
+    'typography-mismatch',
+    'The saved managed-font identity no longer matches this text item\'s family, weight, or style. Reselect the audited face before preview or export.',
+    reference,
+  );
+}
+
+export function normalizeBundledFontFaceStateForTypography(
+  managedFace: unknown,
+  managedFaceIssue: unknown,
+  typography: { family: string; weight: number | string | undefined; style: string | undefined },
+): ManagedBundledFontFaceState {
+  const state = normalizeBundledFontFaceState(managedFace, managedFaceIssue);
+  if (!state.managedFace) return state;
+  return bundledFontFaceReferenceMatchesTypography(state.managedFace, typography)
+    ? state
+    : { managedFaceIssue: managedBundledFontFaceIssueForTypographyMismatch(state.managedFace) };
 }
 
 export function bundledFontFaceReferenceMatchesTypography(
@@ -305,19 +463,28 @@ export function resolveBundledFontFaceReference(
   reference: ManagedBundledFontFaceReference,
   catalog: BundledFontCatalog,
 ): { family: BundledFontFamily; face: BundledFontFace } {
-  const family = catalog.families.find((candidate) => candidate.faces.some((face) => face.id === reference.faceId));
-  const face = family?.faces.find((candidate) => candidate.id === reference.faceId);
-  if (!family || !face) {
+  const faceIdCandidates = catalog.families.flatMap((family) => family.faces
+    .filter((face) => face.id === reference.faceId)
+    .map((face) => ({ family, face })));
+  const exactCandidates = faceIdCandidates.filter(({ family, face }) => (
+    family.family === reference.family
+    && face.weight === reference.weight
+    && face.style === reference.style
+    && face.stretchPercent === reference.stretchPercent
+    && face.collectionIndex === reference.collectionIndex
+    && face.sha256 === reference.sha256
+    && face.byteLength === reference.byteLength
+  ));
+  if (exactCandidates.length === 0) {
+    if (faceIdCandidates.length > 0) {
+      throw new Error(`${reference.family} face ${reference.faceId} no longer matches its saved family/weight/style/stretch/collection/content identity. Reinstall the matching bundled font library before rendering.`);
+    }
     throw new Error(`${reference.family} face ${reference.faceId} is unavailable or unauthorized. Reinstall or enable the audited bundled font library, then reopen the project.`);
   }
-  if (
-    family.family !== reference.family
-    || face.weight !== reference.weight
-    || face.style !== reference.style
-  ) {
-    throw new Error(`${reference.family} face ${reference.faceId} no longer matches its saved family/weight/style/stretch identity. Reinstall the matching bundled font library before rendering.`);
+  if (exactCandidates.length !== 1) {
+    throw new Error(`${reference.family} face ${reference.faceId} has a duplicate complete identity in the bundled catalog. Exact rendering is blocked until the catalog collision is repaired.`);
   }
-  return { family, face };
+  return exactCandidates[0];
 }
 
 export interface EnsureBundledFontFacesOptions {
@@ -325,9 +492,14 @@ export interface EnsureBundledFontFacesOptions {
   fetchImpl?: typeof fetch;
 }
 
+export type ManagedBundledFontDependency =
+  | { reference: ManagedBundledFontFaceReference; issue?: never }
+  | { reference?: never; issue: ManagedBundledFontFaceIssue };
+
 export interface BundledFontRegistrationReport {
   ready: true;
   registeredFaceIds: string[];
+  registeredIdentities: string[];
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -361,10 +533,13 @@ async function registerResolvedBundledFontFace(
   if (typeof FontFace === 'undefined' || typeof document === 'undefined') {
     throw new Error('Live bundled-font registration is unavailable in this renderer.');
   }
-  const existing = browserFontPromises.get(face.id);
+  const identity = reference
+    ? bundledFontFaceIdentitySignature(reference)
+    : `catalog:${face.id}:${family.family}:${face.collectionIndex}:${face.sha256}:${face.byteLength}`;
+  const existing = browserFontPromises.get(identity);
   if (existing) {
     return existing.then((loaded) => {
-      const exactStretch = registeredFaceStretch.get(face.id);
+      const exactStretch = registeredFaceStretch.get(identity);
       if (exactStretch !== undefined) {
         face.stretchPercent = exactStretch;
         face.stretchVerified = true;
@@ -377,6 +552,7 @@ async function registerResolvedBundledFontFace(
   }
   const catalogStretchPercent = face.stretchPercent;
   const catalogStretchVerified = face.stretchVerified === true;
+  let resolvedIdentity: string | undefined;
   const pending = loadVerifiedBundledFontBytes(face, fetchImpl).then(async (bytes) => {
     const vet = vetFontBytes(bytes);
     const vettedFace = vet.faces.find((candidate) => candidate.collectionIndex === face.collectionIndex);
@@ -385,29 +561,50 @@ async function registerResolvedBundledFontFace(
     }
     face.stretchPercent = vettedFace.stretchPercent;
     face.stretchVerified = true;
-    registeredFaceStretch.set(face.id, vettedFace.stretchPercent);
-    if (reference && vettedFace.stretchPercent !== reference.stretchPercent) {
-      throw new Error(`${reference.family} face ${reference.faceId} no longer matches its saved stretch identity (${reference.stretchPercent}%). Reinstall the matching bundled font library before rendering.`);
+    if (
+      vettedFace.familyName !== face.family
+      || vettedFace.familyName !== family.family
+      || vettedFace.weight !== face.weight
+      || vettedFace.style !== face.style
+      || (reference && vettedFace.stretchPercent !== reference.stretchPercent)
+    ) {
+      throw new Error(`${face.fullName} no longer matches its saved family/weight/style/stretch face metadata. Reinstall the matching bundled font library before rendering.`);
     }
+    if (vet.format === 'collection' && face.collectionIndex !== 0) {
+      throw new Error(`${face.fullName} is collection face ${face.collectionIndex}; this renderer cannot select a nonzero TTC/OTC face from ArrayBuffer bytes safely. Exact rendering is blocked.`);
+    }
+    registeredFaceStretch.set(identity, vettedFace.stretchPercent);
+    const runtimeReference = reference ?? createBundledFontFaceReference(family, face);
+    resolvedIdentity = bundledFontFaceIdentitySignature(runtimeReference);
+    registeredFaceStretch.set(resolvedIdentity, vettedFace.stretchPercent);
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     const descriptor = bundledFontFaceCssDescriptor(face);
     const [managed, familyPreview] = await Promise.all([
-      new FontFace(bundledFontFaceRuntimeFamilyName({ faceId: face.id }), buffer, descriptor).load(),
+      new FontFace(bundledFontFaceRuntimeFamilyName(runtimeReference), buffer, descriptor).load(),
       new FontFace(family.family, buffer, descriptor).load(),
     ]);
     document.fonts.add(managed);
     document.fonts.add(familyPreview);
-    browserFontErrors.delete(face.id);
+    browserFontErrors.delete(identity);
+    if (resolvedIdentity) {
+      browserFontErrors.delete(resolvedIdentity);
+      browserFontPromises.set(resolvedIdentity, pending);
+    }
     return managed;
   }).catch((error) => {
-    browserFontPromises.delete(face.id);
-    registeredFaceStretch.delete(face.id);
+    browserFontPromises.delete(identity);
+    registeredFaceStretch.delete(identity);
+    if (resolvedIdentity) {
+      browserFontPromises.delete(resolvedIdentity);
+      registeredFaceStretch.delete(resolvedIdentity);
+    }
     face.stretchPercent = catalogStretchPercent;
     face.stretchVerified = catalogStretchVerified;
-    browserFontErrors.set(face.id, error instanceof Error ? error.message : 'Bundled face registration failed.');
+    browserFontErrors.set(identity, error instanceof Error ? error.message : 'Bundled face registration failed.');
+    if (resolvedIdentity) browserFontErrors.set(resolvedIdentity, error instanceof Error ? error.message : 'Bundled face registration failed.');
     throw error;
   });
-  browserFontPromises.set(face.id, pending);
+  browserFontPromises.set(identity, pending);
   return pending;
 }
 
@@ -415,9 +612,13 @@ export async function ensureBundledFontFaceReferencesRegistered(
   references: readonly ManagedBundledFontFaceReference[],
   options: EnsureBundledFontFacesOptions = {},
 ): Promise<BundledFontRegistrationReport> {
-  const normalized = references.flatMap((reference) => normalizeBundledFontFaceReference(reference) ?? []);
-  const unique = [...new Map(normalized.map((reference) => [reference.faceId, reference])).values()];
-  if (unique.length === 0) return { ready: true, registeredFaceIds: [] };
+  const normalized = references.map((reference) => normalizeBundledFontFaceReference(reference));
+  if (normalized.some((reference) => !reference)) {
+    throw new Error('A managed bundled-font reference is malformed or uses a truncated content identity. Reselect the audited face before rendering.');
+  }
+  const exactReferences = normalized as ManagedBundledFontFaceReference[];
+  const unique = [...new Map(exactReferences.map((reference) => [bundledFontFaceIdentitySignature(reference), reference])).values()];
+  if (unique.length === 0) return { ready: true, registeredFaceIds: [], registeredIdentities: [] };
   const fetchImpl = options.fetchImpl ?? fetch;
   let catalog: BundledFontCatalog;
   try {
@@ -428,11 +629,74 @@ export async function ensureBundledFontFaceReferencesRegistered(
   }
   const resolved = unique.map((reference) => ({ reference, ...resolveBundledFontFaceReference(reference, catalog) }));
   await Promise.all(resolved.map(({ family, face, reference }) => registerResolvedBundledFontFace(family, face, fetchImpl, reference)));
-  return { ready: true, registeredFaceIds: unique.map((reference) => reference.faceId) };
+  return {
+    ready: true,
+    registeredFaceIds: unique.map((reference) => reference.faceId),
+    registeredIdentities: unique.map(bundledFontFaceIdentitySignature),
+  };
+}
+
+export async function ensureBundledFontDependenciesReady(
+  dependencies: readonly ManagedBundledFontDependency[],
+  options: EnsureBundledFontFacesOptions = {},
+): Promise<BundledFontRegistrationReport> {
+  const unresolved = dependencies.find((dependency) => dependency.issue)?.issue;
+  if (unresolved) {
+    throw new Error(`${unresolved.message} Exact managed typography is blocked until the reference is repaired.`);
+  }
+  return ensureBundledFontFaceReferencesRegistered(
+    dependencies.flatMap((dependency) => dependency.reference ?? []),
+    options,
+  );
+}
+
+export async function upgradeLegacyBundledFontFaceIssue(
+  fontIssue: ManagedBundledFontFaceIssue,
+  options: EnsureBundledFontFacesOptions = {},
+): Promise<ManagedBundledFontFaceReference | undefined> {
+  if (fontIssue.reason !== 'legacy-reference' || !fontIssue.original || typeof fontIssue.original !== 'object' || Array.isArray(fontIssue.original)) {
+    return undefined;
+  }
+  const legacy = fontIssue.original as Record<string, ManagedBundledFontSerializableValue>;
+  if (
+    legacy.kind !== 'bundled'
+    || typeof legacy.faceId !== 'string'
+    || typeof legacy.family !== 'string'
+    || typeof legacy.weight !== 'number'
+    || (legacy.style !== 'normal' && legacy.style !== 'italic' && legacy.style !== 'oblique')
+    || typeof legacy.stretchPercent !== 'number'
+  ) return undefined;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const catalog = options.catalog ?? await loadBundledFontCatalog(fetchImpl);
+  const candidates = catalog.families.flatMap((family) => family.faces
+    .filter((face) => (
+      face.id === legacy.faceId
+      && family.family === legacy.family
+      && face.weight === legacy.weight
+      && face.style === legacy.style
+      && face.stretchPercent === legacy.stretchPercent
+    ))
+    .map((face) => ({ family, face })));
+  if (candidates.length !== 1) return undefined;
+  const { family, face } = candidates[0];
+  const reference: ManagedBundledFontFaceReference = {
+    kind: 'bundled',
+    schemaVersion: 2,
+    faceId: face.id,
+    family: family.family,
+    weight: face.weight,
+    style: face.style,
+    stretchPercent: legacy.stretchPercent,
+    collectionIndex: face.collectionIndex,
+    sha256: face.sha256,
+    byteLength: face.byteLength,
+  };
+  await ensureBundledFontFaceReferencesRegistered([reference], { catalog, fetchImpl });
+  return reference;
 }
 
 export function getBundledFontFaceRegistrationError(reference: ManagedBundledFontFaceReference): string | undefined {
-  return browserFontErrors.get(reference.faceId);
+  return browserFontErrors.get(bundledFontFaceIdentitySignature(reference));
 }
 
 /** Registers a bundled face for live Image/Video/Paper preview without copying it into a project. */
@@ -440,7 +704,7 @@ export function ensureBundledFontFaceRegistered(
   family: BundledFontFamily,
   face: BundledFontFace,
 ): Promise<FontFace> {
-  if (!family.faces.some((candidate) => candidate.id === face.id)) {
+  if (!bundledFaceBelongsToFamily(family, face)) {
     return Promise.reject(new Error('The selected face does not belong to the bundled family.'));
   }
   return registerResolvedBundledFontFace(family, face, fetch);
@@ -495,7 +759,7 @@ export interface InstallBundledPaperFontFaceInput {
 }
 
 export async function installBundledPaperFontFace(input: InstallBundledPaperFontFaceInput): Promise<PaperManagedFontFace> {
-  if (!input.family.faces.some((candidate) => candidate.id === input.face.id)) {
+  if (!bundledFaceBelongsToFamily(input.family, input.face)) {
     throw new Error('The selected face does not belong to the bundled family.');
   }
   const fetchImpl = input.fetchImpl ?? fetch;
