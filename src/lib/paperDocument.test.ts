@@ -1007,6 +1007,23 @@ describe('paperDocument', () => {
     expect(html).not.toContain('<span>Plain frame');
   });
 
+  it('preserves a plain-text frame drop cap in print HTML', () => {
+    const doc = createDefaultPaperDocument({ title: 'Plain Drop Cap', preset: 'us-letter' });
+    const { document: withFrame } = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 40,
+      text: 'The opening letter spans three lines.',
+      typography: { dropCapLines: 3 },
+    });
+
+    const html = exportPaperDocumentToPrintHtml(withFrame);
+
+    expect(html).toContain('<div class="paper-dropcap" style="--sl-dropcap-lines: 3">The opening letter spans three lines.</div>');
+  });
+
   it('exports image content inside the same padded frame-content box used by the live canvas', () => {
     const doc = createDefaultPaperDocument({ title: 'Image Frame Export' });
     const pageId = doc.pages[0].id;

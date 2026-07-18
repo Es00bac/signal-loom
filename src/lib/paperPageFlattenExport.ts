@@ -596,12 +596,29 @@ async function verifyFlattenedPaperPageExactManagedFonts(
   if (!exported.svg.includes(css)) {
     throw new Error('Flattened Paper SVG is missing its exact managed-font payload; raster paint is blocked.');
   }
-  for (const face of manifest.faces) {
-    if (!exported.svg.includes(face.familyAlias)) {
-      throw new Error(`Flattened Paper SVG is missing requested managed alias ${face.familyAlias}; raster paint is blocked.`);
+  // The payload is built once for the complete Paper document, so a one-page SVG can legitimately
+  // embed faces that page does not use. @font-face aliases are deliberately hex-escaped in `css`,
+  // which also means a raw `svg.includes(face.familyAlias)` check confuses an unused face with a
+  // missing one. Prove the inverse instead: every managed alias the page body actually requests must
+  // be declared by the embedded manifest. The exact payload containment check above then proves its
+  // rule and bytes travelled into this isolated SVG.
+  const declaredAliases = new Set(manifest.faces.map((face) => face.familyAlias));
+  for (const alias of referencedManagedAliases(exported.svg)) {
+    if (!declaredAliases.has(alias)) {
+      throw new Error(`Flattened Paper SVG requests undeclared managed alias ${alias}; raster paint is blocked.`);
     }
   }
   await verifyExactPaperManagedFontReadiness(browserDocument, css);
+}
+
+function referencedManagedAliases(svg: string): Set<string> {
+  // The embedded @font-face payload hex-escapes aliases, so literal managed aliases occur in the
+  // rendered body's inline font-family declarations. Limit matching to those declarations so user
+  // text that merely mentions an alias-shaped string cannot become an export preflight failure.
+  const aliases = new Set<string>();
+  const pattern = /font-family\s*:\s*(?:(?:&quot;|&#34;|["'])\s*)?(sloom-managed-[A-Za-z0-9_-]+)/g;
+  for (const match of svg.matchAll(pattern)) aliases.add(match[1]);
+  return aliases;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {

@@ -109,6 +109,63 @@ describe('paperPageFlattenExport', () => {
     expect(image).not.toHaveBeenCalled();
   });
 
+  it('allows a page to embed a complete-document font payload containing an unused face', async () => {
+    const regular = exactFace();
+    const italic: PaperManagedFontFace = {
+      ...exactFace(),
+      id: 'source-exact-italic',
+      postscriptName: 'SourceExact-Italic',
+      style: 'italic',
+      fontAsset: {
+        ...exactFace().fontAsset,
+        id: `sha256:${'d'.repeat(64)}` as BinaryAssetId,
+        sha256: 'd'.repeat(64),
+      },
+    };
+    const css = await buildExactPaperManagedFontCss([regular, italic], async () => Uint8Array.from([1, 2, 3]));
+    const manifest = readPaperManagedFontManifest(css)!;
+    const usedAlias = manifest.faces.find((face) => face.style === 'normal')!.familyAlias;
+    const loadedFaces = new Set(manifest.faces.map((face) => ({ family: face.familyAlias, status: 'loaded' })));
+    vi.stubGlobal('Image', class { decoding = ''; src = ''; decode() { return Promise.resolve(); } });
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn(() => ({ drawImage: vi.fn() })),
+      toDataURL: vi.fn(() => 'data:image/png;base64,page'),
+    };
+    const browserDocument = {
+      fonts: { ready: Promise.resolve(), load: async () => loadedFaces, check: () => true },
+      createElement: vi.fn(() => canvas),
+    } as unknown as Document;
+
+    await expect(rasterizeFlattenedPaperPageToPng({
+      pageId: 'page-1', pageNumber: 1, label: 'Exact page', mimeType: 'image/svg+xml',
+      svg: `<svg><style>${css}</style><text style="font-family: &quot;${usedAlias}&quot;">Exact</text></svg>`,
+      dataUrl: 'data:image/svg+xml,exact', exactManagedFontCss: css,
+      widthMm: 10, heightMm: 10, widthPx: 10, heightPx: 10, scale: 1, includeBleed: false,
+    }, browserDocument)).resolves.toEqual(expect.objectContaining({ mimeType: 'image/png' }));
+  });
+
+  it('blocks a page body that requests an alias absent from its embedded manifest', async () => {
+    const css = await buildExactPaperManagedFontCss([exactFace()], async () => Uint8Array.from([1, 2, 3]));
+    const manifest = readPaperManagedFontManifest(css)!;
+    const loadedFaces = new Set(manifest.faces.map((face) => ({ family: face.familyAlias, status: 'loaded' })));
+    const image = vi.fn();
+    vi.stubGlobal('Image', class { decoding = ''; set src(_value: string) { image(); } decode() { return Promise.resolve(); } });
+    const browserDocument = {
+      fonts: { ready: Promise.resolve(), load: async () => loadedFaces, check: () => true },
+      createElement: vi.fn(),
+    } as unknown as Document;
+
+    await expect(rasterizeFlattenedPaperPageToPng({
+      pageId: 'page-1', pageNumber: 1, label: 'Undeclared page', mimeType: 'image/svg+xml',
+      svg: `<svg><style>${css}</style><text style="font-family: &quot;sloom-managed-not-declared-0000000000000000&quot;">Wrong</text></svg>`,
+      dataUrl: 'data:image/svg+xml,undeclared', exactManagedFontCss: css,
+      widthMm: 10, heightMm: 10, widthPx: 10, heightPx: 10, scale: 1, includeBleed: false,
+    }, browserDocument)).rejects.toThrow(/requests undeclared managed alias/i);
+    expect(image).not.toHaveBeenCalled();
+  });
+
   it('keeps Source Library publication side-effect free when exact readiness rejects', async () => {
     const managed = exactFace();
     let sourceDocument = createDefaultPaperDocument({ title: 'Exact Source' });
@@ -651,5 +708,23 @@ describe('paperPageFlattenExport', () => {
 
     expect(exported.svg).toContain('<div class="frame-text-content" style="">Plain frame, no rich runs.</div>');
     expect(exported.svg).not.toContain('class="paper-dropcap"');
+  });
+
+  it('keeps a plain-text frame drop cap in flattened page output', () => {
+    const doc = createDefaultPaperDocument({ title: 'Plain Raster Drop Cap', preset: 'comic-book' });
+    const { document: withFrame } = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'text',
+      xMm: 15,
+      yMm: 15,
+      widthMm: 80,
+      heightMm: 40,
+      text: 'The opening letter spans three lines.',
+      typography: { dropCapLines: 3 },
+    });
+
+    const exported = buildFlattenedPaperPageSvgExport(withFrame, withFrame.pages[0].id);
+
+    expect(exported.svg).toContain('class="paper-dropcap"');
+    expect(exported.svg).toContain('--sl-dropcap-lines: 3');
   });
 });
