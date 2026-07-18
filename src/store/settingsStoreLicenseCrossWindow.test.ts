@@ -83,6 +83,20 @@ function seedPersistedSettings(state: Record<string, unknown>, writeVersion = 0)
   }
 }
 
+function legacyBackupWithLicense(licenseKey: string): string {
+  return JSON.stringify({
+    apiKeys: {},
+    defaultModels: {},
+    providerSettings: {},
+    interfaceThemeId: 'default',
+    keyboardShortcuts: {},
+    gamepadBindings: {},
+    customBrushPresets: [],
+    customCropPresets: [],
+    licenseKey,
+  });
+}
+
 function readPersistedState(): Record<string, unknown> {
   const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
   expect(raw).toBeTruthy();
@@ -252,7 +266,7 @@ describe('license identity cross-window sync (AUD-015)', () => {
 
     await windowA.useSettingsStore
       .getState()
-      .importSettingsBackup(JSON.stringify({ licenseKey: VALID_KEY }), 'passphrase');
+      .importSettingsBackup(legacyBackupWithLicense(VALID_KEY), 'passphrase');
     expect(windowA.useSettingsStore.getState().license.licensed).toBe(true);
 
     await vi.waitFor(() => {

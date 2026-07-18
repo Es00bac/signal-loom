@@ -68,6 +68,30 @@ function legacyBackupData() {
   };
 }
 
+function portableStateSnapshot() {
+  const state = useSettingsStore.getState();
+  return structuredClone({
+    apiKeys: state.apiKeys,
+    defaultModels: state.defaultModels,
+    defaultImageNodeModel: state.defaultImageNodeModel,
+    providerSettings: state.providerSettings,
+    interfaceThemeId: state.interfaceThemeId,
+    appMenuStyle: state.appMenuStyle,
+    interfaceDensity: state.interfaceDensity,
+    locale: state.locale,
+    localeChosen: state.localeChosen,
+    keyboardShortcuts: state.keyboardShortcuts,
+    gamepadBindings: state.gamepadBindings,
+    customBrushPresets: state.customBrushPresets,
+    customCropPresets: state.customCropPresets,
+    openFontLibrary: state.openFontLibrary,
+    licenseKey: state.licenseKey,
+    license: state.license,
+    isSettingsOpen: state.isSettingsOpen,
+    settingsPanel: state.settingsPanel,
+  });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   useSettingsStore.setState({
@@ -289,5 +313,37 @@ describe('portable encrypted settings backup schema (AUD-042)', () => {
       localeChosen: true,
       openFontLibrary: [font],
     });
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a primitive', JSON.stringify('not a settings object')],
+    ['an incomplete current schema', JSON.stringify({ schemaVersion: 1, apiKeys: {} })],
+    ['an unsupported current schema', JSON.stringify({ schemaVersion: 2 })],
+  ])('rejects %s atomically without changing settings or identity', async (_label, plaintext) => {
+    const font = openFontLibraryFace();
+    useSettingsStore.setState({
+      apiKeys: { ...useSettingsStore.getState().apiKeys, openai: 'keep-openai-key' },
+      defaultImageNodeModel: { provider: 'atlas', modelId: 'keep-image-model' },
+      interfaceThemeId: 'high-contrast',
+      appMenuStyle: 'menubar',
+      interfaceDensity: 'comfortable',
+      locale: 'ja',
+      localeChosen: true,
+      keyboardShortcuts: { 'file:new': 'Ctrl+Shift+Alt+N' },
+      openFontLibrary: [font],
+      licenseKey: 'keep-license-identity',
+      license: { licensed: true, email: 'buyer@example.test', edition: 'commercial' },
+      isSettingsOpen: true,
+      settingsPanel: 'fonts',
+    });
+    const before = portableStateSnapshot();
+    const encrypted = await encryptSettingsBackup(plaintext, PASSPHRASE);
+
+    await expect(useSettingsStore.getState().importSettingsBackup(encrypted, PASSPHRASE))
+      .resolves.toMatchObject({ status: 'failed', licensed: false });
+
+    expect(portableStateSnapshot()).toEqual(before);
   });
 });

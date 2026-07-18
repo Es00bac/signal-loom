@@ -187,6 +187,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value) || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function hasOwnField(value: object, field: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, field);
 }
@@ -406,6 +412,50 @@ const PORTABLE_SETTINGS_BACKUP_SCHEMA = {
 export const PORTABLE_SETTINGS_BACKUP_FIELDS = Object.freeze(
   Object.keys(PORTABLE_SETTINGS_BACKUP_SCHEMA) as PortableSettingsBackupField[],
 );
+
+const LEGACY_SETTINGS_BACKUP_FIELDS = Object.freeze([
+  'apiKeys',
+  'defaultModels',
+  'providerSettings',
+  'interfaceThemeId',
+  'keyboardShortcuts',
+  'gamepadBindings',
+  'customBrushPresets',
+  'customCropPresets',
+] as const satisfies readonly PortableSettingsBackupField[]);
+
+type ParsedSettingsBackupData =
+  | { ok: true; data: Partial<SettingsBackupData> }
+  | { ok: false; reason: string };
+
+function parseSettingsBackupData(parsed: unknown): ParsedSettingsBackupData {
+  if (!isPlainRecord(parsed)) {
+    return { ok: false, reason: 'The backup contents must be a settings object.' };
+  }
+
+  if (hasOwnField(parsed, 'schemaVersion')) {
+    if (parsed.schemaVersion !== SETTINGS_BACKUP_DATA_SCHEMA_VERSION) {
+      return {
+        ok: false,
+        reason: 'This backup uses an unsupported portable settings schema. Update Sloom Studio, then import again.',
+      };
+    }
+    const missingField = PORTABLE_SETTINGS_BACKUP_FIELDS.find((field) => !hasOwnField(parsed, field));
+    if (missingField) {
+      return { ok: false, reason: `The settings backup is incomplete (missing ${missingField}).` };
+    }
+  } else {
+    // Version-0 exports predate the portable data-schema marker. They always carried this
+    // complete core; the six preferences added by schema v1 remain absent and therefore keep
+    // their current values during merge.
+    const missingField = LEGACY_SETTINGS_BACKUP_FIELDS.find((field) => !hasOwnField(parsed, field));
+    if (missingField) {
+      return { ok: false, reason: `The legacy settings backup is incomplete (missing ${missingField}).` };
+    }
+  }
+
+  return { ok: true, data: parsed as Partial<SettingsBackupData> };
+}
 
 function createSettingsBackupData(state: SettingsState): SettingsBackupData {
   const fields = Object.fromEntries(
@@ -817,6 +867,28 @@ function localMutationsAfterReadStart(read: HydrationRead | null): Array<keyof S
  */
 let licenseVerificationGeneration = 0;
 
+interface SettingsImportReservation {
+  importGeneration: number;
+  observedLicenseGeneration: number;
+}
+
+// Import ordering is reserved separately from license identity. A file that cannot decrypt or
+// validate may supersede an older import attempt, but it cannot invalidate a pending activation,
+// removal, rehydrate, or verifier. Only a fully validated payload may claim license identity.
+let settingsImportGeneration = 0;
+
+function reserveSettingsImport(): SettingsImportReservation {
+  return {
+    importGeneration: ++settingsImportGeneration,
+    observedLicenseGeneration: licenseVerificationGeneration,
+  };
+}
+
+function canClaimSettingsImport(reservation: SettingsImportReservation): boolean {
+  return reservation.importGeneration === settingsImportGeneration
+    && reservation.observedLicenseGeneration === licenseVerificationGeneration;
+}
+
 /** The one in-flight canonical verification; concurrent triggers coalesce onto it instead of duplicating. */
 let pendingLicenseVerification: { generation: number; key: string; promise: Promise<void> } | null = null;
 
@@ -1089,10 +1161,10 @@ export const useSettingsStore = create<SettingsState>()(
         return encryptSettingsBackup(JSON.stringify(data), passphrase);
       },
       importSettingsBackup: async (envelopeText, passphrase) => {
-        // Import is an identity action even though decrypting its payload is asynchronous. Claim
-        // ownership before the first await so a later removal/import can make this older import
-        // harmless when its decrypt eventually succeeds.
-        const generation = claimLicenseIdentityGeneration();
+        // Reserve import order without touching license identity. A later identity action or
+        // import can supersede this attempt while it decrypts, but an invalid file cannot cancel
+        // a valid activation/verifier merely by being selected.
+        const reservation = reserveSettingsImport();
         let plaintext: string;
         try {
           plaintext = await decryptSettingsBackup(envelopeText, passphrase);
@@ -1106,26 +1178,21 @@ export const useSettingsStore = create<SettingsState>()(
           // Decryption succeeded but the payload wasn't JSON — a corrupted or tampered backup.
           return { licensed: false, status: 'failed', reason: 'The backup contents were unreadable.' };
         }
-        // The sanitizers below defend every field, so the structural cast is safe even on a
-        // hand-edited or corrupt payload (same trust model as the persist `merge` above).
-        const data = (isRecord(parsed) ? parsed : {}) as Partial<SettingsBackupData>;
-        if (
-          data.schemaVersion !== undefined
-          && data.schemaVersion !== SETTINGS_BACKUP_DATA_SCHEMA_VERSION
-        ) {
-          return {
-            licensed: false,
-            status: 'failed',
-            reason: 'This backup uses a newer portable settings schema. Update Sloom Studio, then import again.',
-          };
+        const parsedData = parseSettingsBackupData(parsed);
+        if (!parsedData.ok) {
+          return { licensed: false, status: 'failed', reason: parsedData.reason };
         }
+        const data = parsedData.data;
         // The imported payload owns the license identity now: invalidate in-flight verification,
         // apply fail-closed, then settle entitlement through the one canonical verification.
         // Callers get a deterministic postcondition — when this resolves, `license` reflects the
         // verifier's verdict on the imported key. Other windows learn through the broadcast.
-        if (!isCurrentLicenseIdentityGeneration(generation)) {
+        if (!canClaimSettingsImport(reservation)) {
           return { licensed: false, status: 'superseded', reason: 'A newer settings operation superseded this import.' };
         }
+        // This check and claim are synchronous, so no identity action can interleave between
+        // observing ownership and taking the generation that guards set + revalidation.
+        const generation = claimLicenseIdentityGeneration();
         armLicenseSyncBroadcast();
         set((current) => mergeSettingsBackupData(current, data));
         await get().revalidateLicense();

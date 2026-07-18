@@ -1056,9 +1056,9 @@ function backupErrorMessage(error: unknown): string {
 // shared/files/downloads.ts writes through the Capacitor Filesystem plugin there.
 
 /**
- * Optional, user-initiated encrypted backup of API keys + provider credentials. The blob is sealed
- * with a passphrase the user chooses (portable across machines) and never leaves the device except as
- * the file the user explicitly saves. See lib/settingsBackup.ts for the crypto.
+ * Optional, user-initiated encrypted backup of editor preferences, API keys, and provider
+ * credentials. The blob is sealed with a passphrase the user chooses (portable across machines) and
+ * never leaves the device except as the file the user explicitly saves. See lib/settingsBackup.ts.
  */
 function SettingsBackupSection({
   exportSettingsBackup,

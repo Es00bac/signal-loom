@@ -87,6 +87,20 @@ function licensedVerdict(): unknown {
   return { licensed: true, email: 'buyer@example.com', edition: 'commercial' };
 }
 
+function legacyBackupWithLicense(licenseKey: string): string {
+  return JSON.stringify({
+    apiKeys: {},
+    defaultModels: {},
+    providerSettings: {},
+    interfaceThemeId: 'default',
+    keyboardShortcuts: {},
+    gamepadBindings: {},
+    customBrushPresets: [],
+    customCropPresets: [],
+    licenseKey,
+  });
+}
+
 function seedPersistedSettings(state: Record<string, unknown>): void {
   // This helper models replacing the entire durable profile from outside the adapter. Reset its
   // ownership sidecars too; production adapter writes always stamp/advance all three together.
@@ -253,7 +267,7 @@ describe('late hydration versus local mutation (AUD-015 residual)', () => {
     let importSettled = false;
     const importPromise = useSettingsStore
       .getState()
-      .importSettingsBackup(JSON.stringify({ licenseKey: IMPORTED_KEY }), 'passphrase')
+      .importSettingsBackup(legacyBackupWithLicense(IMPORTED_KEY), 'passphrase')
       .then(() => {
         importSettled = true;
       });

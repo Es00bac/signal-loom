@@ -45,6 +45,10 @@ const cipherControl = vi.hoisted(() => ({
   pending: [] as Array<{ envelope: string; resolve: (plain: string | null) => void }>,
 }));
 
+const backupControl = vi.hoisted(() => ({
+  pending: [] as Array<{ resolve: (plain: string) => void }>,
+}));
+
 vi.mock('../lib/secretCipher', () => ({
   isEncryptedSecretEnvelope: (value: unknown): boolean =>
     typeof value === 'string' && value.startsWith('enc:'),
@@ -61,7 +65,15 @@ vi.mock('../lib/secretCipher', () => ({
 vi.mock('../lib/settingsBackup', () => ({
   isSettingsBackupSupported: () => true,
   encryptSettingsBackup: async (plaintext: string) => plaintext,
-  decryptSettingsBackup: async (envelopeText: string) => envelopeText,
+  decryptSettingsBackup: (envelopeText: string) => {
+    if (envelopeText === 'unsupported-envelope') {
+      return Promise.reject(new Error('This backup was made by a newer version of Sloom Studio.'));
+    }
+    if (envelopeText === 'deferred-backup') {
+      return new Promise<string>((resolve) => backupControl.pending.push({ resolve }));
+    }
+    return Promise.resolve(envelopeText);
+  },
   SettingsBackupError: class SettingsBackupError extends Error {
     kind: string;
 
@@ -78,6 +90,20 @@ function licensedVerdict(): unknown {
 
 function unlicensedVerdict(reason = 'Key not valid for this build.'): unknown {
   return { licensed: false, reason };
+}
+
+function legacyBackupWithLicense(licenseKey: string): string {
+  return JSON.stringify({
+    apiKeys: {},
+    defaultModels: {},
+    providerSettings: {},
+    interfaceThemeId: 'default',
+    keyboardShortcuts: {},
+    gamepadBindings: {},
+    customBrushPresets: [],
+    customCropPresets: [],
+    licenseKey,
+  });
 }
 
 function seedPersistedSettings(state: Record<string, unknown>): void {
@@ -134,6 +160,7 @@ beforeEach(() => {
   vi.resetModules();
   window.localStorage.clear();
   cipherControl.pending.length = 0;
+  backupControl.pending.length = 0;
   verifierControl.pending.length = 0;
   verifierControl.calls.length = 0;
 });
@@ -143,6 +170,7 @@ afterEach(async () => {
   // shared cipher/verifier controls after vi.resetModules().
   await settle();
   expect(cipherControl.pending).toHaveLength(0);
+  expect(backupControl.pending).toHaveLength(0);
   expect(verifierControl.pending).toHaveLength(0);
 });
 
@@ -293,7 +321,7 @@ describe('license verification race hardening (AUD-015)', () => {
     let importSettled = false;
     const importPromise = useSettingsStore
       .getState()
-      .importSettingsBackup(JSON.stringify({ licenseKey: INVALID_KEY }), 'passphrase')
+      .importSettingsBackup(legacyBackupWithLicense(INVALID_KEY), 'passphrase')
       .then(() => {
         importSettled = true;
       });
@@ -394,6 +422,86 @@ describe('license verification race hardening (AUD-015)', () => {
     expect(gates.isCommercialExportUnlocked()).toBe(false);
   });
 
+  it.each([
+    ['an unsupported envelope', 'unsupported-envelope'],
+    ['an unsupported data schema', JSON.stringify({ schemaVersion: 2 })],
+  ])('%s cannot supersede a valid activation already in flight', async (_label, backup) => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const activation = useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    const activationVerification = await takeVerification(VALID_KEY);
+    await expect(useSettingsStore.getState().importSettingsBackup(backup, 'passphrase'))
+      .resolves.toMatchObject({ status: 'failed', licensed: false });
+
+    activationVerification.resolve(licensedVerdict());
+    await expect(activation).resolves.toMatchObject({ status: 'committed', licensed: true });
+    expect(useSettingsStore.getState()).toMatchObject({
+      licenseKey: VALID_KEY,
+      license: { licensed: true },
+    });
+  });
+
+  it('a valid import cannot overwrite a later license activation while decrypting', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const imported = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(1));
+    const activation = useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    (await takeVerification(VALID_KEY)).resolve(licensedVerdict());
+    await expect(activation).resolves.toMatchObject({ status: 'committed' });
+
+    backupControl.pending.shift()!.resolve(legacyBackupWithLicense('SLOOM-stale-imported-key'));
+    await expect(imported).resolves.toMatchObject({ status: 'superseded' });
+    expect(useSettingsStore.getState()).toMatchObject({
+      licenseKey: VALID_KEY,
+      license: { licensed: true },
+    });
+  });
+
+  it('a valid import cannot overwrite a later removal while decrypting', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const imported = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(1));
+    useSettingsStore.getState().removeLicenseKey();
+
+    backupControl.pending.shift()!.resolve(legacyBackupWithLicense('SLOOM-stale-imported-key'));
+    await expect(imported).resolves.toMatchObject({ status: 'superseded' });
+    expect(useSettingsStore.getState()).toMatchObject({
+      licenseKey: '',
+      license: { licensed: false },
+    });
+  });
+
+  it('a valid import cannot overwrite a later import while decrypting', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const staleImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(1));
+    const winningKey = 'SLOOM-winning-imported-key';
+    const winningImport = useSettingsStore.getState().importSettingsBackup(
+      legacyBackupWithLicense(winningKey),
+      'passphrase',
+    );
+    (await takeVerification(winningKey)).resolve(licensedVerdict());
+    await expect(winningImport).resolves.toMatchObject({ status: 'committed' });
+
+    backupControl.pending.shift()!.resolve(legacyBackupWithLicense('SLOOM-stale-imported-key'));
+    await expect(staleImport).resolves.toMatchObject({ status: 'superseded' });
+    expect(useSettingsStore.getState()).toMatchObject({
+      licenseKey: winningKey,
+      license: { licensed: true },
+    });
+  });
+
   it('a backup import that follows a pending activation owns the license identity', async () => {
     const { settings, gates } = await importFreshModules();
     const { useSettingsStore } = settings;
@@ -405,7 +513,7 @@ describe('license verification race hardening (AUD-015)', () => {
     const importedKey = 'SLOOM-imported-test-key';
     const imported = useSettingsStore
       .getState()
-      .importSettingsBackup(JSON.stringify({ licenseKey: importedKey }), 'passphrase');
+      .importSettingsBackup(legacyBackupWithLicense(importedKey), 'passphrase');
     const importVerification = await takeVerification(importedKey);
 
     // Resolve the older activation after the newer import has claimed ownership. It may report a

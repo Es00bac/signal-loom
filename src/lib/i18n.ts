@@ -830,11 +830,11 @@ export const MESSAGES = {
   'settings.backup.copyToClipboard': { en: 'Copy to clipboard', ja: 'クリップボードにコピー' },
   'settings.backup.chooseFile': { en: 'Choose backup file', ja: 'バックアップファイルを選択' },
   'settings.backup.restoreFromBackup': { en: 'Restore from backup', ja: 'バックアップから復元' },
-  'settings.backup.restoreWarning': { en: 'Restoring overwrites your current keys and credentials with the ones in the backup.', ja: '復元すると、現在のキーと認証情報がバックアップの内容で上書きされます。' },
+  'settings.backup.restoreWarning': { en: 'Restoring overwrites your current editor preferences, API keys, and provider credentials with the ones in the backup.', ja: '復元すると、現在のエディター設定、API キー、プロバイダー認証情報がバックアップの内容で上書きされます。' },
   'settings.backup.errGeneric': { en: 'Something went wrong with the settings backup.', ja: '設定のバックアップで問題が発生しました。' },
   'settings.backup.errReadFile': { en: 'Could not read that file.', ja: 'そのファイルを読み込めませんでした。' },
   'settings.backup.errNoFile': { en: 'Choose a backup file or paste its contents first.', ja: '先にバックアップファイルを選択するか、内容を貼り付けてください。' },
-  'settings.backup.restored': { en: 'Settings restored — your keys and credentials are back in place.', ja: '設定を復元しました — キーと認証情報が元に戻りました。' },
+  'settings.backup.restored': { en: 'Settings restored — your editor preferences, API keys, and provider credentials are back in place.', ja: '設定を復元しました — エディター設定、API キー、プロバイダー認証情報が元に戻りました。' },
   'settings.err.androidAccelFailed': { en: 'Android accelerator connection failed.', ja: 'Android アクセラレーターへの接続に失敗しました。' },
 
   // Settings — image provider help cards (card DATA — steps/notes — stays as data for now)

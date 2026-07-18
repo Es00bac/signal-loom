@@ -47,6 +47,15 @@ describe('i18n message catalog', () => {
     expect(translateFormat('flow.toolbar.addNode', 'en', { name: 'Image' })).toBe('Add Image node');
     expect(translateFormat('flow.toolbar.addNode', 'ja', { name: 'Image' })).toBe('Imageノードを追加');
   });
+
+  it('discloses every restored settings category in both locales', () => {
+    expect(translate('settings.backup.restoreWarning', 'en')).toContain('editor preferences');
+    expect(translate('settings.backup.restoreWarning', 'en')).toContain('API keys');
+    expect(translate('settings.backup.restoreWarning', 'en')).toContain('provider credentials');
+    expect(translate('settings.backup.restoreWarning', 'ja')).toContain('エディター設定');
+    expect(translate('settings.backup.restoreWarning', 'ja')).toContain('API キー');
+    expect(translate('settings.backup.restoreWarning', 'ja')).toContain('プロバイダー認証情報');
+  });
 });
 
 describe('normalizeLocale', () => {
