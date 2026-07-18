@@ -1,8 +1,8 @@
 # FBL-029 — ElevenLabs PCM response correction
 
-Date: 2026-07-18  
-Role: author (not independent approver or integrator)  
-Base: `b0597e23508014c7536a540fcbda34b0cf39db4b`  
+Date: 2026-07-18
+Role: author (not independent approver or integrator)
+Base: `b0597e23508014c7536a540fcbda34b0cf39db4b`
 Production/tests commit: `44099a321ce5991ecdf2fc280abf004ca292ae50`
 
 ## Audit contract
@@ -82,3 +82,62 @@ npx vitest run src/lib/flowExecutionElevenLabsAudio.test.ts \
 ## Handoff
 
 This author lane does not self-approve or integrate. An independent gate should review the exact production/tests commit, rerun the focused/adjacent contract, and confirm the evidence commit changes documentation only.
+
+## Superseding accepted-response correction
+
+An independent gate against the original candidate found one paid-attempt boundary defect: after
+ElevenLabs returned a successful response, ordinary failures from `response.blob()`,
+`blob.arrayBuffer()`, or `URL.createObjectURL()` still escaped as retryable errors. The generic Flow
+backoff wrapper could therefore submit the same paid request again. The same path also lost actual
+usage when accepted-response materialization failed before an `ExecutionResult` was returned.
+
+Correction production/tests commit:
+`a811fa0bc56aa84a6b958062e760c7b3dcd40c82`
+
+The correction makes a successful ElevenLabs response the irreversible billing boundary for all
+four sibling audio routes. Post-acceptance materialization now has these invariants:
+
+- any non-abort failure is rethrown as `NonRetryableError`, retaining its original cause;
+- cancellation remains an `AbortError` and still prevents stale object-URL publication;
+- both failure shapes carry the accepted attempt's actual usage for Flow's failure ledger;
+- usage remains on the successful result when materialization succeeds;
+- pre-acceptance transport failures remain retryable under the configured backoff policy;
+- Source Library persistence remains outside provider retry and occurs only after usage is recorded.
+
+Permanent regressions now prove exact provider-call counts for response-blob, byte-buffer, and
+object-URL failures; attached usage on every terminal accepted-response failure; retained transport
+retry; exactly one project-ledger entry for a failed accepted attempt; and exactly one entry with no
+provider resubmission when later Source Library persistence fails. The existing stale-persistence
+test harness was also corrected to forward the `deferPublication` option it intercepted, restoring
+the intended provisional-item cleanup assertion.
+
+### Verification at superseding production/tests commit
+
+| Gate | Result |
+| --- | --- |
+| Focused correction + run-ownership tests | 2 files, 51 tests passed |
+| Focused/adjacent matrix | 10 files, 194 tests passed |
+| Flow production verifier | 9 files, 374 tests passed; 63 nodes, 182 model contracts, 178 normal model options |
+| App TypeScript | `npx tsc -p tsconfig.app.json --noEmit` passed |
+| Node TypeScript | `npx tsc -p tsconfig.node.json --noEmit` passed |
+| Touched-file ESLint | passed with no output |
+| Diff check | passed after removing the three legacy trailing-space lines above |
+| Production build | passed; 3,282 modules transformed |
+
+Focused/adjacent command:
+
+```text
+npx vitest run src/lib/flowExecutionElevenLabsAudio.test.ts \
+  src/lib/flowExecutionCancellation.test.ts \
+  src/lib/flowExecutionMediaCancellation.test.ts \
+  src/lib/flowExecutionAsyncRetry.test.ts \
+  src/lib/sourceBinResume.test.ts \
+  src/lib/sourceBinPersistence.test.ts \
+  src/lib/projectUsageRecording.test.ts \
+  src/lib/projectUsageLedger.test.ts \
+  src/lib/modelContracts/audioModelContracts.test.ts \
+  src/store/flowRunOwnership.test.ts
+```
+
+No live provider request was made. This correction author did not integrate or self-approve it;
+the exact final evidence commit should be reviewed independently before integration.
