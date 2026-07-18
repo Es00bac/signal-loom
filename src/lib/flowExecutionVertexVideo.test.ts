@@ -134,6 +134,39 @@ describe('executeNodeRequest Vertex video routing', () => {
     });
   });
 
+  it('materializes a remote extension video before the Vertex Veo bridge request', async () => {
+    const remoteVideo = 'https://cdn.example/extension.mp4?temporary=hidden';
+    const generateVertexVideo = vi.fn().mockResolvedValue({
+      result: 'data:video/mp4;base64,VERTEX',
+      resultType: 'video',
+      statusMessage: 'Generated with veo-3.1-generate-001',
+      mimeType: 'video/mp4',
+    });
+    vi.stubGlobal('window', { signalLoomNative: { generateVertexVideo } });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      new Blob(['VIDEO'], { type: 'video/mp4' }),
+      { status: 200, headers: { 'content-type': 'video/mp4' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await executeNodeRequest(
+      createVideoNode('veo-3.1-generate-001'),
+      {
+        prompt: 'Continue the motion.',
+        extensionVideoInput: remoteVideo,
+        config: { ...DEFAULT_EXECUTION_CONFIG, aspectRatio: '16:9', durationSeconds: 8, videoResolution: '720p' },
+      },
+      baseSettings,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(remoteVideo, { signal: undefined });
+    expect(generateVertexVideo.mock.calls[0][0].body.instances[0].video).toEqual({
+      bytesBase64Encoded: 'VklERU8=',
+      mimeType: 'video/mp4',
+    });
+    expect(JSON.stringify(generateVertexVideo.mock.calls[0][0].body)).not.toContain(remoteVideo);
+  });
+
   it('preserves a Gemini preview ID in Vertex mode and fails with an actionable route warning', async () => {
     const generateVertexVideo = vi.fn().mockResolvedValue({
       result: 'data:video/mp4;base64,VERTEX',

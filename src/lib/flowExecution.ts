@@ -90,7 +90,11 @@ import type {
   NativeVertexTextRequest,
   NativeVertexVideoRequest,
 } from './nativeApp';
-import { fetchRemoteMediaAsDataUrl } from './remoteMediaFetch';
+import {
+  fetchDownstreamMediaBlob,
+  fetchRemoteMediaAsDataUrl,
+  type DownstreamMediaKind,
+} from './remoteMediaFetch';
 import { getVertexProjectConfig } from './vertexProviderSettings';
 import {
   generateVertexImageDirect,
@@ -1974,7 +1978,20 @@ async function executeImageNode(
 
   if (sourceVideoInput) {
     onStatus?.(`Extracting ${videoFrameSelection} video frame locally…`);
-    const frameBlob = await extractSelectedVideoFrame(sourceVideoInput, videoFrameSelection);
+    const sourceVideo = await fetchDownstreamMediaBlob(sourceVideoInput, {
+      kind: 'video',
+      errorLabel: 'Upstream video reference could not be materialized',
+    }, abortSignal);
+    const sourceVideoUrl = URL.createObjectURL(sourceVideo.blob);
+    let frameBlob: Blob;
+    try {
+      frameBlob = await raceWithAbort(
+        extractSelectedVideoFrame(sourceVideoUrl, videoFrameSelection),
+        abortSignal,
+      );
+    } finally {
+      URL.revokeObjectURL(sourceVideoUrl);
+    }
 
     return {
       result: await toResultUrl(frameBlob),
@@ -4977,8 +4994,10 @@ async function executeAudioNode(
       }
 
       onStatus?.('Changing voice with ElevenLabs…');
-      const sourceAudio = await fetch(context.audioSourceInput, { signal: abortSignal });
-      const sourceBlob = await sourceAudio.blob();
+      const { blob: sourceBlob } = await fetchDownstreamMediaBlob(context.audioSourceInput, {
+        kind: 'audio',
+        errorLabel: 'Upstream audio reference could not be materialized',
+      }, abortSignal);
       const formData = new FormData();
       formData.append('audio', sourceBlob, 'flow-audio-input.wav');
       formData.append('model_id', modelId);
@@ -5725,57 +5744,45 @@ async function dataUrlToInlineData(
     };
   }
 
-  const response = await fetch(dataUrl, { signal });
-  const blob = await response.blob();
+  const expectedKind = downstreamMediaKindForMime(fallbackMimeType);
+  const { blob, mimeType } = await fetchDownstreamMediaBlob(dataUrl, {
+    kind: expectedKind,
+    errorLabel: `Downstream ${expectedKind} reference could not be materialized`,
+  }, signal);
   const base64 = await blobToBase64(blob, signal);
 
   return {
-    mimeType: blob.type || fallbackMimeType,
+    mimeType,
     data: base64,
   };
 }
 
+function downstreamMediaKindForMime(mimeType: string): DownstreamMediaKind {
+  const normalized = mimeType.split(';', 1)[0].trim().toLowerCase();
+  if (normalized.startsWith('image/')) return 'image';
+  if (normalized.startsWith('video/')) return 'video';
+  if (normalized.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
 async function dataUrlToGeminiImage(dataUrl: string, signal?: AbortSignal): Promise<{ imageBytes: string; mimeType: string }> {
-  throwIfAborted(signal);
-  if (dataUrl.startsWith('data:')) {
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-
-    if (!match) {
-      throw new Error('Unsupported image data URL format.');
-    }
-
-    return {
-      mimeType: match[1],
-      imageBytes: match[2],
-    };
-  }
-
-  const response = await fetch(dataUrl, { signal });
-  const blob = await response.blob();
-  const base64 = await blobToBase64(blob, signal);
-
-  return {
-    mimeType: blob.type || 'image/png',
-    imageBytes: base64,
-  };
+  const inline = await dataUrlToInlineData(dataUrl, 'image/png', 'Unsupported image data URL format.', signal);
+  return { mimeType: inline.mimeType, imageBytes: inline.data };
 }
 
 async function dataUrlToGeminiVideo(dataUrl: string, signal?: AbortSignal): Promise<{ videoBytes: string; mimeType: string }> {
-  throwIfAborted(signal);
-  const response = await fetch(dataUrl, { signal });
-  const blob = await response.blob();
-  const base64 = await blobToBase64(blob, signal);
-
-  return {
-    mimeType: blob.type || 'video/mp4',
-    videoBytes: base64,
-  };
+  const inline = await dataUrlToInlineData(dataUrl, 'video/mp4', 'Unsupported video data URL format.', signal);
+  return { mimeType: inline.mimeType, videoBytes: inline.data };
 }
 
 async function dataUrlToFile(dataUrl: string, filename: string, signal?: AbortSignal): Promise<File> {
   throwIfAborted(signal);
-  const response = await fetch(dataUrl, { signal });
-  const blob = await response.blob();
+  const blob = dataUrl.startsWith('data:')
+    ? await (await fetch(dataUrl, { signal })).blob()
+    : (await fetchDownstreamMediaBlob(dataUrl, {
+        kind: 'image',
+        errorLabel: 'Downstream image reference could not be materialized',
+      }, signal)).blob;
   throwIfAborted(signal);
   const mimeType = blob.type || 'image/png';
 

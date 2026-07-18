@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchProviderResultBlob, fetchRemoteMediaAsDataUrl } from './remoteMediaFetch';
+import {
+  fetchDownstreamMediaBlob,
+  fetchProviderResultBlob,
+  fetchRemoteMediaAsDataUrl,
+} from './remoteMediaFetch';
 
 const ATLAS_URL = 'https://atlas-media.oss-us-west-1.aliyuncs.com/flux/generated.png';
 
@@ -147,5 +151,136 @@ describe('fetchProviderResultBlob', () => {
     await expect(
       fetchProviderResultBlob(`${ATLAS_URL}?Signature=z`, 'Boom', undefined, {}),
     ).rejects.toThrow('Boom');
+  });
+});
+
+describe('fetchDownstreamMediaBlob (AUD-029)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('accepts a bounded renderer response with the expected media MIME family', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Blob(['PNG'], { type: 'image/png' }), {
+      status: 200,
+      headers: { 'content-type': 'image/png', 'content-length': '3' },
+    })));
+
+    const result = await fetchDownstreamMediaBlob(ATLAS_URL, {
+      kind: 'image',
+      errorLabel: 'Image reference failed',
+      runtime: {},
+    });
+
+    expect(result.mimeType).toBe('image/png');
+    expect(result.blob.size).toBe(3);
+  });
+
+  it('uses native bytes after a renderer transport failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('renderer transport unavailable')));
+    const electronDownload = vi.fn().mockResolvedValue({ base64: 'V0VCUA==', mimeType: 'image/webp' });
+
+    const result = await fetchDownstreamMediaBlob(ATLAS_URL, {
+      kind: 'image',
+      errorLabel: 'Image reference failed',
+      runtime: { electronDownload },
+    });
+
+    expect(electronDownload).toHaveBeenCalledWith(ATLAS_URL);
+    expect(result.mimeType).toBe('image/webp');
+    expect(await result.blob.text()).toBe('WEBP');
+  });
+
+  it('rejects a non-2xx renderer response when native transport cannot provide media', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('gone', {
+      status: 410,
+      headers: { 'content-type': 'text/html' },
+    })));
+
+    await expect(fetchDownstreamMediaBlob(`${ATLAS_URL}?signed=secret`, {
+      kind: 'image',
+      errorLabel: 'Image reference failed',
+      runtime: {},
+    })).rejects.toThrow(/Image reference failed .*HTTP 410.*native download was unavailable/i);
+  });
+
+  it('rejects an expired HTML response instead of encoding it as media', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>expired</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    })));
+
+    await expect(fetchDownstreamMediaBlob(ATLAS_URL, {
+      kind: 'video',
+      errorLabel: 'Video reference failed',
+      runtime: {},
+    })).rejects.toThrow(/text\/html; expected video media/i);
+  });
+
+  it('rejects native non-2xx completion after renderer failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('renderer transport unavailable')));
+    const get = vi.fn().mockResolvedValue({
+      status: 403,
+      data: 'bm90LW1lZGlh',
+      headers: { 'content-type': 'image/png' },
+    });
+
+    await expect(fetchDownstreamMediaBlob(ATLAS_URL, {
+      kind: 'image',
+      errorLabel: 'Image reference failed',
+      runtime: { isAndroidNative: true, capacitorHttp: { get } },
+    })).rejects.toThrow(/renderer transport unavailable.*native download was unavailable/i);
+    expect(get).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a native response with the wrong media MIME family', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('renderer transport unavailable')));
+    const electronDownload = vi.fn().mockResolvedValue({
+      base64: 'eyJlcnJvciI6ImV4cGlyZWQifQ==',
+      mimeType: 'application/json',
+    });
+
+    await expect(fetchDownstreamMediaBlob(ATLAS_URL, {
+      kind: 'audio',
+      errorLabel: 'Audio reference failed',
+      runtime: { electronDownload },
+    })).rejects.toThrow(/application\/json; expected audio media/i);
+  });
+
+  it('rejects declared and actual payloads above the configured byte bound', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('X', {
+        status: 200,
+        headers: { 'content-type': 'image/png', 'content-length': '5' },
+      }))
+      .mockResolvedValueOnce(new Response(new Blob(['12345'], { type: 'image/png' }), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchDownstreamMediaBlob('blob:declared', {
+      kind: 'image', errorLabel: 'Image reference failed', maxBytes: 4, runtime: {},
+    })).rejects.toThrow(/declared more than the 4-byte/i);
+    await expect(fetchDownstreamMediaBlob('blob:actual', {
+      kind: 'image', errorLabel: 'Image reference failed', maxBytes: 4, runtime: {},
+    })).rejects.toThrow(/returned 5 bytes, above the 4-byte/i);
+  });
+
+  it('preserves cancellation while the renderer read is pending and never starts native fallback', async () => {
+    let resolveFetch!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    })));
+    const electronDownload = vi.fn();
+    const controller = new AbortController();
+
+    const pending = fetchDownstreamMediaBlob(ATLAS_URL, {
+      kind: 'image',
+      errorLabel: 'Image reference failed',
+      runtime: { electronDownload },
+    }, controller.signal);
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(electronDownload).not.toHaveBeenCalled();
+    resolveFetch(new Response(new Blob(['late'], { type: 'image/png' })));
   });
 });

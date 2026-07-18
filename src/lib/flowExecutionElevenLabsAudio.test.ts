@@ -308,6 +308,33 @@ describe('executeNodeRequest ElevenLabs audio response materialization', () => {
     vi.restoreAllMocks();
   });
 
+  it('materializes a remote voice-change source before the ElevenLabs request', async () => {
+    const remoteAudio = 'https://cdn.example/source.wav?temporary=hidden';
+    const sourceBytes = new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      if (String(input) === remoteAudio) return byteResponse(sourceBytes, 'audio/wav');
+      return audioResponse();
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await captureCreatedBlob(() => executeNodeRequest(
+      nodeForMode('voiceChange', 'eleven_multilingual_sts_v2'),
+      {
+        prompt: '',
+        audioSourceInput: remoteAudio,
+        config: { ...DEFAULT_EXECUTION_CONFIG, audioOutputFormat: 'mp3_44100_128' },
+      },
+      settings,
+    ));
+
+    const providerCall = fetchMock.mock.calls.find(([input]) => String(input).includes('/v1/speech-to-speech/'));
+    const form = providerCall?.[1]?.body as FormData;
+    const source = form.get('audio') as File;
+    expect(source.type).toBe('audio/wav');
+    expect(await blobBytes(source)).toEqual(sourceBytes);
+    expect(String(providerCall?.[0])).not.toContain(remoteAudio);
+  });
+
   it.each(elevenLabsModes)(
     'wraps raw pcm_44100 as an exact mono signed-16 LE WAV for $mode',
     async ({ mode, modelId, prompt, path }) => {

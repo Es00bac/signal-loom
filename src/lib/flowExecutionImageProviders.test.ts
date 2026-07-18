@@ -222,6 +222,47 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(body.prompt).toContain('OPEN LATE');
   });
 
+  it('materializes a remote BFL edit image through the native fallback before submission', async () => {
+    const remoteSource = 'https://cdn.example/source.png?temporary=hidden';
+    const downloadRemoteMedia = vi.fn().mockResolvedValue({
+      base64: 'U09VUkNF',
+      mimeType: 'image/png',
+    });
+    vi.stubGlobal('window', { signalLoomNative: { downloadRemoteMedia } });
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === remoteSource) throw new TypeError('renderer transport unavailable');
+      if (url === 'https://api.bfl.ai/v1/flux-2-pro') {
+        return jsonResponse({
+          id: 'bfl-remote-job',
+          polling_url: 'https://api.bfl.ai/v1/get_result?id=bfl-remote-job',
+          cost: 4.5,
+        });
+      }
+      return jsonResponse({
+        status: 'Ready',
+        result: { sample: 'data:image/png;base64,QkZM' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await executeNodeRequest(
+      createImageNode('bfl', 'flux-2-pro'),
+      {
+        prompt: 'Update the storefront.',
+        editImageInput: remoteSource,
+        config: { ...DEFAULT_EXECUTION_CONFIG, imageOutputFormat: 'png' },
+      },
+      baseSettings,
+    );
+
+    expect(downloadRemoteMedia).toHaveBeenCalledWith(remoteSource);
+    const providerCall = fetchMock.mock.calls.find(([input]) => String(input) === 'https://api.bfl.ai/v1/flux-2-pro');
+    const body = JSON.parse(String(providerCall?.[1]?.body));
+    expect(body.input_image).toBe('data:image/png;base64,U09VUkNF');
+    expect(JSON.stringify(body)).not.toContain(remoteSource);
+  });
+
   it('runs Stability text-to-image through the Core generation endpoint', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stability-core');
     const fetchMock = vi.fn().mockResolvedValue(imageResponse('CORE'));

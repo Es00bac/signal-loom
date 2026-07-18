@@ -1,6 +1,8 @@
 import { Capacitor } from '@capacitor/core';
 import { getSignalLoomNativeBridge } from './nativeApp';
 import { createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abortSignals';
+import { analyzeBase64DataUrl } from './boundedDataUrl';
+import { MAX_BINARY_RESUME_BYTES } from './binaryResumeSniffer';
 
 export interface RemoteMediaBytes {
   dataUrl: string;
@@ -27,6 +29,21 @@ export interface RemoteMediaFetchRuntime {
   capacitorHttp?: CapacitorHttpPlugin;
   electronDownload?: ElectronRemoteMediaDownloader;
   electronCancelDownload?: (cancellationId: string) => Promise<{ cancelled?: boolean }>;
+}
+
+export type DownstreamMediaKind = 'image' | 'video' | 'audio' | 'document';
+
+export interface DownstreamMediaFetchOptions {
+  kind: DownstreamMediaKind;
+  errorLabel: string;
+  maxBytes?: number;
+  /** Deterministic native transport override for tests; production resolves the active bridge. */
+  runtime?: RemoteMediaFetchRuntime;
+}
+
+export interface DownstreamMediaBlob {
+  blob: Blob;
+  mimeType: string;
 }
 
 let nativeDownloadSequence = 0;
@@ -162,6 +179,147 @@ function base64DataUrlToBlob(dataUrl: string, fallbackMimeType = 'application/oc
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes as BlobPart], { type: mimeType });
+}
+
+function responseHeader(response: Response, name: string): string | undefined {
+  return response.headers?.get(name) ?? undefined;
+}
+
+function normalizedStrictMimeType(value: string | undefined): string | undefined {
+  const normalized = value?.split(';', 1)[0]?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function isExpectedDownstreamMimeType(kind: DownstreamMediaKind, mimeType: string): boolean {
+  if (kind === 'document') {
+    return mimeType.startsWith('text/') || [
+      'application/json',
+      'application/pdf',
+      'application/rtf',
+      'application/xml',
+    ].includes(mimeType);
+  }
+  return mimeType.startsWith(`${kind}/`);
+}
+
+function remoteMediaIdentity(url: string): string {
+  if (/^data:/i.test(url)) {
+    return url.slice(0, Math.min(url.indexOf(',') + 1 || 32, 96));
+  }
+  if (/^blob:/i.test(url)) return 'local blob URL';
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.length > 160 ? `${parsed.pathname.slice(0, 157)}…` : parsed.pathname;
+    return `${parsed.protocol}//${parsed.host}${path}`;
+  } catch {
+    return 'unrecognized media URL';
+  }
+}
+
+function errorSummary(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown failure';
+  const message = error.message.trim().replace(/\s+/g, ' ');
+  return message.slice(0, 200) || error.name;
+}
+
+function assertBoundedMediaBlob(
+  blob: Blob,
+  claimedMimeType: string | undefined,
+  options: Required<Pick<DownstreamMediaFetchOptions, 'kind' | 'errorLabel' | 'maxBytes'>>,
+  source: string,
+): DownstreamMediaBlob {
+  if (blob.size <= 0) {
+    throw new Error(`${source} returned no media bytes.`);
+  }
+  if (blob.size > options.maxBytes) {
+    throw new Error(`${source} returned ${blob.size} bytes, above the ${options.maxBytes}-byte downstream limit.`);
+  }
+  const mimeType = normalizedStrictMimeType(claimedMimeType) ?? normalizedStrictMimeType(blob.type);
+  if (!mimeType || !isExpectedDownstreamMimeType(options.kind, mimeType)) {
+    throw new Error(`${source} returned ${mimeType ?? 'no MIME type'}; expected ${options.kind} media.`);
+  }
+  return {
+    blob: normalizedStrictMimeType(blob.type) === mimeType ? blob : new Blob([blob], { type: mimeType }),
+    mimeType,
+  };
+}
+
+async function readBoundedRendererMedia(
+  response: Response,
+  options: Required<Pick<DownstreamMediaFetchOptions, 'kind' | 'errorLabel' | 'maxBytes'>>,
+  signal?: AbortSignal,
+): Promise<DownstreamMediaBlob> {
+  if (!response.ok) {
+    throw new Error(`renderer download returned HTTP ${response.status}.`);
+  }
+  const declaredLength = responseHeader(response, 'content-length');
+  if (declaredLength && /^\d+$/.test(declaredLength.trim())) {
+    const bytes = Number(declaredLength);
+    if (!Number.isSafeInteger(bytes) || bytes > options.maxBytes) {
+      throw new Error(`renderer download declared more than the ${options.maxBytes}-byte downstream limit.`);
+    }
+  }
+  const claimedMimeType = responseHeader(response, 'content-type');
+  const blob = await raceWithAbort(response.blob(), signal);
+  throwIfAborted(signal);
+  return assertBoundedMediaBlob(blob, claimedMimeType, options, 'renderer download');
+}
+
+/**
+ * Materialize one upstream Flow media URL for a downstream provider input. Renderer fetch is used
+ * when possible; http(s) transport/MIME/status failures then receive the established Electron or
+ * Android native fallback. No raw remote URL, non-media response, or oversized payload crosses the
+ * provider boundary.
+ */
+export async function fetchDownstreamMediaBlob(
+  url: string,
+  options: DownstreamMediaFetchOptions,
+  signal?: AbortSignal,
+): Promise<DownstreamMediaBlob> {
+  throwIfAborted(signal);
+  const maxBytes = options.maxBytes ?? MAX_BINARY_RESUME_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > MAX_BINARY_RESUME_BYTES) {
+    throw new Error(`${options.errorLabel}: invalid downstream media byte limit.`);
+  }
+  const strictOptions = { kind: options.kind, errorLabel: options.errorLabel, maxBytes };
+  let rendererFailure = 'renderer download was unavailable';
+
+  try {
+    const response = await raceWithAbort(fetch(url, { signal }), signal);
+    return await readBoundedRendererMedia(response, strictOptions, signal);
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      throw isAbortError(error) ? error : createAbortError();
+    }
+    rendererFailure = errorSummary(error);
+  }
+
+  let nativeFailure = 'native download was unavailable';
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const native = options.runtime
+        ? await fetchRemoteMediaAsDataUrl(url, options.runtime, signal)
+        : await fetchRemoteMediaAsDataUrl(url, undefined, signal);
+      throwIfAborted(signal);
+      if (native) {
+        const analysis = analyzeBase64DataUrl(native.dataUrl, maxBytes);
+        if (!analysis) {
+          throw new Error(`native download returned invalid or oversized base64 media.`);
+        }
+        const blob = base64DataUrlToBlob(native.dataUrl, native.mimeType);
+        return assertBoundedMediaBlob(blob, native.mimeType ?? analysis.mimeType, strictOptions, 'native download');
+      }
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) {
+        throw isAbortError(error) ? error : createAbortError();
+      }
+      nativeFailure = errorSummary(error);
+    }
+  }
+
+  throw new Error(
+    `${options.errorLabel} (${remoteMediaIdentity(url)}): ${rendererFailure}; ${nativeFailure}.`,
+  );
 }
 
 /**
