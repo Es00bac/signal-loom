@@ -103,4 +103,41 @@ describe('flowWorkspaceStore', () => {
     expect(useFlowWorkspaceStore.getState().hydratedWorkspaceId).toBe('alt');
     expect(useFlowWorkspaceStore.getState().getWorkspace('main')?.flow.nodes.map((node) => node.id)).toEqual(['runtime-main-node']);
   });
+
+  it('keeps a deleted last workspace as the canvas owner until its fresh replacement is consumed', () => {
+    const store = useFlowWorkspaceStore.getState();
+    store.hydrateProjectSnapshot({
+      activeWorkspaceId: 'only',
+      workspaces: [{
+        id: 'only',
+        name: 'Only',
+        createdAt: 1,
+        updatedAt: 1,
+        flow: {
+          version: 3,
+          nodes: [{ id: 'stored-only', type: 'textNode', position: { x: 0, y: 0 }, data: {} }],
+          edges: [],
+        },
+      }],
+    });
+
+    store.deleteWorkspace('only');
+    const afterDelete = useFlowWorkspaceStore.getState();
+    const replacementId = afterDelete.activeWorkspaceId;
+    expect(replacementId).not.toBe('only');
+    expect(afterDelete.hydratedWorkspaceId).toBe('only');
+    expect(afterDelete.exportProjectSnapshot({
+      version: 3,
+      nodes: [{ id: 'runtime-deleted', type: 'textNode', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    })[0]?.flow.nodes).toEqual([]);
+
+    const replacement = afterDelete.consumePendingWorkspaceSwitch({
+      version: 3,
+      nodes: [{ id: 'runtime-deleted', type: 'textNode', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    });
+    expect(replacement?.nodes).toEqual([]);
+    expect(useFlowWorkspaceStore.getState().hydratedWorkspaceId).toBe(replacementId);
+  });
 });

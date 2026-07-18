@@ -229,7 +229,13 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
       const deletedIndex = state.workspaces.findIndex((workspace) => workspace.id === id);
       const remaining = state.workspaces.filter((workspace) => workspace.id !== id);
       if (remaining.length === 0) {
-        return createInitialState();
+        const replacement = createWorkspaceRecord(DEFAULT_FLOW_WORKSPACE_NAME);
+        return {
+          activeWorkspaceId: replacement.id,
+          // The canvas still belongs to the deleted id until App drains the replacement snapshot.
+          hydratedWorkspaceId: state.hydratedWorkspaceId,
+          workspaces: [replacement],
+        };
       }
 
       const fallbackWorkspaceId = state.activeWorkspaceId === id
@@ -241,10 +247,9 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
           remaining,
           fallbackWorkspaceId,
         ),
-        hydratedWorkspaceId: resolveActiveWorkspaceId(
-          remaining,
-          state.hydratedWorkspaceId === id ? fallbackWorkspaceId : state.hydratedWorkspaceId,
-        ),
+        // A deleted hydrated workspace becomes a short-lived tombstone owner. Reassigning this id
+        // before the serialized switch completes would label the old canvas as the fallback tab.
+        hydratedWorkspaceId: state.hydratedWorkspaceId,
         workspaces: remaining,
       };
     });
@@ -318,12 +323,12 @@ export const useFlowWorkspaceStore = create<FlowWorkspaceStoreState>()((set, get
   exportProjectSnapshot: (activeSnapshot) => {
     const state = get();
     const workspaces = state.workspaces.length > 0 ? state.workspaces : createInitialState().workspaces;
-    const hydratedWorkspaceId = resolveActiveWorkspaceId(workspaces, state.hydratedWorkspaceId);
+    const hydratedWorkspace = workspaces.find((workspace) => workspace.id === state.hydratedWorkspaceId);
 
     return workspaces.map((workspace) => ({
       ...workspace,
       flow: cloneFlowSnapshot(
-        workspace.id === hydratedWorkspaceId ? activeSnapshot : workspace.flow,
+        workspace.id === hydratedWorkspace?.id ? activeSnapshot : workspace.flow,
       ),
     }));
   },

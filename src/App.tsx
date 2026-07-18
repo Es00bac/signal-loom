@@ -253,6 +253,7 @@ import {
 } from './lib/workspaceWindowCommands';
 import { collectFlowDiagnostics } from './lib/flowDiagnostics';
 import { FlowWorkspaceShell } from './features/flow/workspace/FlowWorkspaceShell';
+import { createFlowWorkspaceSwitchQueue } from './lib/flowWorkspaceSwitchQueue';
 import { useFlowCanvasDropImport } from './features/flow/workspace/useFlowCanvasDropImport';
 import { useFlowDocumentStore } from './store/flow/flowDocumentStore';
 import { useFlowRuntimeStore } from './store/flow/flowRuntimeStore';
@@ -379,7 +380,6 @@ function FlowApp() {
   const { fitView, screenToFlowPosition, setCenter } = useReactFlow<AppNode, Edge>();
   const { zoom } = useViewport();
   const flowViewportRef = useRef<HTMLDivElement | null>(null);
-  const flowWorkspaceSwitchInFlightRef = useRef(false);
   const browserProjectOpenInputRef = useRef<HTMLInputElement | null>(null);
   const browserMediaImportInputRef = useRef<HTMLInputElement | null>(null);
   const activeConnectorDragRef = useRef(false);
@@ -819,73 +819,43 @@ function FlowApp() {
   }, [interfaceTheme]);
 
   useEffect(() => {
-    void restoreImportedAssets();
+    void restoreImportedAssets().catch((error) => {
+      console.error('Could not restore initial Flow workspace assets.', error);
+    });
   }, [restoreImportedAssets]);
 
+  const flowWorkspaceSwitchQueue = useMemo(() => createFlowWorkspaceSwitchQueue({
+    exportHydratedSnapshot: exportProjectFlowSnapshot,
+    replaceHydratedSnapshot: replaceFlowSnapshot,
+    restoreImportedAssets,
+    onRestoreError: (error, workspaceId) => {
+      console.error(`Could not restore Flow workspace ${workspaceId} assets.`, error);
+    },
+  }), [exportProjectFlowSnapshot, replaceFlowSnapshot, restoreImportedAssets]);
+
   const runPendingFlowWorkspaceSwitch = useCallback(() => {
-    if (flowWorkspaceSwitchInFlightRef.current) {
-      return;
-    }
+    flowWorkspaceSwitchQueue.requestDrain();
+  }, [flowWorkspaceSwitchQueue]);
 
-    const currentWorkspaceState = useFlowWorkspaceStore.getState();
-    if (currentWorkspaceState.activeWorkspaceId === currentWorkspaceState.hydratedWorkspaceId) {
-      return;
-    }
-
-    const nextSnapshot = currentWorkspaceState.consumePendingWorkspaceSwitch(
-      exportProjectFlowSnapshot(),
-    );
-    if (!nextSnapshot) {
-      return;
-    }
-
-    flowWorkspaceSwitchInFlightRef.current = true;
-    replaceFlowSnapshot(nextSnapshot);
-    void restoreImportedAssets().finally(() => {
-      flowWorkspaceSwitchInFlightRef.current = false;
-    });
-  }, [exportProjectFlowSnapshot, replaceFlowSnapshot, restoreImportedAssets]);
+  useEffect(() => () => flowWorkspaceSwitchQueue.dispose(), [flowWorkspaceSwitchQueue]);
 
   useEffect(() => {
     runPendingFlowWorkspaceSwitch();
   }, [activeFlowWorkspaceId, hydratedFlowWorkspaceId, runPendingFlowWorkspaceSwitch]);
 
-  const ensureFlowTargetWorkspaceHydrated = useCallback(async (targetFlowWorkspaceId?: string) => {
+  const ensureFlowTargetWorkspaceHydrated = useCallback((targetFlowWorkspaceId?: string): Promise<boolean> => {
     const flowWorkspaceState = useFlowWorkspaceStore.getState();
     const resolvedTargetFlowWorkspaceId = targetFlowWorkspaceId ?? flowWorkspaceState.activeWorkspaceId;
     if (!resolvedTargetFlowWorkspaceId) {
-      return;
+      return Promise.resolve(false);
     }
 
     if (!flowWorkspaceState.getWorkspace(resolvedTargetFlowWorkspaceId)) {
-      return;
+      return Promise.resolve(false);
     }
 
-    if (
-      flowWorkspaceState.activeWorkspaceId === resolvedTargetFlowWorkspaceId &&
-      flowWorkspaceState.hydratedWorkspaceId === resolvedTargetFlowWorkspaceId
-    ) {
-      return;
-    }
-
-    if (flowWorkspaceState.activeWorkspaceId !== resolvedTargetFlowWorkspaceId) {
-      flowWorkspaceState.setActiveWorkspaceId(resolvedTargetFlowWorkspaceId);
-    }
-
-    runPendingFlowWorkspaceSwitch();
-
-    const timeoutAt = Date.now() + 2500;
-    while (Date.now() < timeoutAt) {
-      const latestWorkspaceState = useFlowWorkspaceStore.getState();
-      if (
-        latestWorkspaceState.activeWorkspaceId === resolvedTargetFlowWorkspaceId
-        && latestWorkspaceState.hydratedWorkspaceId === resolvedTargetFlowWorkspaceId
-      ) {
-        return;
-      }
-      await delay(16);
-    }
-  }, [runPendingFlowWorkspaceSwitch]);
+    return flowWorkspaceSwitchQueue.ensureWorkspaceHydrated(resolvedTargetFlowWorkspaceId);
+  }, [flowWorkspaceSwitchQueue]);
 
   const mergeCommandSourceBinItems = useCallback((items: SourceBinLibraryItem[], targetBinId?: string) => {
     let changed = false;
@@ -1118,7 +1088,8 @@ function FlowApp() {
           applySourceLibraryChangeToRenderer(command);
           return;
         case 'flow-create-source-node': {
-          void ensureFlowTargetWorkspaceHydrated(command.targetFlowWorkspaceId).then(() => {
+          void ensureFlowTargetWorkspaceHydrated(command.targetFlowWorkspaceId).then((hydrated) => {
+            if (!hydrated) return;
             mergeCommandSourceBinItems([command.item], command.targetBinId);
             const nodeId = addNode(getFlowNodeTypeForSourceBinItem(command.item), getViewportCenterPosition());
             patchNodeData(nodeId, buildFlowNodePatchForSourceBinItem(command.item));

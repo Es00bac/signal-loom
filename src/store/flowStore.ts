@@ -3953,6 +3953,8 @@ export const useFlowStore = create<FlowState>()(
         });
       },
       restoreImportedAssets: async () => {
+        const restorationGraphGeneration = hydratedFlowGraphGeneration;
+        const restorationWorkspaceId = hydratedCanvasWorkspaceId;
         const sourceBinItems = useSourceBinStore.getState().getAllItems();
         const nodesWithAssets = get().nodes.filter((node) => (
           node.data.sourceAssetId ||
@@ -4031,6 +4033,15 @@ export const useFlowStore = create<FlowState>()(
         if (patchesByNodeId.size === 0) {
           return;
         }
+
+        // Asset reads are intentionally asynchronous. A project replacement, cancellation, or a
+        // different canvas may have won while bytes were loading; never apply the old owner's URLs
+        // to reused node ids in that replacement graph.
+        if (
+          hydratedFlowGraphGeneration !== restorationGraphGeneration
+          || hydratedCanvasWorkspaceId !== restorationWorkspaceId
+          || useFlowWorkspaceStore.getState().hydratedWorkspaceId !== restorationWorkspaceId
+        ) return;
 
         set({
           nodes: get().nodes.map((node) => {
