@@ -169,6 +169,8 @@ interface CompositionUnit {
   tcy: boolean;
   emphasis?: Exclude<PaperEmphasisMark, 'none'>;
   dropCap?: boolean;
+  /** Authored newline in a rich run: a layout boundary, never a font glyph request. */
+  hardBreak?: boolean;
 }
 
 interface RubyAnnotation {
@@ -448,6 +450,13 @@ function wrapUnits(
   vertical: boolean,
 ): CompositionUnit[][] {
   if (units.length === 0) return [[]];
+  const hardBreakIndex = units.findIndex((unit) => unit.hardBreak);
+  if (hardBreakIndex >= 0) {
+    return [
+      ...wrapUnits(units.slice(0, hardBreakIndex), maxAdvancePt, measure, strict, vertical),
+      ...wrapUnits(units.slice(hardBreakIndex + 1), maxAdvancePt, measure, strict, vertical),
+    ];
+  }
   return breakPaperTextUnits(units, maxAdvancePt, measure, {
     canBreakBefore: (unit, _index, previous) => canBreakBefore(unit, previous, strict, vertical),
   })
@@ -466,6 +475,16 @@ function wrapHorizontalParagraphUnits(
   strict: boolean,
 ): CompositionUnit[][] {
   if (units.length === 0) return [[]];
+  const hardBreakIndex = units.findIndex((unit) => unit.hardBreak);
+  if (hardBreakIndex >= 0) {
+    const before = wrapHorizontalParagraphUnits(units.slice(0, hardBreakIndex), widthForLine, strict);
+    const after = wrapHorizontalParagraphUnits(
+      units.slice(hardBreakIndex + 1),
+      (lineIndex) => widthForLine(before.length + lineIndex),
+      strict,
+    );
+    return [...before, ...after];
+  }
   // CSS/HarfBuzz shape a word (and ultimately its whole line) in context. Summing advances from separately
   // shaped graphemes discards kerning and ligatures, so the wrap decision can reject a word that the final
   // painted run—and the export browser—fits. Group source units at legal wrap boundaries, then measure each
@@ -514,6 +533,7 @@ function wrapHorizontalParagraphUnits(
 }
 
 function unitMeasure(unit: CompositionUnit): number {
+  if (unit.hardBreak) return 0;
   if (unit.tcy) return unit.style.fontSizePt;
   const shaped = unit.style.shaper.shape({
     text: unit.text,
@@ -1113,6 +1133,7 @@ async function buildParagraphs(
             emphasis: token.type === 'emphasis'
               ? 'sesame'
               : graphemeStyle.emphasis === 'none' ? undefined : graphemeStyle.emphasis,
+            ...(grapheme.text === '\n' ? { hardBreak: true } : {}),
           });
         }
         if (token.type === 'ruby') {

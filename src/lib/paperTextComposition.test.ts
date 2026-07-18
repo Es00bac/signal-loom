@@ -280,6 +280,17 @@ describe('composePaperTextFrame', () => {
     expect(composed.lines.map((line) => line.text)).toEqual(['AV AV']);
   });
 
+  it('lays out rich-run newlines as hard breaks instead of missing glyphs', async () => {
+    const composed = await composeFixture([{ text: 'FIRST\nSECOND\nTHIRD' }], { fontSizePt: 12, leadingPt: 14 });
+
+    expect(composed.missingGlyphs).toEqual([]);
+    expect(composed.lines.map((line) => line.text)).toEqual(['FIRST', 'SECOND', 'THIRD']);
+    expect(composed.lines.map((line) => line.originYPt)).toEqual([
+      expect.any(Number), expect.any(Number), expect.any(Number),
+    ]);
+    expect(composed.lines[1].originYPt - composed.lines[0].originYPt).toBeCloseTo(14);
+  });
+
   it('uses paragraph alignLast for the final line of justified managed text', async () => {
     const composed = await composeFixture(
       [{ text: 'Centered final line' }],
