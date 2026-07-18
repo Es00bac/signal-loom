@@ -56,6 +56,8 @@ describe('i18n message catalog', () => {
     expect(translateFormat('paper.tabs.close', 'en', { title: 'Layout A' })).toBe('Close Layout A');
     expect(translateFormat('paper.tabs.close', 'ja', { title: 'レイアウト A' })).toBe('「レイアウト A」を閉じる');
     expect(translateFormat('fonts.browser.catalogError', 'ja', { detail: '接続なし' })).toBe('同梱フォントライブラリを利用できません：接続なし');
+    expect(translate('fonts.browser.catalogFailureFallback', 'ja')).toBe('カタログの診断情報が提供されませんでした。');
+    expect(translate('fonts.browser.selectionFailureFallback', 'en')).toBe('No selection diagnostic was provided.');
   });
 
   it('discloses every restored settings category in both locales', () => {

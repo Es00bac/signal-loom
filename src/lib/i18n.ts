@@ -71,6 +71,8 @@ export const MESSAGES = {
   },
   'fonts.browser.catalogError': { en: 'Bundled font library unavailable: {detail}', ja: '同梱フォントライブラリを利用できません：{detail}' },
   'fonts.browser.selectionError': { en: 'Could not select this font face: {detail}', ja: 'この書体を選択できません：{detail}' },
+  'fonts.browser.catalogFailureFallback': { en: 'No catalog diagnostic was provided.', ja: 'カタログの診断情報が提供されませんでした。' },
+  'fonts.browser.selectionFailureFallback': { en: 'No selection diagnostic was provided.', ja: '選択エラーの診断情報が提供されませんでした。' },
   'fonts.browser.specimenLoading': { en: 'Preparing exact specimen…', ja: '正確な見本を準備中…' },
   'fonts.browser.specimenUnavailable': { en: 'Exact specimen unavailable', ja: '正確な見本を表示できません' },
   'fonts.browser.familyFaceAria': { en: '{family}, {face}', ja: '{family}、{face}' },

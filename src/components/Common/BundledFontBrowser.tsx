@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp, LoaderCircle, Search, ShieldCheck, Type } from 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   bundledFontFaceRuntimeFamilyName,
+  bundledFontFaceIdentitySignature,
   bundledFontFaceStyleDescriptor,
   bundledFontFaceVariationSettingsCss,
   createBundledFontFaceReference,
@@ -70,9 +71,26 @@ function createSelectionAuthorityGeneration(..._inputs: readonly unknown[]): Sel
 }
 
 type SpecimenState =
-  | { status: 'waiting' | 'loading' }
-  | { status: 'ready'; fontFamily: string; fontStretch: string; fontStyle: string; fontVariationSettings?: string; fontWeight: number }
-  | { status: 'error'; detail: string };
+  | { bridge: SignalLoomNativeBridge | undefined; identity: string; status: 'waiting' | 'loading' }
+  | { bridge: SignalLoomNativeBridge | undefined; identity: string; status: 'ready'; fontFamily: string; fontStretch: string; fontStyle: string; fontVariationSettings?: string; fontWeight: number }
+  | { bridge: SignalLoomNativeBridge | undefined; identity: string; status: 'error'; detail: string };
+
+function bundledFontSpecimenInputIdentity(family: BundledFontFamily, face: BundledFontFace): string {
+  return bundledFontFaceIdentitySignature({
+    kind: 'bundled',
+    schemaVersion: 2,
+    faceId: face.id,
+    family: family.family,
+    weight: face.weight,
+    style: face.style,
+    ...(face.style === 'oblique' ? { obliqueAngleDeg: 14 } : {}),
+    stretchPercent: face.stretchPercent,
+    ...(face.variable ? { variationSettings: Object.fromEntries(Object.entries(face.axes).map(([tag, axis]) => [tag, axis.default])) } : {}),
+    collectionIndex: face.collectionIndex,
+    sha256: face.sha256,
+    byteLength: face.byteLength,
+  });
+}
 
 function BundledFontSpecimen({
   bridge,
@@ -85,20 +103,33 @@ function BundledFontSpecimen({
 }) {
   const { t } = useI18n();
   const specimenRef = useRef<HTMLSpanElement | null>(null);
-  const [state, setState] = useState<SpecimenState>({ status: 'waiting' });
+  const identity = bundledFontSpecimenInputIdentity(family, face);
+  const [state, setState] = useState<SpecimenState>({ bridge, identity, status: 'waiting' });
+  // Passive effects run after a new face has already committed. Never let the preceding face's
+  // ready alias cross that render boundary: readiness belongs to one bridge + complete face identity.
+  const currentState: SpecimenState = state.bridge === bridge && state.identity === identity
+    ? state
+    : { bridge, identity, status: 'waiting' };
 
   useEffect(() => {
     let cancelled = false;
     let started = false;
     let observer: IntersectionObserver | undefined;
+    const requestIdentity = bundledFontSpecimenInputIdentity(family, face);
     const load = () => {
       if (started) return;
       started = true;
-      setState({ status: 'loading' });
+      setState((current) => (
+        current.bridge === bridge && current.identity === requestIdentity && current.status === 'ready'
+          ? current
+          : { bridge, identity: requestIdentity, status: 'loading' }
+      ));
       void ensureBundledFontFaceRegistered(family, face).then(() => {
         if (cancelled || getSignalLoomNativeBridge() !== bridge) return;
         const reference = createBundledFontFaceReference(family, face);
         setState({
+          bridge,
+          identity: bundledFontSpecimenInputIdentity(family, face),
           status: 'ready',
           fontFamily: formatFontFamily(bundledFontFaceRuntimeFamilyName(reference)),
           fontStretch: `${reference.stretchPercent}%`,
@@ -108,7 +139,7 @@ function BundledFontSpecimen({
         });
       }).catch((reason) => {
         if (cancelled || getSignalLoomNativeBridge() !== bridge) return;
-        setState({ status: 'error', detail: reason instanceof Error ? reason.message : t('fonts.browser.specimenUnavailable') });
+        setState({ bridge, identity: requestIdentity, status: 'error', detail: reason instanceof Error ? reason.message : t('fonts.browser.specimenUnavailable') });
       });
     };
 
@@ -129,20 +160,20 @@ function BundledFontSpecimen({
       cancelled = true;
       observer?.disconnect();
     };
-  }, [bridge, face, family, t]);
+  }, [bridge, face, family, identity, t]);
 
-  if (state.status === 'ready') {
+  if (currentState.status === 'ready') {
     return (
       <span
         data-bundled-font-specimen={face.id}
         data-font-ready="true"
         ref={specimenRef}
         style={{
-          fontFamily: state.fontFamily,
-          fontStretch: state.fontStretch,
-          fontStyle: state.fontStyle,
-          fontVariationSettings: state.fontVariationSettings,
-          fontWeight: state.fontWeight,
+          fontFamily: currentState.fontFamily,
+          fontStretch: currentState.fontStretch,
+          fontStyle: currentState.fontStyle,
+          fontVariationSettings: currentState.fontVariationSettings,
+          fontWeight: currentState.fontWeight,
         }}
       >
         Ag あア
@@ -152,14 +183,14 @@ function BundledFontSpecimen({
 
   return (
     <span
-      aria-busy={state.status === 'loading'}
+      aria-busy={currentState.status === 'loading'}
       className="font-sans"
       data-bundled-font-specimen={face.id}
       data-font-ready="false"
       ref={specimenRef}
-      title={state.status === 'error' ? state.detail : undefined}
+      title={currentState.status === 'error' ? currentState.detail : undefined}
     >
-      {state.status === 'error' ? t('fonts.browser.specimenUnavailable') : t('fonts.browser.specimenLoading')}
+      {currentState.status === 'error' ? t('fonts.browser.specimenUnavailable') : t('fonts.browser.specimenLoading')}
     </span>
   );
 }
@@ -240,12 +271,12 @@ export function BundledFontBrowser({
       if (!cancelled && getSignalLoomNativeBridge() === bridge) {
         setCatalogState({
           bridge,
-          error: reason instanceof Error ? reason.message : 'Bundled font library is unavailable.',
+          error: reason instanceof Error ? reason.message : t('fonts.browser.catalogFailureFallback'),
         });
       }
     });
     return () => { cancelled = true; };
-  }, [available, bridge, catalog, open]);
+  }, [available, bridge, catalog, open, t]);
 
   const visibleFamilies = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
@@ -279,7 +310,7 @@ export function BundledFontBrowser({
       if (authority.isCurrent()) {
         setSelectionErrorState({
           authority,
-          error: reason instanceof Error ? reason.message : 'The font face could not be selected.',
+          error: reason instanceof Error ? reason.message : t('fonts.browser.selectionFailureFallback'),
           generation,
         });
       }

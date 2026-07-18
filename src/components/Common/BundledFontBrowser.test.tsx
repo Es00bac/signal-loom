@@ -230,6 +230,131 @@ describe('BundledFontBrowser', () => {
     await act(async () => root.unmount());
   });
 
+  it('revokes face A readiness while face B is unseen, delayed, failed, and then recovered', async () => {
+    const faceACatalog = structuredClone(catalog);
+    faceACatalog.familyCount = 1;
+    faceACatalog.faceCount = 1;
+    faceACatalog.families = [faceACatalog.families[1]];
+    faceACatalog.families[0].faces[0].id = 'tokyo:specimen-transition-a';
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={faceACatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    await waitForBrowserToggle(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-font-ready="true"]')).not.toBeNull());
+    });
+    const faceA = faceACatalog.families[0].faces[0];
+    const faceAAlias = `"${bundledFontFaceRuntimeFamilyName(createBundledFontFaceReference(faceACatalog.families[0], faceA))}"`;
+    expect(host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-a"]')?.style.fontFamily).toBe(faceAAlias);
+
+    let intersect: (() => void) | undefined;
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) {
+        intersect = () => callback(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
+      }
+      disconnect() {}
+      observe() {}
+    });
+    let settleFaceBFetch: ((response: Response) => void) | undefined;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolveResponse) => { settleFaceBFetch = resolveResponse; })));
+    const faceBCatalog = structuredClone(faceACatalog);
+    const faceB = faceBCatalog.families[0].faces[0];
+    faceB.id = 'tokyo:specimen-transition-b';
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={faceBCatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    const unseenFaceB = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-b"]')!;
+    expect(unseenFaceB.dataset.fontReady).toBe('false');
+    expect(unseenFaceB.style.fontFamily).toBe('');
+    expect(unseenFaceB.style.fontFamily).not.toBe(faceAAlias);
+
+    await act(async () => intersect?.());
+    const delayedFaceB = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-b"]')!;
+    expect(delayedFaceB.dataset.fontReady).toBe('false');
+    expect(delayedFaceB.style.fontFamily).toBe('');
+
+    await act(async () => settleFaceBFetch?.(new Response(null, { status: 503 })));
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('Exact specimen unavailable'));
+    });
+    const failedFaceB = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-b"]')!;
+    expect(failedFaceB.dataset.fontReady).toBe('false');
+    expect(failedFaceB.style.fontFamily).toBe('');
+    expect(failedFaceB.style.fontFamily).not.toBe(faceAAlias);
+
+    vi.stubGlobal('IntersectionObserver', undefined);
+    const recoveryFetch = vi.fn(async () => new Response(testFontBytes));
+    vi.stubGlobal('fetch', recoveryFetch);
+    let resolveRecoveryFontFace: (() => void) | undefined;
+    const recoveryFontFaceLoad = vi.fn(function recoveryLoad(this: object) {
+      return new Promise<object>((resolveLoad) => { resolveRecoveryFontFace = () => resolveLoad(this); });
+    });
+    vi.stubGlobal('FontFace', class {
+      load() { return recoveryFontFaceLoad.call(this); }
+    });
+    const recoveredCatalog = structuredClone(faceBCatalog);
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={recoveredCatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    await vi.waitFor(() => expect(recoveryFontFaceLoad).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      resolveRecoveryFontFace?.();
+      await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+    });
+    await vi.waitFor(() => {
+      const candidate = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-b"]');
+      expect(candidate?.dataset.fontReady, `${candidate?.outerHTML}\nfetches=${recoveryFetch.mock.calls.length}`).toBe('true');
+    });
+    const recoveredFace = recoveredCatalog.families[0].faces[0];
+    const faceBAlias = `"${bundledFontFaceRuntimeFamilyName(createBundledFontFaceReference(recoveredCatalog.families[0], recoveredFace))}"`;
+    const recoveredSpecimen = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-b"]')!;
+    expect(recoveredSpecimen.style.fontFamily).toBe(faceBAlias);
+    expect(recoveredSpecimen.style.fontFamily).not.toBe(faceAAlias);
+    expect(recoveredSpecimen.style.fontWeight).toBe('400');
+    expect(recoveredSpecimen.style.fontStyle).toBe('normal');
+    expect(recoveredSpecimen.style.fontStretch).toBe('100%');
+    await act(async () => root.unmount());
+  });
+
+  it('localizes a non-Error selection failure instead of exposing static English fallback copy', async () => {
+    useSettingsStore.setState({ locale: 'ja' });
+    const failureCatalog = structuredClone(catalog);
+    failureCatalog.familyCount = 1;
+    failureCatalog.faceCount = 1;
+    failureCatalog.families = [failureCatalog.families[1]];
+    failureCatalog.families[0].faces[0].id = 'tokyo:non-error-selection';
+    vi.stubGlobal('IntersectionObserver', class { disconnect() {} observe() {} });
+    let rejectFontFaceLoad: ((reason: unknown) => void) | undefined;
+    const fontFaceLoad = vi.fn(() => new Promise<object>((_resolveLoad, rejectLoad) => { rejectFontFaceLoad = rejectLoad; }));
+    vi.stubGlobal('FontFace', class {
+      load() { return fontFaceLoad(); }
+    });
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={failureCatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    await waitForBrowserToggle(host);
+    const faceButton = host.querySelector<HTMLButtonElement>('button[aria-label*="Tokyo Regular"]');
+    expect(faceButton).not.toBeNull();
+    expect(faceButton?.disabled).toBe(false);
+    await act(async () => faceButton!.click());
+    await vi.waitFor(() => expect(fontFaceLoad).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      rejectFontFaceLoad?.('font load rejected');
+      await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+    });
+    await vi.waitFor(() => expect(host.textContent, `fontFaceLoads=${fontFaceLoad.mock.calls.length}`).toContain('この書体を選択できません：選択エラーの診断情報が提供されませんでした。'));
+    await act(async () => root.unmount());
+  });
+
   it('renders Japanese dynamic, plural, tooltip, empty, and catalog-error states', async () => {
     useSettingsStore.setState({ locale: 'ja' });
     const singleCatalog = structuredClone(catalog);
@@ -261,12 +386,13 @@ describe('BundledFontBrowser', () => {
 
     const errorHost = document.createElement('div');
     const errorRoot = createRoot(errorHost);
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject('catalog lookup rejected')));
     await act(async () => errorRoot.render(
       <BundledFontBrowser initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
     ));
     await waitForBrowserToggle(errorHost);
     await act(async () => {
-      await vi.waitFor(() => expect(errorHost.textContent).toContain('同梱フォントライブラリを利用できません'));
+      await vi.waitFor(() => expect(errorHost.textContent).toContain('同梱フォントライブラリを利用できません：カタログの診断情報が提供されませんでした。'));
     });
     await act(async () => errorRoot.unmount());
   });
