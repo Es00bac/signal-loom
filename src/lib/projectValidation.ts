@@ -1419,9 +1419,6 @@ export function sanitizeProjectDocument(input: unknown, fallbackName = 'Sloom St
     ...(paper?.assetIds ?? []),
     ...((paper?.documents ?? []).flatMap((entry) => entry.assetIds ?? [])),
   ]);
-  if (paperAssetIds.size > 0 && !paperAssets) {
-    throw new Error('The selected project references managed Paper assets but omits the required paperAssets section.');
-  }
   if (paperAssets) {
     const supplied = new Set(paperAssets.assets.map((entry) => entry.ref.id));
     // Explicit policy exclusions/missing-at-save records are not an integrity mismatch: opening

@@ -561,6 +561,40 @@ async function buildProjectPaperPortableAssets(
   return built.section;
 }
 
+const LEGACY_PAPER_ASSETS_UNAVAILABLE_ERROR =
+  'The selected project references managed Paper assets but omits the required paperAssets section.';
+
+/**
+ * Projects saved before the portable Paper section existed can still reopen on the profile that
+ * created them: their content-addressed bytes already live in the local repository. Rebuild the
+ * section in memory only after replacement was authorized, requiring every packageable record to
+ * verify. The next ordinary Save then persists the section and makes the project self-contained.
+ * A copied legacy project whose local bytes are absent continues to fail closed.
+ */
+async function migrateLegacyProjectPaperAssets(
+  document: FlowProjectDocument,
+): Promise<FlowProjectDocument> {
+  if (document.paperAssets) return document;
+  const documents = collectProjectPaperDocuments(document.paper);
+  if (documents.length === 0) return document;
+
+  const plan = planPaperPortableAssets(documents);
+  if (plan.sources.length === 0 && plan.exclusions.length === 0) return document;
+
+  try {
+    const built = await buildPaperPortableAssetsSection(documents, paperAssetRepository);
+    if (!built.section || built.missing.length > 0) {
+      throw new Error(built.missing.map((entry) => entry.id).join(', '));
+    }
+    return { ...document, paperAssets: built.section };
+  } catch (error) {
+    const detail = error instanceof Error && error.message
+      ? ` Exact local records could not be verified: ${error.message}`
+      : '';
+    throw new Error(`${LEGACY_PAPER_ASSETS_UNAVAILABLE_ERROR}${detail}`);
+  }
+}
+
 function rollbackBookkeeping(rollback: ProjectReplacementBookkeepingRollback | undefined): void {
   if (!rollback) return;
   try {
@@ -804,6 +838,8 @@ async function prepareNormalizedProjectDocumentTransaction(
   const preparationToken = captureProjectWorkspaceToken();
   let preparedDocument = sanitizedDocument;
   await upgradeLegacyBundledFontIssuesInProject(preparedDocument);
+  assertGuardedReplacementRequestCurrent(requestId, requestGuard);
+  preparedDocument = await migrateLegacyProjectPaperAssets(preparedDocument);
   assertGuardedReplacementRequestCurrent(requestId, requestGuard);
   assertPortablePaperFontRecordsPresent(preparedDocument.paper, preparedDocument.paperAssets);
   for (const paperDocument of collectProjectPaperDocuments(preparedDocument.paper)) {

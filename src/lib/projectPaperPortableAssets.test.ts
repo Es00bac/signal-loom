@@ -288,6 +288,28 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     expect(refs.imageA.id).toMatch(/^sha256:/);
   });
 
+  it('migrates a legacy .sloom without a portable section when every exact local record is available', async () => {
+    const { refs } = await seedTwoTabProject();
+    const saved = await buildSavedPortableProject();
+    delete saved.paperAssets;
+
+    // Simulate reopening on the originating profile: reset the workspace while retaining its
+    // content-addressed Paper repository.
+    await resetAllStores();
+    await restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
+
+    expect(usePaperStore.getState().documents.map((tab) => tab.document.title)).toEqual([
+      'Tab A Layout',
+      'Tab B Layout',
+    ]);
+    const resaved = await buildCurrentProjectDocument({ includeAssetData: true } as never);
+    expect(new Set((resaved.paperAssets?.assets ?? []).map((entry) => entry.ref.id))).toEqual(
+      new Set([refs.imageA.id, refs.imageB.id, refs.font.id, refs.license.id, refs.icc.id]),
+    );
+  });
+
   it('rejects a current portable section before staging when required license text is absent', async () => {
     const { refs } = await seedTwoTabProject();
     const saved = await buildSavedPortableProject();
