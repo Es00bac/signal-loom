@@ -18,6 +18,7 @@ import type { PaperAssetRepository } from './PaperAssetRepository';
 import {
   normalizePaperFontFamilyId,
   normalizePaperFontStretch,
+  normalizePaperFontVariationSettings,
   normalizePaperFontWeight,
 } from '../../../lib/paperManagedFonts';
 import { isPaperManagedIccProfile } from '../../../lib/paperManagedIccProfiles';
@@ -160,10 +161,64 @@ function normalizeUnicodeRanges(value: unknown): PaperManagedFontFace['unicodeRa
   });
 }
 
-function normalizeFontSource(value: unknown): PaperManagedFontFace['source'] {
-  if (!isRecord(value) || (value.kind !== 'open-catalog' && value.kind !== 'user-import')) {
-    return { kind: 'user-import' };
+function isCanonicalBundledFontSource(value: Record<string, unknown>): boolean {
+  if (
+    value.kind !== 'bundled'
+    || typeof value.url !== 'string'
+    || value.url.length === 0
+    || value.url.length > 2_048
+    || value.url.trim() !== value.url
+    || typeof value.version !== 'string'
+    || value.version.length === 0
+    || value.version.length > 256
+    || value.version.trim() !== value.version
+  ) return false;
+  try {
+    const url = new URL(value.url);
+    if (
+      url.href !== value.url
+      || url.protocol !== 'signal-loom-font:'
+      || url.hostname !== 'library'
+      || url.username || url.password || url.port || url.search || url.hash
+    ) return false;
+    const segments = url.pathname.slice(1).split('/');
+    if (segments.length < 2 || segments.some((segment) => !segment)) return false;
+    const decoded = segments.map((segment) => decodeURIComponent(segment));
+    return decoded.every((segment) => segment !== '.' && segment !== '..' && !/[\\/\0]/.test(segment))
+      && /\.(?:otf|ttf)$/i.test(decoded.at(-1) ?? '');
+  } catch {
+    return false;
   }
+}
+
+function hasBundledLicenseEvidence(license: PaperManagedFontFace['license']): boolean {
+  if (
+    !license.id
+    || !license.attribution
+    || !isBinaryAssetRef(license.textAsset)
+    || license.textAsset.mimeType !== 'text/plain'
+    || license.textAsset.byteLength === 0
+  ) return false;
+  try {
+    const attribution = new URL(license.attribution);
+    return attribution.protocol === 'https:' || attribution.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeFontSource(
+  value: unknown,
+  license: PaperManagedFontFace['license'],
+): PaperManagedFontFace['source'] {
+  if (!isRecord(value)) return { kind: 'user-import' };
+  if (value.kind === 'bundled') {
+    if (!isCanonicalBundledFontSource(value) || !hasBundledLicenseEvidence(license)) {
+      return { kind: 'user-import' };
+    }
+    return { kind: 'bundled', url: value.url as string, version: value.version as string };
+  }
+  if (value.kind !== 'open-catalog' && value.kind !== 'user-import') return { kind: 'user-import' };
   return {
     kind: value.kind,
     ...(typeof value.url === 'string' && value.url ? { url: value.url } : {}),
@@ -218,6 +273,14 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
     && candidate.collectionIndex >= 0
     ? candidate.collectionIndex
     : 0;
+  const variableAxes = normalizeVariableAxes(candidate.variableAxes);
+  const variationSettings = isRecord(candidate.variationSettings)
+    ? normalizePaperFontVariationSettings(
+      candidate.variationSettings as Record<string, number>,
+      variableAxes,
+    )
+    : undefined;
+  const license = normalizeFontLicense(candidate.license);
   const attestation = normalizeFontAttestation(candidate.attestation);
   return {
     id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `imported-font-${fontAsset.sha256.slice(0, 12)}`,
@@ -235,7 +298,8 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
       typeof candidate.stretchPercent === 'number' ? candidate.stretchPercent : undefined,
     ),
     collectionIndex,
-    variableAxes: normalizeVariableAxes(candidate.variableAxes),
+    variableAxes,
+    ...(variationSettings ? { variationSettings } : {}),
     unicodeRanges: normalizeUnicodeRanges(candidate.unicodeRanges),
     format: hasManagedFontFormat(candidate.format) ? candidate.format : 'truetype',
     fontAsset,
@@ -243,8 +307,8 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
       ? candidate.embeddability
       : candidate.embeddable === false ? 'restricted' : 'unknown',
     canSubset: candidate.canSubset !== false,
-    source: normalizeFontSource(candidate.source),
-    license: normalizeFontLicense(candidate.license),
+    source: normalizeFontSource(candidate.source, license),
+    license,
     ...(attestation ? { attestation } : {}),
   };
 }

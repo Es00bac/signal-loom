@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import type { PaperDocument } from '../../../types/paper';
+import { classifyPaperFontPackaging } from '../../../lib/paperManagedFonts';
 import { MemoryPaperAssetRepository } from './PaperAssetRepository';
 import {
   collectReachablePaperAssetIds,
@@ -131,6 +132,89 @@ describe('Paper document assets', () => {
 
     expect(JSON.stringify(migrated)).not.toMatch(/dataBase64|BAUG/);
     expect(managed.importedFonts?.[0]).toMatchObject({ id: 'font-1', fontAsset: record.ref });
+  });
+
+  it('preserves exact bundled font provenance, license evidence, and catalog face metadata without aliases', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const font = await createBinaryAssetRecord(new Uint8Array([0, 1, 0, 0, 26]), {
+      mimeType: 'font/ttf',
+      fileName: 'fable-serif-variable.ttf',
+    });
+    const license = await createBinaryAssetRecord(new TextEncoder().encode('OFL fixture'), {
+      mimeType: 'text/plain',
+      fileName: 'OFL.txt',
+    });
+    await repository.put(font);
+    await repository.put(license);
+    const source = {
+      kind: 'bundled' as const,
+      url: 'signal-loom-font://library/families/fable-serif/fable-serif-variable.ttf',
+      version: 'catalog-2026.07.18',
+    };
+    const licenseEvidence = {
+      id: 'OFL-1.1',
+      textAsset: license.ref,
+      attribution: 'https://example.test/fable-serif',
+    };
+    const face = {
+      id: 'bundled-fable-serif-variable',
+      familyId: 'fable serif',
+      familyName: 'Fable Serif',
+      postscriptName: 'FableSerif-Variable',
+      weight: 425,
+      style: 'oblique' as const,
+      obliqueAngleDeg: 11.5,
+      stretchPercent: 87.5,
+      collectionIndex: 0,
+      variableAxes: { wght: { min: 200, default: 400, max: 900 } },
+      variationSettings: { wght: 425 },
+      unicodeRanges: [{ start: 0x20, end: 0x2ff }],
+      format: 'truetype' as const,
+      fontAsset: font.ref,
+      embeddability: 'unknown' as const,
+      canSubset: true,
+      source,
+      license: licenseEvidence,
+    };
+    const document = { id: 'bundled-provenance', pages: [], importedFonts: [face] } as unknown as PaperDocument;
+    const before = JSON.parse(JSON.stringify(document));
+
+    const migrated = await migrateLegacyPaperBinaryFields(document, repository);
+    const restored = migrated.importedFonts?.[0];
+
+    expect(classifyPaperFontPackaging(face)).toEqual({ allowed: true, licenseTextRequired: true });
+    expect(restored).toEqual(face);
+    expect(restored && classifyPaperFontPackaging(restored)).toEqual(classifyPaperFontPackaging(face));
+    expect(document).toEqual(before);
+    expect(restored).not.toBe(face);
+    expect(restored?.source).not.toBe(source);
+    expect(restored?.license).not.toBe(licenseEvidence);
+    expect(restored?.fontAsset).not.toBe(font.ref);
+    expect(restored?.license.textAsset).not.toBe(license.ref);
+  });
+
+  it('does not retain bundled trust for a malformed non-library source record', async () => {
+    const font = await createBinaryAssetRecord(new Uint8Array([0, 1, 0, 0, 27]), { mimeType: 'font/ttf' });
+    const license = await createBinaryAssetRecord(new TextEncoder().encode('OFL fixture'), { mimeType: 'text/plain' });
+    const repository = new MemoryPaperAssetRepository();
+    await repository.put(font);
+    await repository.put(license);
+    const document = {
+      id: 'malformed-bundled-provenance',
+      pages: [],
+      importedFonts: [{
+        id: 'forged-bundled-face',
+        familyName: 'Forged Face',
+        format: 'truetype',
+        fontAsset: font.ref,
+        source: { kind: 'bundled', url: 'https://example.test/not-the-library.ttf', version: '1' },
+        license: { id: 'OFL-1.1', textAsset: license.ref, attribution: 'https://example.test/font' },
+      }],
+    } as unknown as PaperDocument;
+
+    const migrated = await migrateLegacyPaperBinaryFields(document, repository);
+
+    expect(migrated.importedFonts?.[0]?.source).toEqual({ kind: 'user-import' });
   });
 
   it('migrates a URL-encoded legacy data URL into a managed record', async () => {

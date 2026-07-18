@@ -99,5 +99,5 @@ export async function deserializeSlppr(
     await repository.put(record);
   }
   await collectRequiredRecords(opened.manifest.document, repository);
-  return opened.manifest.document;
+  return migrateLegacyPaperBinaryFields(opened.manifest.document, repository);
 }
