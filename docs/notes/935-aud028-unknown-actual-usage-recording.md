@@ -8,6 +8,8 @@ Base: `17b2f76e66fef5aa460d259cb7ccad0cde7bd7b5`
 
 Code/test commit: `5ec060106cec132393b589c29e7d9dfcf1b3f133`
 
+Independent-gate correction commit: `7c50c15e5234541dce6522e2fbf0bca4b2841d91`
+
 ## Status
 
 AUD-028 is implemented and locally verified. It still requires the normal independent integration decision; this author lane does not self-approve closure.
@@ -76,3 +78,57 @@ The complete `flowRunOwnership.test.ts` run has 26 passing tests and one unrelat
 ## Residual risk
 
 Provider APIs can still omit identity details in future response formats, but the shared boundary resolves identity from the runtime settings rather than trusting optional response metadata. Unknown entries intentionally cannot estimate cost; they preserve the financial fact of execution without claiming a number the provider did not supply.
+
+## Superseding independent-gate corrections
+
+The first independent final gate confirmed the core missing-telemetry correction, then reproduced
+three additional shipping gaps at clean candidate `6e836278c0ddc58068bfdbd679746925392f2510`:
+
+- proxied Vision Verify constructed an actual/unknown usage object before the shared success
+  fallback, so the fallback returned early and left provider/model identity absent;
+- a successful generation followed by paid Stability auto-upscale collapsed two provider calls into
+  one combined record under the generation model; and
+- Video Workspace narration called the shared executor outside Flow's run store but never crossed a
+  project-usage recording boundary.
+
+The correction keeps identity enrichment and unknown synthesis at explicit success boundaries.
+Existing telemetry remains authoritative, while absent provider/model/image-count fields are filled
+from the canonical runtime node/settings resolution. Merely calling the generic project recorder with
+`usage: undefined` no longer implies success; synthesis requires `executionSucceeded: true`, and the
+new async wrapper owns that transition for non-Flow callers.
+
+A successful paid Stability post-process now returns and emits two ordered attributions: the base
+generation under its exact provider/model, then an `upscale` operation under provider `stability` and
+model `stable-image-upscale-fast` or `stable-image-upscale-conservative`. The existing aggregate usage
+remains available to result history, but Flow skips it when the exact attributions exist, preventing a
+third/double-counted ledger entry. Emission occurs only after the whole successful retry boundary;
+failed, misconfigured, or cancelled post-processing creates no phantom upscale record.
+
+Video Workspace narration now uses `executeAndRecordProjectUsage` with `workspace: 'editor'`. The
+provider promise must resolve before one record is written, and the record is written before result
+validation or Source materialization. Provider failure and cancellation never cross the boundary.
+
+### Correction red proof
+
+Before the production correction, the new assertions produced eight expected failures across proxy
+identity, direct/proxy Stability attribution, retry exact-once emission, generic-recorder hardening,
+and Video narration wiring. The no-phantom failure/cancellation guards already passed and remain as
+permanent protection. One unrelated stale Source-item rollback assertion also failed exactly as it
+does on the clean sibling baseline and was not changed.
+
+### Correction green verification
+
+- Focused corrected boundary: **5 files, 64 tests passed**.
+- Usage/provider/retry/Video/Source adjacency: **13 files, 204 tests passed**.
+- Immutable-owner success/failure/cancel selection: **4 tests passed**.
+- Adjacent Flow store/cancellation/usage: **3 files, 62 tests passed**.
+- Forced app and Node TypeScript: **passed**.
+- ESLint on all nine changed production/test files: **zero errors** (11 pre-existing
+  `VideoWorkspace.tsx` warnings).
+- `npm run verify:flow-production`: **9 files, 374 tests passed**; static audit passed with
+  **63 nodes, 182 model contracts, and 178 normal model options**.
+- `npm run build`: **passed**, 3,279 modules transformed.
+- `git diff --check`: **clean**.
+
+This correction remains an author candidate. It requires a fresh independent final gate and is not
+self-approved or integrated by this lane.
