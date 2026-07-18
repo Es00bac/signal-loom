@@ -7,7 +7,9 @@ import {
   collectExactPaperManagedFaces,
   PaperExactManagedFontError,
   paperManagedFontCssSource,
+  paperManagedFontDescriptor,
   paperFontStyleDescriptor,
+  paperManagedFontLoadTimeoutMs,
   paperManagedFontFamilyForLivePaint,
   readPaperManagedFontManifest,
   verifyExactPaperManagedFontReadiness,
@@ -43,6 +45,23 @@ describe('exact managed Paper font identities', () => {
       check: () => true,
     };
     await expect(verifyExactPaperManagedFontReadiness({ fonts } as unknown as Document, css)).rejects.toThrow(/requested identity/i);
+  });
+
+  it('uses Chromium-parseable shorthand keywords for exact stretch identity', () => {
+    expect(paperManagedFontDescriptor({
+      identity: 'condensed', familyAlias: 'exact-condensed', postscriptName: 'Exact-Condensed',
+      weight: 400, style: 'normal', stretchPercent: 75, format: 'truetype', collectionIndex: 0,
+    })).toBe('normal 400 condensed 16px "exact-condensed"');
+    expect(() => paperManagedFontDescriptor({
+      identity: 'noncanonical', familyAlias: 'exact-custom', postscriptName: 'Exact-Custom',
+      weight: 400, style: 'normal', stretchPercent: 82, format: 'truetype', collectionIndex: 0,
+    })).toThrow(/no exact CSS shorthand keyword/i);
+  });
+
+  it('scales large-face registration timeouts while keeping them bounded', () => {
+    expect(paperManagedFontLoadTimeoutMs(3)).toBe(5_000);
+    expect(paperManagedFontLoadTimeoutMs(9_589_900)).toBe(22_500);
+    expect(paperManagedFontLoadTimeoutMs(100 * 1024 * 1024)).toBe(30_000);
   });
 
   it.each([

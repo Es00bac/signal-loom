@@ -15,6 +15,7 @@ import {
   assertBrowserPaintablePaperManagedFace,
   PaperExactManagedFontError,
   paperFontStyleDescriptor,
+  paperManagedFontLoadTimeoutMs,
   paperManagedFontCssSource,
   paperManagedFontFamilyAlias,
   verifyExactPaperManagedFaceRegistration,
@@ -35,11 +36,10 @@ export interface PaperImportedFontRegistrationState {
 }
 
 const liveRegistrationByDocument = new WeakMap<Document, Map<string, Promise<void>>>();
-const LIVE_FONT_LOAD_TIMEOUT_MS = 2500;
 
-function loadManagedFontFaceBounded(face: FontFace, label: string): Promise<FontFace> {
+function loadManagedFontFaceBounded(face: FontFace, label: string, timeoutMs: number): Promise<FontFace> {
   return new Promise((resolve, reject) => {
-    const timer = globalThis.setTimeout(() => reject(new PaperExactManagedFontError(`${label} timed out before exact live paint; retry after restoring the standalone font.`)), LIVE_FONT_LOAD_TIMEOUT_MS);
+    const timer = globalThis.setTimeout(() => reject(new PaperExactManagedFontError(`${label} timed out before exact live paint; retry after restoring the standalone font.`)), timeoutMs);
     face.load().then((loaded) => {
       globalThis.clearTimeout(timer);
       resolve(loaded);
@@ -99,9 +99,10 @@ export function ensurePaperImportedFontRegistered(
       style: paperFontStyleDescriptor(font.style, font.obliqueAngleDeg),
       stretch: `${font.stretchPercent}%`,
     });
-    const loaded = await loadManagedFontFaceBounded(face, `Managed face ${font.postscriptName || font.id}`);
+    const timeoutMs = paperManagedFontLoadTimeoutMs(font.fontAsset.byteLength);
+    const loaded = await loadManagedFontFaceBounded(face, `Managed face ${font.postscriptName || font.id}`, timeoutMs);
     target.fonts.add(loaded);
-    await verifyExactPaperManagedFaceRegistration(target, font);
+    await verifyExactPaperManagedFaceRegistration(target, font, timeoutMs);
   })().catch((error) => {
     registrations.delete(key);
     throw error;

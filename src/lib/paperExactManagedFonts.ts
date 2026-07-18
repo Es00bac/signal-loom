@@ -192,7 +192,7 @@ export function aliasPaperDocumentManagedFontFamilies(document: PaperDocument): 
   return { ...document, pages: document.pages.map((page) => ({ ...page, frames: page.frames.map((frame) => aliasFrame(frame, fonts)) })), parentPages: document.parentPages.map((page) => ({ ...page, frames: page.frames.map((frame) => aliasFrame(frame, fonts)) })) };
 }
 
-export interface PaperManagedFontManifestFace { identity: string; familyAlias: string; postscriptName: string; weight: number; style: PaperManagedFontStyle; obliqueAngleDeg?: number; stretchPercent: number; format: PaperManagedFontFace['format']; collectionIndex: number; variationSettings?: Record<string, number>; }
+export interface PaperManagedFontManifestFace { identity: string; familyAlias: string; postscriptName: string; weight: number; style: PaperManagedFontStyle; obliqueAngleDeg?: number; stretchPercent: number; byteLength?: number; format: PaperManagedFontFace['format']; collectionIndex: number; variationSettings?: Record<string, number>; }
 export interface PaperManagedFontManifest { version: 1; faces: PaperManagedFontManifestFace[]; }
 
 function paperManagedFontManifestFaceFor(face: PaperManagedFontFace): PaperManagedFontManifestFace {
@@ -205,6 +205,7 @@ function paperManagedFontManifestFaceFor(face: PaperManagedFontFace): PaperManag
     style: face.style,
     ...(face.style === 'oblique' ? { obliqueAngleDeg: canonicalPaperFontObliqueAngle(face.style, face.obliqueAngleDeg) } : {}),
     stretchPercent: face.stretchPercent,
+    byteLength: face.fontAsset.byteLength,
     format: face.format,
     collectionIndex: face.collectionIndex,
     ...(variationSettings ? { variationSettings } : {}),
@@ -252,6 +253,7 @@ export function readPaperManagedFontManifest(css: string | undefined): PaperMana
       && Number.isFinite(face.weight)
       && (face.style === 'normal' || face.style === 'italic' || face.style === 'oblique')
       && Number.isFinite(face.stretchPercent)
+      && (face.byteLength === undefined || (Number.isSafeInteger(face.byteLength) && face.byteLength > 0))
       && (face.format === 'truetype' || face.format === 'opentype-cff' || face.format === 'collection')
       && Number.isInteger(face.collectionIndex)
       && face.collectionIndex >= 0);
@@ -261,7 +263,36 @@ export function readPaperManagedFontManifest(css: string | undefined): PaperMana
   }
 }
 
-export function paperManagedFontDescriptor(face: PaperManagedFontManifestFace): string { return `${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)} ${face.weight} ${face.stretchPercent}% 16px "${face.familyAlias}"`; }
+const paperManagedFontStretchKeywords = new Map<number, string>([
+  [50, 'ultra-condensed'],
+  [62.5, 'extra-condensed'],
+  [75, 'condensed'],
+  [87.5, 'semi-condensed'],
+  [100, 'normal'],
+  [112.5, 'semi-expanded'],
+  [125, 'expanded'],
+  [150, 'extra-expanded'],
+  [200, 'ultra-expanded'],
+]);
+
+/** Chromium's FontFaceSet shorthand parser rejects percentage stretch even though @font-face accepts it. */
+export function paperManagedFontStretchDescriptor(stretchPercent: number): string {
+  const keyword = paperManagedFontStretchKeywords.get(stretchPercent);
+  if (!keyword) {
+    throw new PaperExactManagedFontError(`Managed font stretch ${stretchPercent}% has no exact CSS shorthand keyword.`);
+  }
+  return keyword;
+}
+
+/** Large CJK/variable faces need more than the old 2.5-second window, but registration remains bounded. */
+export function paperManagedFontLoadTimeoutMs(byteLength: number | undefined): number {
+  const mebibytes = Math.ceil(Math.max(0, Number(byteLength) || 0) / (1024 * 1024));
+  return Math.min(30_000, Math.max(5_000, 2_500 + mebibytes * 2_000));
+}
+
+export function paperManagedFontDescriptor(face: PaperManagedFontManifestFace): string {
+  return `${paperFontStyleDescriptor(face.style, face.obliqueAngleDeg)} ${face.weight} ${paperManagedFontStretchDescriptor(face.stretchPercent)} 16px "${face.familyAlias}"`;
+}
 
 const VERIFY_SAMPLE_TEXT = 'WMWMWMiiiii012345';
 
@@ -287,14 +318,16 @@ async function verifyRequestedFaceLoaded(
 }
 
 /** Bounded requested-identity verification. A hostile unrelated FontFace return cannot satisfy this. */
-export async function verifyExactPaperManagedFontReadiness(target: Document, css: string | undefined, timeoutMs = 2500): Promise<void> {
+export async function verifyExactPaperManagedFontReadiness(target: Document, css: string | undefined, timeoutMs?: number): Promise<void> {
   if (!css?.includes('@font-face')) return;
   const manifest = readPaperManagedFontManifest(css);
   if (!manifest) throw new PaperExactManagedFontError('Managed font payload has no exact identity manifest.');
-  const { fonts, bounded } = boundedFontFaceVerification(target, timeoutMs);
+  const readinessTimeoutMs = timeoutMs ?? Math.max(5_000, ...manifest.faces.map((face) => paperManagedFontLoadTimeoutMs(face.byteLength)));
+  const { fonts, bounded } = boundedFontFaceVerification(target, readinessTimeoutMs);
   await bounded(Promise.resolve(fonts.ready), 'Managed font readiness');
   for (const face of manifest.faces) {
-    await verifyRequestedFaceLoaded(fonts, face, bounded);
+    const faceTimeoutMs = timeoutMs ?? paperManagedFontLoadTimeoutMs(face.byteLength);
+    await verifyRequestedFaceLoaded(fonts, face, boundedFontFaceVerification(target, faceTimeoutMs).bounded);
   }
 }
 
@@ -302,7 +335,7 @@ export async function verifyExactPaperManagedFontReadiness(target: Document, css
  * Bounded single-face authentication for the LIVE editor: the exact registered alias must load with its
  * requested identity before the editor may paint or commit the face. Same proof as export readiness.
  */
-export async function verifyExactPaperManagedFaceRegistration(target: Document, face: PaperManagedFontFace, timeoutMs = 2500): Promise<void> {
+export async function verifyExactPaperManagedFaceRegistration(target: Document, face: PaperManagedFontFace, timeoutMs = paperManagedFontLoadTimeoutMs(face.fontAsset.byteLength)): Promise<void> {
   assertBrowserPaintablePaperManagedFace(face);
   const { fonts, bounded } = boundedFontFaceVerification(target, timeoutMs);
   await bounded(Promise.resolve(fonts.ready), 'Managed font readiness');

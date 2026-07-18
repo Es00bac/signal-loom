@@ -166,6 +166,7 @@ describe('license identity cross-window sync (AUD-015)', () => {
       expect(windowB.useSettingsStore.getState().license.licensed).toBe(false);
       expect(windowB.isCommercialExportUnlocked()).toBe(false);
       expect(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:change-token`)).toBeTruthy();
+      expect(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:license-change-token`)).toBeTruthy();
       expect(Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
         .some((key) => key?.startsWith(`${SETTINGS_STORAGE_KEY}:record:licenseKey:`))).toBe(true);
     });
@@ -220,6 +221,46 @@ describe('license identity cross-window sync (AUD-015)', () => {
       expect(windowB.useSettingsStore.getState().licenseKey).toBe('');
       expect(windowB.useSettingsStore.getState().license.licensed).toBe(false);
     });
+  });
+
+  it('does not rehydrate a licensed renderer for unrelated settings persistence notices', async () => {
+    seedPersistedSettings({ licenseKey: VALID_KEY });
+    const renderer = await importRendererWindow();
+    const storageListeners = new Set<(event: StorageEvent) => void>();
+    const eventWindow = window as unknown as {
+      addEventListener?: (type: string, listener: (event: StorageEvent) => void) => void;
+      removeEventListener?: (type: string, listener: (event: StorageEvent) => void) => void;
+    };
+    const previousAddEventListener = eventWindow.addEventListener;
+    const previousRemoveEventListener = eventWindow.removeEventListener;
+    eventWindow.addEventListener = (type, listener) => { if (type === 'storage') storageListeners.add(listener); };
+    eventWindow.removeEventListener = (type, listener) => { if (type === 'storage') storageListeners.delete(listener); };
+    teardowns.push(() => {
+      eventWindow.addEventListener = previousAddEventListener;
+      eventWindow.removeEventListener = previousRemoveEventListener;
+    });
+    teardowns.push(renderer.installLicenseCrossWindowSync());
+    await renderer.waitForSettingsHydration();
+    await vi.waitFor(() => {
+      expect(renderer.useSettingsStore.getState().license.licensed).toBe(true);
+    });
+
+    const rehydrate = vi.spyOn(renderer.useSettingsStore.persist, 'rehydrate');
+    renderer.useSettingsStore.getState().setProviderSetting('atlasBaseUrl', 'https://unrelated.example.test');
+    await vi.waitFor(() => {
+      expect(readPersistedState().providerSettings).toMatchObject({ atlasBaseUrl: 'https://unrelated.example.test' });
+    });
+    expect(window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}:license-change-token`)).toBeNull();
+
+    const dispatchStorage = (key: string) => storageListeners.forEach((listener) => listener({ key } as StorageEvent));
+    dispatchStorage(SETTINGS_STORAGE_KEY);
+    dispatchStorage(`${SETTINGS_STORAGE_KEY}:change-token`);
+    dispatchStorage(`${SETTINGS_STORAGE_KEY}:record:providerSettings.atlasBaseUrl:remote`);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(rehydrate).not.toHaveBeenCalled();
+    expect(renderer.useSettingsStore.getState().license.licensed).toBe(true);
   });
 
   it('duplicate durable-change notices are idempotent after a removal tombstone', async () => {

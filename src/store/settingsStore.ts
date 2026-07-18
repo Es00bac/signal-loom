@@ -68,6 +68,7 @@ const API_KEY_REDACTION = '[redacted]';
 const SETTINGS_STORAGE_KEY = 'flow-settings-storage';
 const SETTINGS_RECORD_SUFFIX = ':record:';
 const SETTINGS_CHANGE_TOKEN_SUFFIX = ':change-token';
+const SETTINGS_LICENSE_CHANGE_TOKEN_SUFFIX = ':license-change-token';
 const LOCAL_STORAGE_CAVEAT = 'API keys are stored in browser localStorage without at-rest encryption in this app.';
 const MEMORY_ONLY_CAVEAT = 'API keys are currently not persisted to browser storage in this session.';
 const ENCRYPTED_CAVEAT = 'API keys are encrypted at rest (the OS keychain on desktop, WebCrypto on web and mobile) and only decrypted in memory while the app is open.';
@@ -750,6 +751,9 @@ async function writeConvergedSettings(store: Storage | null, name: string, seria
     const cache = await encryptSecret(JSON.stringify(next));
     store.setItem(name, cache);
     store.setItem(`${name}${SETTINGS_CHANGE_TOKEN_SUFFIX}`, `${operationClock}:${operationActor}`);
+    if (paths.includes('licenseKey')) {
+      store.setItem(`${name}${SETTINGS_LICENSE_CHANGE_TOKEN_SUFFIX}`, `${operationClock}:${operationActor}`);
+    }
     didPersist = true;
   } catch { /* sidecars still carry all successfully committed mutations */ }
   return didPersist;
@@ -1022,9 +1026,8 @@ export function installLicenseCrossWindowSync(): () => void {
   };
   const handleStorage = (event: StorageEvent) => {
     if (
-      event.key === SETTINGS_STORAGE_KEY
-      || event.key === `${SETTINGS_STORAGE_KEY}${SETTINGS_CHANGE_TOKEN_SUFFIX}`
-      || event.key?.startsWith(`${SETTINGS_STORAGE_KEY}${SETTINGS_RECORD_SUFFIX}`)
+      event.key === `${SETTINGS_STORAGE_KEY}${SETTINGS_LICENSE_CHANGE_TOKEN_SUFFIX}`
+      || event.key?.startsWith(recordStoragePrefix(SETTINGS_STORAGE_KEY, 'licenseKey'))
     ) rehydrate();
   };
   channel?.addEventListener('message', handleMessage);
@@ -1035,13 +1038,13 @@ export function installLicenseCrossWindowSync(): () => void {
     clearInterval?: typeof clearInterval;
   };
   eventWindow.addEventListener?.('storage', handleStorage);
-  let lastChangeToken: string | null = null;
-  try { lastChangeToken = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}${SETTINGS_CHANGE_TOKEN_SUFFIX}`); } catch { /* unavailable */ }
+  let lastLicenseChangeToken: string | null = null;
+  try { lastLicenseChangeToken = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}${SETTINGS_LICENSE_CHANGE_TOKEN_SUFFIX}`); } catch { /* unavailable */ }
   const timer = (eventWindow.setInterval ?? setInterval)(() => {
     try {
-      const next = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}${SETTINGS_CHANGE_TOKEN_SUFFIX}`);
-      if (next !== lastChangeToken) {
-        lastChangeToken = next;
+      const next = window.localStorage.getItem(`${SETTINGS_STORAGE_KEY}${SETTINGS_LICENSE_CHANGE_TOKEN_SUFFIX}`);
+      if (next !== lastLicenseChangeToken) {
+        lastLicenseChangeToken = next;
         rehydrate();
       }
     } catch { /* unavailable storage remains fail-closed */ }

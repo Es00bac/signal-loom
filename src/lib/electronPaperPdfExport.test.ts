@@ -102,6 +102,22 @@ describe('Electron Paper PDF export helpers', () => {
     })).rejects.toThrow(/requested identity/i);
   });
 
+  it('uses a Chromium-parseable keyword instead of percentage stretch in native PDF readiness', async () => {
+    const { buildPaperPdfRenderReadyScript } = await loadPaperPdfExportModule();
+    const encoded = Buffer.from(JSON.stringify({ version: 1, faces: [{ identity: 'face-a', familyAlias: 'exact-a', postscriptName: 'ExactA-Condensed', weight: 400, style: 'normal', stretchPercent: 75, format: 'truetype', collectionIndex: 0 }] })).toString('base64url');
+    const load = vi.fn(async () => [{ family: 'exact-a', status: 'loaded' }]);
+    const check = vi.fn(() => true);
+    const script = buildPaperPdfRenderReadyScript({ fontTimeoutMs: 5, frameTimeoutMs: 1, imageTimeoutMs: 1 });
+    await expect(runInNewContext(script, {
+      Array, atob, document: {
+        documentElement: { innerHTML: `signal-loom-managed-font-manifest:${encoded}` },
+        fonts: { ready: Promise.resolve(), load, check }, images: [],
+      }, Promise, requestAnimationFrame: () => undefined, setTimeout,
+    })).resolves.toBe(true);
+    expect(load).toHaveBeenCalledWith('normal 400 condensed 16px "exact-a"', 'WMWMWMiiiii012345');
+    expect(check).toHaveBeenCalledWith('normal 400 condensed 16px "exact-a"', 'WMWMWMiiiii012345');
+  });
+
   it('rejects the old collection-member-zero masquerade before native PDF paint', async () => {
     const { buildPaperPdfRenderReadyScript } = await loadPaperPdfExportModule();
     const encoded = Buffer.from(JSON.stringify({ version: 1, faces: [{

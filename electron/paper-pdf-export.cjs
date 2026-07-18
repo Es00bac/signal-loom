@@ -34,7 +34,7 @@ function buildPaperPdfPrintOptions(request) {
 }
 
 function buildPaperPdfRenderReadyScript(options = {}) {
-  const fontTimeoutMs = sanitizePositiveInteger(options.fontTimeoutMs, 8000);
+  const fontTimeoutMs = sanitizePositiveInteger(options.fontTimeoutMs, 30000);
   const imageTimeoutMs = sanitizePositiveInteger(options.imageTimeoutMs, 8000);
   const frameTimeoutMs = sanitizePositiveInteger(options.frameTimeoutMs, 350);
 
@@ -73,7 +73,12 @@ function buildPaperPdfRenderReadyScript(options = {}) {
             throw new Error('Managed face ' + face.identity + ' is not an authenticated standalone font; collection member paint is blocked. Extract it to a standalone .ttf/.otf and retry.');
           }
           const style = face.style === 'oblique' ? 'oblique ' + (face.obliqueAngleDeg ?? 14) + 'deg' : face.style;
-          const descriptor = style + ' ' + face.weight + ' ' + face.stretchPercent + '% 16px "' + face.familyAlias + '"';
+          const stretchKeywords = { '50': 'ultra-condensed', '62.5': 'extra-condensed', '75': 'condensed', '87.5': 'semi-condensed', '100': 'normal', '112.5': 'semi-expanded', '125': 'expanded', '150': 'extra-expanded', '200': 'ultra-expanded' };
+          const stretch = stretchKeywords[String(face.stretchPercent)];
+          if (!stretch) {
+            throw new Error('Managed face ' + face.identity + ' has no exact CSS shorthand stretch keyword.');
+          }
+          const descriptor = style + ' ' + face.weight + ' ' + stretch + ' 16px "' + face.familyAlias + '"';
           const loaded = await Promise.race([
             Promise.resolve(document.fonts.load(descriptor, 'WMWMWMiiiii012345')),
             sleep(${fontTimeoutMs}).then(() => { throw new Error('Managed face ' + face.identity + ' timed out.'); }),

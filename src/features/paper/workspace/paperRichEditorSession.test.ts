@@ -294,7 +294,7 @@ describe('active rich editor Inspector formatting', () => {
     releaseLoad(new Set([{ family: alias, status: 'loaded' } as FontFace]));
     const resolved = await pending;
 
-    expect(descriptors).toEqual([`oblique 12deg 640 75% 16px "${alias}"`]);
+    expect(descriptors).toEqual([`oblique 12deg 640 condensed 16px "${alias}"`]);
     const painted = editor.querySelector<HTMLSpanElement>(`span[data-paper-font-family="Managed Variable"]`);
     expect(painted).not.toBeNull();
     expect(painted!.style.fontFamily).toBe(`"${alias}"`);
