@@ -18,7 +18,7 @@ This directory explains the two July 16 correctness audits and the repair sprint
 4. [03-fable-audit-repairs.md](03-fable-audit-repairs.md) — all 35 `FBL-*` findings in the same format.
 5. [05-verification-confidence-and-caveats.md](05-verification-confidence-and-caveats.md) — how the work was checked, what “closed” means, and what limitations remain.
 6. [06-sources-method-and-glossary.md](06-sources-method-and-glossary.md) — frozen sources, status accounting, terminology, and provenance.
-7. [07-internal-build-0.9.12d.md](07-internal-build-0.9.12d.md) — the internal desktop build that packages the repaired code and the post-audit sale-copy change.
+7. [07-internal-build-0.9.12d.md](07-internal-build-0.9.12d.md) — the internal desktop build that packages the repaired code, the sale-copy change, and hands-on startup, exact-font, drop-cap, and raster-export follow-ups.
 
 The Markdown files are the canonical Notebook source set. They remain portable, searchable, and readable without a report runtime.
 

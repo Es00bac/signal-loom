@@ -79,6 +79,44 @@ Expected behavior in the final installed build:
 The implementation and permanent regression evidence are in commit `e20fdc97`. These are
 post-audit runtime corrections and do not alter the 79-finding audit count.
 
+## Corrected drop caps and flattened page font validation
+
+A hands-on PDF/PNG check of the same legacy zine found two export defects that were independent of
+the project file. The opening story frame still contained its authored `dropCapLines: 3` setting,
+and the live exact-text renderer correctly shaped its first glyph at three times the regular scale.
+Print HTML, however, sent plain-text frames directly through the inline-text encoder and never
+created the `.paper-dropcap` block used for rich paragraphs. Browser PDF and flattened PNG/SVG
+therefore received ordinary opening text even though the canvas understood the setting.
+
+The flattened-page verifier also compared every raw alias in the complete-document font manifest
+against the body of each individual page. Managed aliases inside `@font-face` rules are deliberately
+hex-escaped, and a single page need not use every face the document embeds. An unused Newsreader
+italic face was therefore misreported as a missing alias after the PDF had already been written,
+leaving a saved file and a late `Export failed` dialog at the same time.
+
+The corrected export behavior is:
+
+- A plain-text frame with a two- through eight-line drop-cap setting emits the same drop-cap block
+  as the live canvas; rich paragraphs inherit the frame setting when they do not override it.
+- PDF, flattened SVG, and PNG paths retain that markup, so the opening glyph is not silently reduced
+  to ordinary body text.
+- A page may embed the complete document's exact-font payload even when it does not use every face.
+  Unused faces no longer create a false failure.
+- Validation remains fail-closed in the direction that matters: every managed alias actually
+  requested by the page body must appear in the embedded identity manifest, the complete CSS/byte
+  payload must be present in the isolated SVG, and each declared face must still pass exact browser
+  readiness checks before raster paint.
+
+Permanent regressions cover plain-print drop caps, flattened-output drop caps, a valid multi-face
+payload with an unused italic face, and a page that requests an undeclared alias. The actual zine
+source now produces `<div class="paper-dropcap" style="--sl-dropcap-lines: 3">` around “The first
+version…”. In the freshly installed app, all 47 visible managed-text layers reached `ready`; the
+opening glyph rendered at scale `0.0135` versus `0.0045` for the following glyphs, with measured
+on-canvas bounds approximately 28 × 33 pixels versus 8 × 11 pixels. No Paper alert was present.
+
+The implementation and permanent regression evidence are in commit `fdb07b1d`. This is another
+post-audit runtime correction and does not change the 79-finding audit count.
+
 ## Relationship to the audit count
 
 The build packages the integrated audit work, but the sale-copy change and internal letter identifier are later product/release changes. They do not create an 80th or 81st audit finding.
@@ -104,7 +142,7 @@ The July 18 installation completed and passed all of the following:
 - Installed executable byte-compares equal to the freshly packaged executable.
 - Installed `app.asar` byte-compares equal to the freshly packaged archive.
 - Installed executable SHA-256: `134b72e0eb5a85ffaf2dfd85d98fd67b9d242b644297b12362ac995b178ff08f`.
-- Installed `app.asar` SHA-256: `45630442b0fb55a66b04904aee38cc1d134272942c6df62f174e9083e247ba9b`.
+- Installed `app.asar` SHA-256: `044a014fb2c919c5279b61ceda1043d98ad4f8225b901ee01efcb4b9e8ef8292`.
 - Installed application size: approximately 1.1 GiB, including the verified font library.
 
 The corrected blank-start implementation also passed 26 focused startup/complete-recovery tests and
@@ -122,6 +160,14 @@ seconds; Paper loaded 16 pages, reached `document.fonts.status === "loaded"`, an
 font, timeout, recovery, or project-sync error over a 25-second observation. The isolated
 clean-profile negative check correctly stopped because the old project omits its portable asset
 section, which is the documented file limitation above rather than a license or renderer failure.
+
+The drop-cap/raster correction passed 75 focused export tests, a 93-test Paper neighborhood,
+TypeScript, touched-file lint, `git diff --check`, the Paper production verifier, the 3,287-module
+production build, and both Electron Builder font-package checks. A complete repository run reported
+seven unrelated failures in older Source Library source assertions, LAN Image host mocks, Paper
+preflight fixtures with conflicting synthetic asset metadata, one Flow-store isolation case, and
+the previously recorded provider smoke timeout. None of those failures imports or exercises the
+four files changed by `fdb07b1d`; they are recorded rather than hidden or attributed to this repair.
 
 One provider-telemetry case in the older general `appSmoke` file continued to time out in its mocked
 request path, including when run alone with a longer timeout. It is outside the startup, project,
