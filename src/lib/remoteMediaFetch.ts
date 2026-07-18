@@ -177,17 +177,39 @@ function sanitizedUrlIdentity(value: string): string {
   }
 }
 
+function looksLikeDetachedCredential(scheme: string, payload: string): boolean {
+  const candidate = payload.replace(/[)\].!?]+$/, '');
+  if (scheme.toLowerCase() === 'basic') {
+    return candidate.length >= 12
+      && candidate.length % 4 === 0
+      && /^[A-Za-z0-9+/]+={0,2}$/.test(candidate);
+  }
+  return candidate.length >= 8 && /[0-9._~+/-]/.test(candidate);
+}
+
+function redactAuthorizationCredentials(value: string): string {
+  const labeled = value.replace(
+    /(\bauthorization\b[ \t]*[:=][ \t]*)(?:basic|bearer)\b[ \t]+[^\s,;]+/gi,
+    '$1[redacted]',
+  );
+  return labeled.replace(
+    /\b(basic|bearer)\b[ \t]+([^\s,;]+)/gi,
+    (match, scheme: string, payload: string) => looksLikeDetachedCredential(scheme, payload)
+      ? '[redacted]'
+      : match,
+  );
+}
+
 function sanitizeFailureSummary(error: unknown): string {
   const raw = error instanceof Error
     ? error.message || error.name
     : typeof error === 'string'
       ? error
       : 'unknown failure';
-  const sanitized = raw
+  const sanitized = redactAuthorizationCredentials(raw
     .replace(/data:[^\s<>"']+/gi, 'data URL')
     .replace(/blob:[^\s<>"']+/gi, 'local blob URL')
-    .replace(/https?:\/\/[^\s<>"']+/gi, sanitizedUrlIdentity)
-    .replace(/(bearer\s+)[^\s,;]+/gi, '$1[redacted]')
+    .replace(/https?:\/\/[^\s<>"']+/gi, sanitizedUrlIdentity))
     .replace(/((?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|signature|signed|token)\s*[:=]\s*)[^\s,;&]+/gi, '$1[redacted]')
     .replace(/\b(?:sk|pk|eyJ)[A-Za-z0-9._-]{16,}\b/g, '[redacted]')
     .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]')

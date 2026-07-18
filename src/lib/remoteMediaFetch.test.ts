@@ -286,6 +286,37 @@ describe('fetchDownstreamMediaBlob (AUD-029)', () => {
     expect(message).not.toContain('#fragment');
   });
 
+  it('redacts complete Basic and Bearer values without erasing ordinary diagnostic words', async () => {
+    const basicCredential = 'dXNlcjpwYXNzd29yZA==';
+    const bearerCredential = 'mixed-Bearer_token.42';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError(
+      `Renderer HTTP 429. AUTHORIZATION :   bAsIc ${basicCredential},\n` +
+      'ordinary basic renderer diagnostics remain readable; a bearer of news remains readable.',
+    )));
+    const electronDownload = vi.fn().mockResolvedValue({
+      error: `Native HTTP 403; authorization=  BeArEr ${bearerCredential};\n` +
+        `detached BASIC ${basicCredential}, detached bEaReR ${bearerCredential}.`,
+    });
+
+    let message = '';
+    try {
+      await fetchDownstreamMediaBlob(ATLAS_URL, {
+        kind: 'image', errorLabel: 'Image reference failed', runtime: { electronDownload },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain('Renderer HTTP 429');
+    expect(message).toContain('Native HTTP 403');
+    expect(message).toContain('ordinary basic renderer diagnostics remain readable');
+    expect(message).toContain('a bearer of news remains readable');
+    expect(message).not.toContain(basicCredential);
+    expect(message).not.toContain(bearerCredential);
+    expect(message).not.toMatch(/authorization\s*[:=]\s*(?:basic|bearer)/i);
+    expect(message.match(/\[redacted\]/g)).toHaveLength(4);
+  });
+
   it('rejects a native response with the wrong media MIME family', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('renderer transport unavailable')));
     const electronDownload = vi.fn().mockResolvedValue({
