@@ -134,6 +134,23 @@ describe('slicePaperRichTextRange', () => {
     ]);
   });
 
+  it('preserves inline run newlines as authored text while slicing across a structural delimiter', () => {
+    const inlineNewline: PaperRichParagraph[] = [
+      { id: 'p-bold', runs: [{ id: 'r-bold', text: 'A\nB', fontWeight: '700', emphasis: 'dot' }] },
+      { id: 'p-italic', runs: [{ id: 'r-italic', text: 'C', fontStyle: 'italic', link: 'https://example.test' }] },
+    ];
+    const snapshot = structuredClone(inlineNewline);
+    const slice = slicePaperRichTextRange(inlineNewline, 1, 5);
+
+    expect(flattenPaperRichText(inlineNewline)).toBe('A\nB\nC');
+    expect(flattenPaperRichText(slice)).toBe('\nB\nC');
+    expect(slice).toEqual([
+      fragment({ id: 'p-bold', runs: [{ id: 'r-bold', text: '\nB', fontWeight: '700', emphasis: 'dot' }] }, false, true),
+      fragment({ id: 'p-italic', runs: [{ id: 'r-italic', text: 'C', fontStyle: 'italic', link: 'https://example.test' }] }, true, true),
+    ]);
+    expect(inlineNewline).toEqual(snapshot);
+  });
+
   it('keeps the list marker (and link/italic) when the slice owns the item\'s start', () => {
     expect(slicePaperRichTextRange(RICH, 26, 36)).toEqual([
       fragment({ runs: [{ text: 'lazy', fontStyle: 'italic' }, { text: ' dog', link: 'https://x' }], listMarker: '•' }, true, true),

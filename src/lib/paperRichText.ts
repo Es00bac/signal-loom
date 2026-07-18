@@ -230,20 +230,19 @@ export function slicePaperRichTextRange(
     cursor += source.length;
   });
 
-  // Split the exact requested source substring. Every newline creates a second fragment, including when the
-  // range begins/ends on that delimiter; this is what makes separator-only and terminal blank-paragraph slices
-  // representable while retaining each adjacent paragraph's independent formatting/ownership.
-  const sourceSegments = flat.slice(start, end).split('\n');
-  let paragraphIndex = layouts.findIndex((layout) => start >= layout.start && start <= layout.end);
-  if (paragraphIndex < 0) paragraphIndex = Math.max(0, layouts.length - 1);
-  let segmentStart = start;
+  // Select fragments by the original structural paragraph spans, not by splitting the flattened substring.
+  // A newline authored inside a run remains ordinary run text; only the one-character gaps between these
+  // layouts are structural delimiters represented by the array join in flattenPaperRichText. Inclusive boundary
+  // selection keeps delimiter-only, initial/terminal, and consecutive blank-paragraph ranges representable.
+  let firstParagraphIndex = layouts.findIndex((layout) => start <= layout.end);
+  if (firstParagraphIndex < 0) firstParagraphIndex = layouts.length - 1;
+  let lastParagraphIndex = layouts.findIndex((layout) => end <= layout.end);
+  if (lastParagraphIndex < 0) lastParagraphIndex = layouts.length - 1;
 
-  return sourceSegments.map((segment, segmentIndex) => {
-    const layout = layouts[Math.min(paragraphIndex + segmentIndex, layouts.length - 1)];
+  return layouts.slice(firstParagraphIndex, lastParagraphIndex + 1).map((layout) => {
     const paragraph = layout.paragraph;
-    const localStart = Math.max(0, Math.min(layout.source.length, segmentStart - layout.start));
-    const localEnd = Math.max(localStart, Math.min(layout.source.length, localStart + segment.length));
-    segmentStart += segment.length + 1;
+    const localStart = Math.max(0, Math.min(layout.source.length, start - layout.start));
+    const localEnd = Math.max(localStart, Math.min(layout.source.length, end - layout.start));
 
     // Flow ranges may omit ordinary boundary whitespace. Whitespace alone before the first owned glyph or
     // after the last owned glyph does not transfer paragraph-start/end geometry to another frame.
@@ -251,6 +250,15 @@ export function slicePaperRichTextRange(
     const ownsParagraphEnd = localEnd >= layout.source.length || layout.source.slice(localEnd).trim() === '';
     const sliced: PaperRichParagraphFragment = {
       ...paragraph,
+      ...(paragraph.borders ? {
+        borders: {
+          ...paragraph.borders,
+          ...(paragraph.borders.top ? { top: { ...paragraph.borders.top } } : {}),
+          ...(paragraph.borders.left ? { left: { ...paragraph.borders.left } } : {}),
+          ...(paragraph.borders.bottom ? { bottom: { ...paragraph.borders.bottom } } : {}),
+          ...(paragraph.borders.right ? { right: { ...paragraph.borders.right } } : {}),
+        },
+      } : {}),
       runs: [],
       ownsParagraphStart,
       ownsParagraphEnd,
@@ -282,10 +290,10 @@ export function slicePaperRichTextRange(
       && localEnd >= layout.markerPrefixLength;
     if (paragraph.listMarker && !markerFullyOwned) delete sliced.listMarker;
 
-    const overlapsPartialMarker = localStart < layout.markerPrefixLength && !markerFullyOwned;
-    if (overlapsPartialMarker) {
-      sliced.runs.push({ ...(paragraph.runs[0] ?? { text: '' }), text: segment });
-    }
+    const markerFragment = !markerFullyOwned && localStart < layout.markerPrefixLength
+      ? layout.source.slice(localStart, Math.min(localEnd, layout.markerPrefixLength))
+      : '';
+    if (markerFragment) sliced.runs.push({ ...(paragraph.runs[0] ?? { text: '' }), text: markerFragment });
 
     const contentStart = layout.markerPrefixLength;
     const from = Math.max(localStart, contentStart) - contentStart;

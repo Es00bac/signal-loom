@@ -102,6 +102,32 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
     expect(slices.get('tail')?.isHead).toBe(false);
   });
 
+  it('threads inline run newlines without converting them into structural paragraphs or changing style ownership', () => {
+    const inlineNewlineStory: PaperRichParagraph[] = [
+      { id: 'p-bold', runs: [{ id: 'r-bold', text: 'A\nB', fontWeight: '700', emphasis: 'dot' }] },
+      { id: 'p-italic', runs: [{ id: 'r-italic', text: 'C', fontStyle: 'italic', link: 'https://example.test' }] },
+    ];
+    const story = flattenPaperRichText(inlineNewlineStory);
+    const snapshot = structuredClone(inlineNewlineStory);
+    const frames = [
+      textFrame({
+        id: 'head', threadId: 'inline-newline', threadOrder: 1, widthMm: 100, heightMm: 40,
+        richText: inlineNewlineStory, text: story,
+      }),
+      textFrame({ id: 'tail', threadId: 'inline-newline', threadOrder: 2, widthMm: 100, heightMm: 5 }),
+    ];
+
+    const head = computePaperThreadSlices(frames, measure).get('head')!;
+    expect([head.sourceStart, head.sourceEnd, head.sourceText]).toEqual([0, 5, 'A\nB\nC']);
+    expect(flattenPaperRichText(head.richText)).toBe(head.sourceText);
+    expect(head.richText).toEqual([
+      fragment({ id: 'p-bold', runs: [{ id: 'r-bold', text: 'A\nB', fontWeight: '700', emphasis: 'dot' }] }),
+      fragment({ id: 'p-italic', runs: [{ id: 'r-italic', text: 'C', fontStyle: 'italic', link: 'https://example.test' }] }),
+    ]);
+    expect(inlineNewlineStory).toEqual(snapshot);
+    expect(frames[0].richText).toBe(inlineNewlineStory);
+  });
+
   it('flattens the non-overset slices back to the whole story with no duplication or loss', () => {
     const frames = [
       wideLine({ id: 'head', threadId: 't', threadOrder: 1, richText: richHeadStory, text: flattenPaperRichText(richHeadStory) }),
