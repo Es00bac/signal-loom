@@ -120,6 +120,7 @@ describe('Flow media preparation cancellation ownership', () => {
 
   it('passes the same signal into configured-upscale dimension preparation', async () => {
     const controller = new AbortController();
+    const attributed = vi.fn();
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-before-upscale');
     let observedSignal: AbortSignal | null | undefined;
     const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
@@ -148,11 +149,12 @@ describe('Flow media preparation cancellation ownership', () => {
         },
       },
       undefined,
-      { signal: controller.signal },
+      { signal: controller.signal, onInternalUsage: attributed },
     )).rejects.toMatchObject({ name: 'AbortError' });
 
     expect(observedSignal).toBe(controller.signal);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/v1/upscale'))).toHaveLength(0);
+    expect(attributed).not.toHaveBeenCalled();
   });
 
   it('stops after a non-abortable media blob decode boundary before BFL submission', async () => {

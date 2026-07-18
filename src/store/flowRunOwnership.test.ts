@@ -660,6 +660,59 @@ describe('Flow run ownership (AUD-002)', () => {
     expect(useProjectUsageStore.getState().ledger.entries[0]?.costUsd).toBe(0.02);
   });
 
+  it('records ordered generation and paid-upscale attributions exactly once for the immutable owner', async () => {
+    const runControl = createControllableRunPromise<void>();
+    mockExecuteNodeRequest.mockImplementation(async (executedNode: AppNode, ...args: unknown[]) => {
+      await runControl.getPromise();
+      const options = args[3] as {
+        onInternalUsage?: (entry: { node: AppNode; usage: { source: 'actual'; confidence: 'fixed'; provider: string; modelId: string; costUsd: number; imageCount: number } }) => void;
+      } | undefined;
+      const generation = {
+        node: { ...executedNode, type: 'imageGen' as const, data: { ...executedNode.data, provider: 'stability', modelId: 'stable-image-core' } } as AppNode,
+        usage: { source: 'actual' as const, confidence: 'fixed' as const, provider: 'stability', modelId: 'stable-image-core', costUsd: 0.03, imageCount: 1 },
+      };
+      const upscale = {
+        node: { ...generation.node, data: { ...generation.node.data, imageOperation: 'upscale', modelId: 'stable-image-upscale-fast' } } as AppNode,
+        usage: { source: 'actual' as const, confidence: 'fixed' as const, provider: 'stability', modelId: 'stable-image-upscale-fast', costUsd: 0.02, imageCount: 1 },
+      };
+      options?.onInternalUsage?.(generation);
+      options?.onInternalUsage?.(upscale);
+      return {
+        ...makeImageResult({ usage: { costUsd: 0.05 } }),
+        usageAttributions: [generation, upscale],
+      };
+    });
+    const ownerWorkspaceId = useFlowWorkspaceStore.getState().activeWorkspaceId;
+    const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
+      mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'before',
+    });
+
+    const run = useFlowStore.getState().runNode(nodeId);
+    await runControl.waitForCall();
+    useFlowStore.getState().updateNodeData(nodeId, 'prompt', 'edited while paid work was in flight');
+    runControl.resolve();
+    await run;
+
+    const entries = useProjectUsageStore.getState().ledger.entries;
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => ({
+      workspaceId: entry.flowWorkspaceId,
+      operation: entry.operation,
+      provider: entry.provider,
+      modelId: entry.modelId,
+      costUsd: entry.costUsd,
+    }))).toEqual([
+      {
+        workspaceId: ownerWorkspaceId, operation: 'image-generation', provider: 'stability',
+        modelId: 'stable-image-core', costUsd: 0.03,
+      },
+      {
+        workspaceId: ownerWorkspaceId, operation: 'upscale', provider: 'stability',
+        modelId: 'stable-image-upscale-fast', costUsd: 0.02,
+      },
+    ]);
+  });
+
   it('records an incurred provider error cost once even when the stale error cannot publish', async () => {
     const runControl = createControllableRunPromise<ReturnType<typeof makeTextResult>>();
     mockExecuteNodeRequest.mockImplementation(() => runControl.getPromise());

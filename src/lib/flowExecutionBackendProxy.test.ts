@@ -132,6 +132,12 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
 
     expect(result).toMatchObject({ result: decision, resultType: 'boolean', outputMetadata: { decision, resultType: 'boolean' } });
     expect(typeof result.result).toBe('boolean');
+    expect(result.usage).toMatchObject({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'gemini',
+      modelId: 'gemini-3.5-flash',
+    });
   });
 
   it.each([
@@ -230,12 +236,19 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
   });
 
   it('applies a non-default upscale method (stability-fast) to the proxied result with the locally held key', async () => {
+    const attributed: Array<{ node: AppNode; usage: NonNullable<Awaited<ReturnType<typeof executeNodeRequest>>['usage']> }> = [];
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stability-upscaled');
     const fetchMock = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => {
       void _init;
       const stringUrl = String(url);
       if (stringUrl === PROXY_EXECUTE_URL) {
-        return jsonResponse(PROXY_IMAGE_RESULT);
+        return jsonResponse({
+          ...PROXY_IMAGE_RESULT,
+          usage: {
+            source: 'actual', confidence: 'fixed', provider: 'stability', modelId: 'stable-image-core',
+            costUsd: 0.03, imageCount: 1,
+          },
+        });
       }
       if (stringUrl.startsWith('data:') || stringUrl.startsWith('blob:')) {
         return imageResponse('CORE');
@@ -251,6 +264,8 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
       proxiedImageNode({ imageAutoUpscale: true }),
       { prompt: 'castle at sunrise', config: DEFAULT_EXECUTION_CONFIG },
       proxySettings({ paperPrintUpscaleMethod: 'stability-fast' }, { stability: 'SECRET-stability-key' }),
+      undefined,
+      { onInternalUsage: (entry) => attributed.push(entry) },
     );
 
     const proxyBody = String(fetchMock.mock.calls.find(([url]) => String(url) === PROXY_EXECUTE_URL)?.[1]?.body);
@@ -261,9 +276,27 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
 
     expect(result.result).toBe('blob:stability-upscaled');
     expect(result.statusMessage).toContain('auto-upscaled');
+    expect(result.usageAttributions).toHaveLength(2);
+    expect(attributed.map(({ node, usage }) => ({
+      nodeId: node.id,
+      operation: node.data.imageOperation,
+      provider: usage.provider,
+      modelId: usage.modelId,
+      costUsd: usage.costUsd,
+    }))).toEqual([
+      {
+        nodeId: 'image-proxy-1', operation: undefined, provider: 'stability',
+        modelId: 'stable-image-core', costUsd: 0.03,
+      },
+      {
+        nodeId: 'image-proxy-1', operation: 'upscale', provider: 'stability',
+        modelId: 'stable-image-upscale-fast', costUsd: 0.02,
+      },
+    ]);
   });
 
   it('fails explicitly — not silently — when the requested upscaler is unavailable in proxy mode', async () => {
+    const attributed = vi.fn();
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
       if (String(url) === PROXY_EXECUTE_URL) {
         return jsonResponse(PROXY_IMAGE_RESULT);
@@ -277,7 +310,10 @@ describe('backend proxy node execution with client-side auto-upscale', () => {
       { prompt: 'castle at sunrise', config: DEFAULT_EXECUTION_CONFIG },
       // stability-fast explicitly selected but no Stability key is configured.
       proxySettings({ paperPrintUpscaleMethod: 'stability-fast' }),
+      undefined,
+      { onInternalUsage: attributed },
     )).rejects.toThrow(/Stability AI key is not configured/);
+    expect(attributed).not.toHaveBeenCalled();
   });
 
   it('does not retry the proxy generation when the requested upscaler is misconfigured (K3)', async () => {

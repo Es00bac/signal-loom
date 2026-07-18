@@ -9,6 +9,8 @@ interface UnknownActualUsageIdentity {
 interface RecordProjectUsageInput {
   node: AppNode;
   usage?: UsageTelemetry;
+  /** Required before missing telemetry may be synthesized as a successful actual execution. */
+  executionSucceeded?: true;
   workspace: WorkspaceView;
   flowWorkspaceId?: string;
   flowWorkspaceName?: string;
@@ -28,13 +30,14 @@ interface RecordProjectUsageInput {
 export function recordProjectUsageFromExecution({
   node,
   usage,
+  executionSucceeded,
   workspace,
   flowWorkspaceId,
   flowWorkspaceName,
   createdAt,
   recordUsage,
 }: RecordProjectUsageInput): void {
-  const actualUsage = usage ?? createUnknownActualUsageForExecution(node);
+  const actualUsage = usage ?? (executionSucceeded ? createUnknownActualUsageForExecution(node) : undefined);
   if (!actualUsage) return;
   recordUsage({
     nodeId: node.id,
@@ -46,6 +49,35 @@ export function recordProjectUsageFromExecution({
     usage: actualUsage,
     createdAt,
   });
+}
+
+/**
+ * Owns the exact success transition for provider calls made outside Flow's run store. The recorder
+ * runs once after the provider promise resolves and before the successful result is returned to its
+ * caller. A rejected or cancelled execution never crosses this boundary and therefore cannot create
+ * a synthetic actual record.
+ */
+export async function executeAndRecordProjectUsage<T extends { usage?: UsageTelemetry }>(input: {
+  node: AppNode;
+  workspace: WorkspaceView;
+  flowWorkspaceId?: string;
+  flowWorkspaceName?: string;
+  createdAt?: number;
+  recordUsage: RecordProjectUsageInput['recordUsage'];
+  execute: () => Promise<T>;
+}): Promise<T> {
+  const execution = await input.execute();
+  recordProjectUsageFromExecution({
+    node: input.node,
+    usage: execution.usage,
+    executionSucceeded: true,
+    workspace: input.workspace,
+    flowWorkspaceId: input.flowWorkspaceId,
+    flowWorkspaceName: input.flowWorkspaceName,
+    createdAt: input.createdAt,
+    recordUsage: input.recordUsage,
+  });
+  return execution;
 }
 
 /**

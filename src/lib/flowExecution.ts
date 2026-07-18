@@ -396,10 +396,7 @@ export async function executeNodeRequest(
       }
     })();
 
-    if (execution.usage) return execution;
-    const identity = resolveSuccessfulUsageIdentity(node, settings, execution);
-    const usage = createUnknownActualUsageForExecution(node, identity);
-    return usage ? { ...execution, usage } : execution;
+    return retainSuccessfulUsageIdentity(node, settings, execution);
   }, options.signal);
 
   // These direct-provider routes submit paid, non-idempotent asynchronous jobs.
@@ -410,10 +407,10 @@ export async function executeNodeRequest(
   // lets us distinguish a failed submission from a completed side effect, so replaying any
   // request here would be dishonest (and can duplicate a POST, PUT, PATCH, or DELETE).
   if (isDirectPaidAsyncRequest(node, settings)) {
-    return operation();
+    return emitSuccessfulUsageAttributions(await operation(), options.onInternalUsage);
   }
 
-  return withExponentialBackoff({
+  const execution = await withExponentialBackoff({
     maxRetries: settings.providerSettings.batchMaxRetries ?? 10,
     baseDelayMs: settings.providerSettings.batchRetryBaseDelayMs ?? 30000,
     maxElapsedMs: FLOW_PROVIDER_RETRY_BUDGET_MS,
@@ -428,6 +425,37 @@ export async function executeNodeRequest(
     },
     operation,
   });
+  return emitSuccessfulUsageAttributions(execution, options.onInternalUsage);
+}
+
+function emitSuccessfulUsageAttributions(
+  execution: ExecutionResult,
+  record: ExecuteNodeRequestOptions['onInternalUsage'],
+): ExecutionResult {
+  for (const attribution of execution.usageAttributions ?? []) record?.(attribution);
+  return execution;
+}
+
+function retainSuccessfulUsageIdentity(
+  node: AppNode,
+  settings: RuntimeSettingsSnapshot,
+  execution: ExecutionResult,
+): ExecutionResult {
+  const identity = resolveSuccessfulUsageIdentity(node, settings, execution);
+  if (!execution.usage) {
+    const usage = createUnknownActualUsageForExecution(node, identity);
+    return usage ? { ...execution, usage } : execution;
+  }
+
+  const usage = {
+    ...execution.usage,
+    ...(execution.usage.provider || !identity.provider ? {} : { provider: identity.provider }),
+    ...(execution.usage.modelId || !identity.modelId ? {} : { modelId: identity.modelId }),
+    ...(execution.usage.imageCount !== undefined || identity.imageCount === undefined
+      ? {}
+      : { imageCount: identity.imageCount }),
+  };
+  return { ...execution, usage };
 }
 
 function resolveSuccessfulUsageIdentity(
@@ -697,9 +725,13 @@ async function executeFunctionNode(
       notes: ['Internal provider call completed, but the provider did not report numeric usage or cost.'],
     };
     usages.push(internalUsage);
-    const attribution = { node: { ...internalNode, data: { ...internalNode.data } }, usage: internalUsage };
-    usageAttributions.push(attribution);
-    options.onInternalUsage?.(attribution);
+    const attributions = execution.usageAttributions?.length
+      ? execution.usageAttributions
+      : [{ node: { ...internalNode, data: { ...internalNode.data } }, usage: internalUsage }];
+    for (const attribution of attributions) {
+      usageAttributions.push(attribution);
+      options.onInternalUsage?.(attribution);
+    }
   }
 
   throwIfAborted(options.signal);
@@ -2997,8 +3029,10 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
     throw new NonRetryableError(plan.unavailableReason ?? 'The configured image upscaler is not available.');
   }
 
+  const generationResult = retainSuccessfulUsageIdentity(input.node, input.settings, input.result);
+
   input.onStatus?.(`Auto-upscaling with ${plan.label}...`);
-  const sourceImage = resultValueAsMediaUrl(input.result.result);
+  const sourceImage = resultValueAsMediaUrl(generationResult.result);
   if (!sourceImage) {
     throw new NonRetryableError('The image executor returned a non-media value.');
   }
@@ -3020,15 +3054,53 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
   // and outputMetadata (e.g. width/height) likewise describe the old bytes. Clear them so the store
   // re-derives from the upscaled data URL. Any additional (unscaled) sibling results are left untouched.
   return {
-    ...input.result,
+    ...generationResult,
     result: upscaled.result,
-    mimeType: upscaled.mimeType ?? input.result.mimeType,
+    mimeType: upscaled.mimeType ?? generationResult.mimeType,
     blob: undefined,
     extension: undefined,
     fileName: undefined,
     outputMetadata: undefined,
-    statusMessage: `${input.result.statusMessage}; auto-upscaled with ${plan.label}`,
-    usage: mergeImageUpscaleUsage(input.result.usage, plan),
+    statusMessage: `${generationResult.statusMessage}; auto-upscaled with ${plan.label}`,
+    usage: mergeImageUpscaleUsage(generationResult.usage, plan),
+    ...paidStabilityUpscaleAttributions(input.node, generationResult, plan),
+  };
+}
+
+function paidStabilityUpscaleAttributions(
+  node: AppNode,
+  generation: ExecutionResult,
+  plan: UniversalConfiguredUpscalePlan,
+): Pick<ExecutionResult, 'usageAttributions'> {
+  const modelId = plan.provider === 'stability-fast'
+    ? 'stable-image-upscale-fast'
+    : plan.provider === 'stability-conservative'
+      ? 'stable-image-upscale-conservative'
+      : undefined;
+  if (!modelId || !generation.usage) return {};
+
+  const upscaleNode = {
+    ...node,
+    data: {
+      ...node.data,
+      provider: 'stability',
+      modelId,
+      imageOperation: 'upscale',
+      imageAutoUpscale: false,
+    },
+  } as AppNode;
+  const upscaleUsage = buildImageUsage('stability', modelId, {
+    costUsd: plan.costUsd,
+    confidence: plan.costUsd === undefined ? 'unknown' : 'fixed',
+    notes: [`Auto-upscaled with ${plan.label}.`],
+  });
+  return {
+    usageAttributions: [
+      ...(generation.usageAttributions?.length
+        ? generation.usageAttributions
+        : [{ node: { ...node, data: { ...node.data } }, usage: generation.usage }]),
+      { node: upscaleNode, usage: upscaleUsage },
+    ],
   };
 }
 

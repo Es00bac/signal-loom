@@ -162,7 +162,9 @@ import {
 import type { TimelineClipFrameEdge } from '../../../lib/timelineClipFrameExport';
 import { cropImageDataUrl } from '../../../lib/localImageEditing';
 import { executeNodeRequest } from '../../../lib/flowExecution';
+import { executeAndRecordProjectUsage } from '../../../lib/projectUsageRecording';
 import { useSettingsStore } from '../../../store/settingsStore';
+import { useProjectUsageStore } from '../../../store/projectUsageStore';
 import { AdvancedColorPicker } from '../../../components/Common/AdvancedColorPicker';
 import { BundledFontBrowser } from '../../../components/Common/BundledFontBrowser';
 import {
@@ -3252,14 +3254,19 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
     } as AppNode;
 
     try {
-      const execution = await executeNodeRequest(
-        audioNode,
-        {
-          prompt: narrationText,
-          config: DEFAULT_EXECUTION_CONFIG,
-        },
-        settings,
-      );
+      const execution = await executeAndRecordProjectUsage({
+        node: audioNode,
+        workspace: 'editor',
+        recordUsage: useProjectUsageStore.getState().recordUsage,
+        execute: () => executeNodeRequest(
+          audioNode,
+          {
+            prompt: narrationText,
+            config: DEFAULT_EXECUTION_CONFIG,
+          },
+          settings,
+        ),
+      });
 
       if (typeof execution.result !== 'string' || !execution.result.startsWith('data:')) {
         throw new Error('The narration provider returned a remote URL. Import the audio result manually or use a provider/proxy that returns a data URL.');

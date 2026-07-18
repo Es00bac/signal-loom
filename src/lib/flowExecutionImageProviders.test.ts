@@ -257,6 +257,7 @@ describe('executeNodeRequest advanced image providers', () => {
   });
 
   it('auto-upscales generated Flow images with the configured paid upscaler and combined cost telemetry', async () => {
+    const attributed: Array<{ node: AppNode; usage: NonNullable<Awaited<ReturnType<typeof executeNodeRequest>>['usage']> }> = [];
     const createObjectURL = vi.spyOn(URL, 'createObjectURL')
       .mockReturnValueOnce('blob:stability-core')
       .mockReturnValueOnce('blob:stability-upscaled');
@@ -284,6 +285,8 @@ describe('executeNodeRequest advanced image providers', () => {
           paperPrintUpscaleMethod: 'stability-fast',
         },
       },
+      undefined,
+      { onInternalUsage: (entry) => attributed.push(entry) },
     );
 
     expect(result.result).toBe('blob:stability-upscaled');
@@ -296,9 +299,20 @@ describe('executeNodeRequest advanced image providers', () => {
       costUsd: 0.05,
       imageCount: 1,
     });
+    expect(result.usageAttributions).toHaveLength(2);
+    expect(attributed.map(({ node, usage }) => ({
+      operation: node.data.imageOperation,
+      provider: usage.provider,
+      modelId: usage.modelId,
+      costUsd: usage.costUsd,
+    }))).toEqual([
+      { operation: undefined, provider: 'stability', modelId: 'stable-image-core', costUsd: 0.03 },
+      { operation: 'upscale', provider: 'stability', modelId: 'stable-image-upscale-fast', costUsd: 0.02 },
+    ]);
   });
 
   it('still retries transient direct-path provider failures after the !canRun classifier change (K3)', async () => {
+    const attributed = vi.fn();
     // Regression guard: classifying the auto-upscale !canRun error as NonRetryableError
     // must not broadly disable retries for genuine transient provider/network failures.
     vi.spyOn(URL, 'createObjectURL')
@@ -335,6 +349,8 @@ describe('executeNodeRequest advanced image providers', () => {
           batchRetryBaseDelayMs: 1,
         },
       },
+      undefined,
+      { onInternalUsage: attributed },
     );
 
     const generateCalls = fetchMock.mock.calls.filter(([url]) =>
@@ -342,6 +358,11 @@ describe('executeNodeRequest advanced image providers', () => {
     );
     expect(generateCalls).toHaveLength(2);
     expect(result.statusMessage).toContain('auto-upscaled');
+    expect(attributed).toHaveBeenCalledTimes(2);
+    expect(attributed.mock.calls.map(([entry]) => entry.usage.modelId)).toEqual([
+      'stable-image-core',
+      'stable-image-upscale-fast',
+    ]);
   });
 
   it('does not repeat an accepted configured Stability upscale when response materialization retries', async () => {
