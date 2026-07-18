@@ -66,6 +66,7 @@ function composition(): PaperComposedTextFrame {
         glyphs: [{ glyphId: 1, cluster: 0, xAdvance: 6, yAdvance: 0, xOffset: 0, yOffset: 0, xPt: 0, yPt: 10 }],
         sourceStart: 0,
         sourceEnd: 1,
+        glyphRotationDeg: 90,
         decorations: { underline: true, strike: true, highlight: '#ffdd00' },
       }],
     }],
@@ -81,6 +82,12 @@ function composition(): PaperComposedTextFrame {
       fill: { kind: 'css-color', color: '#eeeeee' },
       borders: { top: { color: '#000000', widthPt: 1 } },
     }],
+    emphasisMarks: [
+      { xPt: 40, yPt: 8, radiusPt: 1, color: { kind: 'css-color', color: '#111111' }, style: 'dot' },
+      { xPt: 44, yPt: 8, radiusPt: 1, color: { kind: 'css-color', color: '#222222' }, style: 'open-dot' },
+      { xPt: 48, yPt: 8, radiusPt: 1, color: { kind: 'css-color', color: '#333333' }, style: 'sesame' },
+      { xPt: 52, yPt: 8, radiusPt: 1.25, color: { kind: 'css-color', color: '#444444' }, style: 'circle' },
+    ],
   };
 }
 
@@ -118,9 +125,16 @@ describe('PaperManagedTextLayer', () => {
     });
 
     expect(host.querySelector('[data-paper-managed-text="ready"]')).not.toBeNull();
-    expect(host.querySelector('path')?.getAttribute('d')).toBe('M0 0 L1000 0 L1000 1000 Z');
+    const glyphPath = host.querySelector('g[fill="#112233"] path');
+    expect(glyphPath?.getAttribute('d')).toBe('M0 0 L1000 0 L1000 1000 Z');
+    expect(glyphPath?.getAttribute('transform')).toContain('rotate(90)');
     expect(host.querySelectorAll('rect')).toHaveLength(2);
     expect(host.querySelectorAll('line')).toHaveLength(3);
+    expect(Array.from(host.querySelectorAll('[data-paper-emphasis-style]')).map((mark) => mark.getAttribute('data-paper-emphasis-style')))
+      .toEqual(['dot', 'open-dot', 'sesame', 'circle']);
+    expect(host.querySelector('[data-paper-emphasis-style="open-dot"] circle')?.getAttribute('fill')).toBe('none');
+    expect(host.querySelector('[data-paper-emphasis-style="open-dot"] circle')?.getAttribute('stroke')).toBe('#222222');
+    expect(host.querySelector('[data-paper-emphasis-style="sesame"] path')?.getAttribute('d')).toContain(' C ');
     expect(host.textContent).toBe('');
     expect(variations).toEqual([{ opsz: 18 }]);
   });

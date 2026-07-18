@@ -111,6 +111,41 @@ function composeFixture(
   return composePaperTextFrame(frame, document, resolver);
 }
 
+async function composeSizedFixture(input: {
+  widthMm: number;
+  heightMm: number;
+  text?: string;
+  columns?: number;
+  richText?: PaperRichParagraph[];
+  typography?: Partial<PaperTypography>;
+}) {
+  let document = createDefaultPaperDocument({ title: 'Sized composition fixture' });
+  const added = addFrameToPaperPage(document, document.pages[0].id, {
+    id: 'sized-fixture-frame',
+    kind: 'text',
+    xMm: 0,
+    yMm: 0,
+    widthMm: input.widthMm,
+    heightMm: input.heightMm,
+    columns: input.columns ?? 1,
+  });
+  document = { ...added.document, importedFonts: [face(400)] };
+  const sourceText = input.text ?? input.richText?.map((paragraph) => paragraph.runs.map((run) => run.text).join('')).join('\n') ?? '';
+  const frame = {
+    ...document.pages[0].frames[0],
+    text: sourceText,
+    ...(input.richText ? { richText: input.richText } : {}),
+    typography: {
+      ...document.pages[0].frames[0].typography,
+      fontFamily: 'Fixture Sans',
+      fontSizePt: 12,
+      leadingPt: 14,
+      ...input.typography,
+    },
+  };
+  return composePaperTextFrame(frame, document, async () => fixtureShaper());
+}
+
 describe('composePaperTextFrame', () => {
   it('keeps mixed rich runs on one deterministic baseline with exact faces', async () => {
     const composed = await composeFixture([{ text: 'Plain ' }, { text: 'bold', fontWeight: '700' }]);
@@ -156,16 +191,18 @@ describe('composePaperTextFrame', () => {
   it('resolves mixed run kerning and numeric features before managed shaping', async () => {
     const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
     await composeFixture([
-      { text: '12', fontKerning: 'none', numericStyle: 'tabular' },
+      { text: '12', fontKerning: 'none', numericStyle: 'tabular', smallCaps: false },
       { text: '34', fontKerning: 'normal', numericStyle: 'oldstyle' },
-    ], { fontKerning: 'none', numericStyle: 'lining' }, undefined, (request) => requests.push(request));
+    ], { fontKerning: 'none', numericStyle: 'lining', smallCaps: true }, undefined, (request) => requests.push(request));
 
     const tabular = requests.find((request) => request.text === '12')?.features;
     const oldstyle = requests.find((request) => request.text === '34')?.features;
     expect(tabular).toEqual(expect.objectContaining({ kern: false, tnum: true }));
     expect(tabular).not.toHaveProperty('lnum');
+    expect(tabular).not.toHaveProperty('smcp');
     expect(oldstyle).toEqual(expect.objectContaining({ kern: true, onum: true }));
     expect(oldstyle).not.toHaveProperty('lnum');
+    expect(oldstyle).toEqual(expect.objectContaining({ smcp: true }));
   });
 
   it('uses paragraph and mixed-run leading in measurable shared line geometry', async () => {
@@ -244,6 +281,67 @@ describe('composePaperTextFrame', () => {
     expect(composed.lines.length).toBeGreaterThanOrEqual(2);
     expect(composed.lines[1].originXPt).toBeLessThan(composed.lines[0].originXPt);
     expect(composed.lines.every((line) => !/^[、。」]/.test(line.text))).toBe(true);
+  });
+
+  it('keeps effective vertical orientation and every emphasis style in positioned geometry', async () => {
+    const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
+    const composed = await composeFixture([
+      { text: 'AB', textOrientation: 'mixed', emphasis: 'dot' },
+      { text: 'CD', textOrientation: 'upright', emphasis: 'open-dot' },
+      { text: '花' },
+      { text: '《《強》》' },
+      { text: '無', emphasis: 'none' },
+    ], {
+      writingMode: 'vertical-rl',
+      textOrientation: 'mixed',
+      emphasis: 'circle',
+    }, undefined, (request) => requests.push(request));
+
+    const mixed = composed.lines.flatMap((line) => line.runs).find((run) => run.text === 'AB');
+    const upright = composed.lines.flatMap((line) => line.runs).find((run) => run.text === 'CD');
+    const mixedRequest = requests.find((request) => request.text === 'AB');
+    const uprightRequest = requests.find((request) => request.text === 'CD');
+
+    expect(mixed).toMatchObject({ glyphRotationDeg: 90 });
+    expect(upright?.glyphRotationDeg).toBeUndefined();
+    expect(mixedRequest).toMatchObject({ direction: 'ltr', script: 'Latn' });
+    expect(mixedRequest?.features).not.toHaveProperty('vert');
+    expect(uprightRequest).toMatchObject({ direction: 'ttb', script: 'Latn' });
+    expect(uprightRequest?.features).toEqual(expect.objectContaining({ vert: true, vrt2: true }));
+    expect(composed.emphasisMarks?.map((mark) => mark.style)).toEqual([
+      'dot', 'dot', 'open-dot', 'open-dot', 'circle', 'sesame',
+    ]);
+  });
+
+  it('marks first-box and post-rollover overflow as overset', async () => {
+    const firstHorizontal = await composeSizedFixture({
+      widthMm: 20,
+      heightMm: 5,
+      text: 'A',
+      typography: { fontSizePt: 12, leadingPt: 20 },
+    });
+    const firstVertical = await composeSizedFixture({
+      widthMm: 5,
+      heightMm: 20,
+      text: '花',
+      typography: { fontSizePt: 12, leadingPt: 20, writingMode: 'vertical-rl' },
+    });
+    const postRollover = await composeSizedFixture({
+      widthMm: 40,
+      heightMm: 10,
+      columns: 2,
+      richText: [
+        { runs: [{ text: 'A', fontSizePt: 4, leadingPt: 6 }] },
+        { runs: [{ text: 'B', fontSizePt: 12, leadingPt: 20 }], spaceBeforeMm: 10 },
+      ],
+    });
+
+    expect(firstHorizontal.overset).toBe(true);
+    expect(firstHorizontal.lines[0].layoutBounds?.heightPt).toBeGreaterThan(firstHorizontal.bounds.heightPt);
+    expect(firstVertical.overset).toBe(true);
+    expect(firstVertical.lines[0].originXPt).toBeLessThan(firstVertical.bounds.xPt);
+    expect(postRollover.lines.at(-1)?.columnIndex).toBe(1);
+    expect(postRollover.overset).toBe(true);
   });
 
   it('lets paragraph strictness override the frame for managed Japanese line breaking', async () => {

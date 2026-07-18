@@ -6,9 +6,11 @@ import type {
   PaperFrame,
   PaperManagedFontFace,
   PaperManagedFontStyle,
+  PaperEmphasisMark,
   PaperParagraphBorders,
   PaperTextAlign,
   PaperTextAlignLast,
+  PaperTextOrientation,
   PaperTextRun,
   PaperTypography,
 } from '../types/paper';
@@ -57,6 +59,8 @@ export interface PaperPositionedGlyphRun {
   /** Position advances include tracking and are useful to the managed SVG/PDF renderers. */
   advanceXPt?: number;
   advanceYPt?: number;
+  /** Clockwise glyph rotation in the y-down Paper coordinate space (mixed vertical Latin uses 90 degrees). */
+  glyphRotationDeg?: 90;
   annotation?: 'ruby';
   decorations?: { underline?: boolean; strike?: boolean; highlight?: string };
 }
@@ -92,6 +96,7 @@ export interface PaperComposedEmphasisMark {
   yPt: number;
   radiusPt: number;
   color: PaperPrintPaintSource;
+  style: Exclude<PaperEmphasisMark, 'none'>;
 }
 
 /** Background and border geometry emitted before glyph paths for rich paragraph callouts. */
@@ -140,6 +145,9 @@ interface ResolvedStyle {
   direction: 'ltr' | 'rtl' | 'ttb';
   script: string;
   language: string;
+  textOrientation: PaperTextOrientation;
+  glyphOrientation: 'upright' | 'sideways-right';
+  emphasis: PaperEmphasisMark;
   features: Record<string, boolean | number>;
   variations?: Record<string, number>;
   decorations: { underline?: boolean; strike?: boolean; highlight?: string };
@@ -152,7 +160,7 @@ interface CompositionUnit {
   sourceEnd: number;
   style: ResolvedStyle;
   tcy: boolean;
-  emphasis: boolean;
+  emphasis?: Exclude<PaperEmphasisMark, 'none'>;
   dropCap?: boolean;
 }
 
@@ -249,7 +257,10 @@ function isStrongScriptCodePoint(codePoint: number): boolean {
 }
 
 function scriptFor(text: string, vertical: boolean): { direction: 'ltr' | 'rtl' | 'ttb'; script: string; language: string } {
-  if (vertical) return { direction: 'ttb', script: 'Hani', language: 'ja' };
+  if (vertical) {
+    const horizontal = scriptFor(text, false);
+    return { ...horizontal, direction: 'ttb' };
+  }
   const strong = Array.from(text).find((character) => isStrongScriptCodePoint(firstCodePoint(character)));
   const codePoint = firstCodePoint(strong ?? text);
   if ((codePoint >= 0x590 && codePoint <= 0x5ff) || (codePoint >= 0xfb1d && codePoint <= 0xfb4f)) {
@@ -272,10 +283,28 @@ function hasStrongScript(text: string): boolean {
   return isStrongScriptCodePoint(firstCodePoint(text));
 }
 
+/**
+ * A bounded Unicode Vertical_Orientation approximation for the scripts Paper currently authors. CJK,
+ * Kana, Hangul, full-width forms, vertical punctuation and emoji stay upright; Latin/Greek/Cyrillic and
+ * other alphabetic/numeric runs rotate clockwise under CSS-compatible `text-orientation: mixed`.
+ */
+function verticalGlyphStaysUpright(text: string): boolean {
+  const codePoint = firstCodePoint(text);
+  return (codePoint >= 0x1100 && codePoint <= 0x11ff)
+    || (codePoint >= 0x2e80 && codePoint <= 0xa4cf)
+    || (codePoint >= 0xac00 && codePoint <= 0xd7af)
+    || (codePoint >= 0xf900 && codePoint <= 0xfaff)
+    || (codePoint >= 0xfe10 && codePoint <= 0xfe1f)
+    || (codePoint >= 0xfe30 && codePoint <= 0xfe4f)
+    || (codePoint >= 0xff01 && codePoint <= 0xff60)
+    || (codePoint >= 0xffe0 && codePoint <= 0xffe6)
+    || codePoint >= 0x1f000;
+}
+
 function paperFeatures(typography: PaperTypography, run: PaperTextRun, vertical: boolean): Record<string, boolean | number> {
   const features: Record<string, boolean | number> = { kern: (run.fontKerning ?? typography.fontKerning) !== 'none', liga: true };
   const numericStyle = run.numericStyle ?? typography.numericStyle;
-  if (typography.smallCaps || run.smallCaps) features.smcp = true;
+  if (run.smallCaps ?? typography.smallCaps) features.smcp = true;
   if (numericStyle === 'oldstyle') features.onum = true;
   if (numericStyle === 'lining') features.lnum = true;
   if (numericStyle === 'tabular') features.tnum = true;
@@ -297,6 +326,9 @@ function styleKey(input: Omit<ResolvedStyle, 'key'>): string {
     input.direction,
     input.script,
     input.language,
+    input.textOrientation,
+    input.glyphOrientation,
+    input.emphasis,
     Object.entries(input.features).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}:${value}`).join(','),
     JSON.stringify(input.variations ?? {}),
     input.superscriptShiftPt,
@@ -310,14 +342,31 @@ function styleForText(style: ResolvedStyle, text: string, vertical: boolean): Re
   // Spaces and common punctuation inherit the surrounding run's bidi/script context. Splitting them into an
   // invented Latin run would break Arabic/Hebrew shaping and make punctuation reorder independently.
   if (!vertical && !hasStrongScript(text)) return style;
-  const script = scriptFor(text, vertical);
-  if (style.direction === script.direction && style.script === script.script && style.language === script.language) return style;
+  const glyphOrientation = vertical && style.textOrientation === 'mixed' && !verticalGlyphStaysUpright(text)
+    ? 'sideways-right'
+    : 'upright';
+  const script = scriptFor(text, vertical && glyphOrientation === 'upright');
+  const features = { ...style.features };
+  if (vertical && glyphOrientation === 'upright') {
+    features.vert = true;
+    features.vrt2 = true;
+  } else {
+    delete features.vert;
+    delete features.vrt2;
+  }
+  if (style.direction === script.direction
+    && style.script === script.script
+    && style.language === script.language
+    && style.glyphOrientation === glyphOrientation
+    && JSON.stringify(style.features) === JSON.stringify(features)) return style;
   const { key: _key, ...base } = style;
   const resolved: Omit<ResolvedStyle, 'key'> = {
     ...base,
     direction: script.direction,
     script: script.script,
     language: script.language,
+    glyphOrientation,
+    features,
   };
   return { ...resolved, key: styleKey(resolved) };
 }
@@ -615,6 +664,16 @@ function positionVerticalLine(
         penX += glyph.xAdvance;
       }
       penY += group.style.fontSizePt;
+    } else if (group.style.glyphOrientation === 'sideways-right') {
+      // Shape mixed-orientation alphabetic text horizontally, then rotate each exact glyph clockwise into
+      // the vertical flow. The horizontal advance becomes the authored top-to-bottom advance.
+      for (let index = 0; index < group.shaped.glyphs.length; index += 1) {
+        const glyph = group.shaped.glyphs[index];
+        glyphs.push({ ...glyph, xPt: originXPt + glyph.yOffset, yPt: penY + glyph.xOffset });
+        penY += Math.abs(glyph.xAdvance) || group.style.fontSizePt;
+        if (index < group.shaped.glyphs.length - 1) penY += group.style.trackingPt;
+      }
+      if (group.shaped.glyphs.length === 0) penY += group.advancePt;
     } else {
       for (let index = 0; index < group.shaped.glyphs.length; index += 1) {
         const glyph = group.shaped.glyphs[index];
@@ -642,6 +701,9 @@ function positionVerticalLine(
       sourceStart: group.units[0].sourceStart,
       sourceEnd: group.units[group.units.length - 1].sourceEnd,
       advanceYPt: penY - runStart,
+      ...(group.style.glyphOrientation === 'sideways-right' && !group.units[0].tcy
+        ? { glyphRotationDeg: 90 as const }
+        : {}),
       decorations: group.style.decorations,
     });
   }
@@ -716,8 +778,9 @@ function appendAnnotations(
     emphasisMarks.push({
       xPt: vertical ? glyph.xPt + unit.style.fontSizePt * 0.75 : glyph.xPt + unit.style.fontSizePt * 0.3,
       yPt: vertical ? glyph.yPt + unit.style.fontSizePt * 0.35 : glyph.yPt - unit.style.fontSizePt * 0.85,
-      radiusPt: Math.max(0.45, unit.style.fontSizePt * 0.075),
+      radiusPt: Math.max(0.45, unit.style.fontSizePt * (unit.emphasis === 'circle' ? 0.095 : 0.075)),
       color: unit.style.color,
+      style: unit.emphasis,
     });
   }
 }
@@ -923,6 +986,9 @@ async function resolveStyle(
     direction: script.direction,
     script: script.script,
     language: script.language,
+    textOrientation: run.textOrientation ?? typography.textOrientation ?? 'mixed',
+    glyphOrientation: 'upright',
+    emphasis: run.emphasis ?? typography.emphasis ?? 'none',
     features: paperFeatures(typography, run, vertical),
     variations: normalizePaperFontVariationSettings(run.fontVariationSettings ?? typography.fontVariationSettings ?? selection.face.variationSettings, selection.face.variableAxes),
     decorations: { underline: run.underline, strike: run.strike, highlight: run.highlight },
@@ -991,7 +1057,9 @@ async function buildParagraphs(
             sourceEnd: runStart + baseStart + grapheme.end,
             style: graphemeStyle,
             tcy: token.type === 'tcy',
-            emphasis: token.type === 'emphasis',
+            emphasis: token.type === 'emphasis'
+              ? 'sesame'
+              : graphemeStyle.emphasis === 'none' ? undefined : graphemeStyle.emphasis,
           });
         }
         if (token.type === 'ruby') {
@@ -1083,8 +1151,19 @@ export async function composePaperTextFrame(
       const draftLines = wrapUnits(paragraph.units, bounds.heightPt, unitMeasure, paragraph.lineBreakStrict, true);
       for (const [index, units] of draftLines.entries()) {
         const lineHeight = lineHeightFor(units, paragraph.leadingPt);
-        if (originXPt < bounds.xPt - lineHeight) overset = true;
+        const largestFontSize = units.reduce((largest, unit) => Math.max(largest, unit.style.fontSizePt), finitePositive(frame.typography.fontSizePt, 10));
+        const columnLeftPt = originXPt - Math.max(0, lineHeight - largestFontSize);
         const line = positionVerticalLine({ units, paragraph, isParagraphEnd: index === draftLines.length - 1 }, originXPt, bounds.yPt + paragraph.spaceBeforePt, caretMap);
+        line.layoutBounds = {
+          xPt: columnLeftPt,
+          yPt: line.originYPt,
+          widthPt: lineHeight,
+          heightPt: line.widthPt,
+        };
+        if (line.layoutBounds.xPt < bounds.xPt
+          || line.layoutBounds.xPt + line.layoutBounds.widthPt > bounds.xPt + bounds.widthPt
+          || line.layoutBounds.yPt < bounds.yPt
+          || line.layoutBounds.yPt + line.layoutBounds.heightPt > bounds.yPt + bounds.heightPt) overset = true;
         line.paragraphIndex = paragraphIndex;
         appendAnnotations(line, paragraph.ruby, true, missingGlyphs, emphasisMarks, units);
         line.runs.forEach((run) => hasMissingGlyph(run, sourceText, missingGlyphs));
@@ -1117,12 +1196,12 @@ export async function composePaperTextFrame(
         const lineHeight = lineHeightFor(units, paragraph.leadingPt);
         const isLastLine = index === provisional.length - 1;
         const bottomPadding = isLastLine ? paragraph.borderPaddingPt : 0;
-        if (cursorYPt + lineHeight + bottomPadding > bounds.yPt + bounds.heightPt && lines.length > 0) {
-          if (columnIndex + 1 >= columnCount) overset = true;
-          else {
-            columnIndex += 1;
-            cursorYPt = bounds.yPt;
-          }
+        const columnBottomPt = bounds.yPt + bounds.heightPt;
+        if (cursorYPt + lineHeight + bottomPadding > columnBottomPt
+          && cursorYPt > bounds.yPt
+          && columnIndex + 1 < columnCount) {
+          columnIndex += 1;
+          cursorYPt = bounds.yPt;
         }
         const baselineYPt = cursorYPt + lineHeight * 0.8;
         const line = positionHorizontalLine(
@@ -1140,6 +1219,8 @@ export async function composePaperTextFrame(
           widthPt: columnWidthPt,
           heightPt: lineHeight,
         };
+        if (line.layoutBounds.yPt < bounds.yPt
+          || line.layoutBounds.yPt + line.layoutBounds.heightPt + bottomPadding > columnBottomPt) overset = true;
         appendAnnotations(line, paragraph.ruby, false, missingGlyphs, emphasisMarks, units);
         line.runs.forEach((run) => hasMissingGlyph(run, sourceText, missingGlyphs));
         lines.push(line);

@@ -7,6 +7,7 @@ import type { BinaryAssetRef } from '../../../shared/assets/contentAddressedAsse
 import { verifyBinaryAssetRecord } from '../../../shared/assets/contentAddressedAsset';
 import {
   composePaperTextFrame,
+  type PaperComposedEmphasisMark,
   type PaperComposedParagraphBox,
   type PaperComposedTextFrame,
   type PaperManagedFontResolver,
@@ -73,10 +74,11 @@ function frameKey(frame: PaperFrame | undefined): string {
 function runBounds(run: PaperPositionedGlyphRun): { xPt: number; yPt: number; widthPt: number; heightPt: number; vertical: boolean } | undefined {
   if (run.glyphs.length === 0) return undefined;
   const vertical = (run.advanceYPt ?? 0) > (run.advanceXPt ?? 0);
-  const minX = Math.min(...run.glyphs.map((glyph) => glyph.xPt - run.fontSizePt * 0.08));
-  const minY = Math.min(...run.glyphs.map((glyph) => glyph.yPt - run.fontSizePt * 0.82));
-  const maxX = Math.max(...run.glyphs.map((glyph) => glyph.xPt + run.fontSizePt * 0.88));
-  const maxY = Math.max(...run.glyphs.map((glyph) => glyph.yPt + run.fontSizePt * 0.24));
+  const rotated = run.glyphRotationDeg === 90;
+  const minX = Math.min(...run.glyphs.map((glyph) => glyph.xPt - run.fontSizePt * (rotated ? 0.24 : 0.08)));
+  const minY = Math.min(...run.glyphs.map((glyph) => glyph.yPt - run.fontSizePt * (rotated ? 0.08 : 0.82)));
+  const maxX = Math.max(...run.glyphs.map((glyph) => glyph.xPt + run.fontSizePt * (rotated ? 0.82 : 0.88)));
+  const maxY = Math.max(...run.glyphs.map((glyph) => glyph.yPt + run.fontSizePt * (rotated ? 0.88 : 0.24)));
   return { xPt: minX, yPt: minY, widthPt: Math.max(0, maxX - minX), heightPt: Math.max(0, maxY - minY), vertical };
 }
 
@@ -89,6 +91,35 @@ function PaperManagedParagraphBox({ box }: { box: PaperComposedParagraphBox }) {
       {border?.right ? <line stroke={border.right.color} strokeWidth={border.right.widthPt} x1={box.xPt + box.widthPt} x2={box.xPt + box.widthPt} y1={box.yPt} y2={box.yPt + box.heightPt} /> : null}
       {border?.bottom ? <line stroke={border.bottom.color} strokeWidth={border.bottom.widthPt} x1={box.xPt} x2={box.xPt + box.widthPt} y1={box.yPt + box.heightPt} y2={box.yPt + box.heightPt} /> : null}
       {border?.left ? <line stroke={border.left.color} strokeWidth={border.left.widthPt} x1={box.xPt} x2={box.xPt} y1={box.yPt} y2={box.yPt + box.heightPt} /> : null}
+    </g>
+  );
+}
+
+function sesamePath(mark: PaperComposedEmphasisMark): string {
+  const { xPt: x, yPt: y, radiusPt: radius } = mark;
+  return [
+    `M ${x} ${y - radius}`,
+    `C ${x + radius * 0.85} ${y - radius * 0.45} ${x + radius} ${y + radius * 0.45} ${x} ${y + radius}`,
+    `C ${x - radius * 0.5} ${y + radius * 0.25} ${x - radius * 0.45} ${y - radius * 0.4} ${x} ${y - radius} Z`,
+  ].join(' ');
+}
+
+function PaperManagedEmphasisMark({ mark }: { mark: PaperComposedEmphasisMark }) {
+  const strokeWidth = Math.max(0.35, mark.radiusPt * 0.35);
+  return (
+    <g data-paper-emphasis-style={mark.style}>
+      {mark.style === 'sesame' ? (
+        <path d={sesamePath(mark)} fill={mark.color.color} />
+      ) : (
+        <circle
+          cx={mark.xPt}
+          cy={mark.yPt}
+          fill={mark.style === 'open-dot' ? 'none' : mark.color.color}
+          r={mark.radiusPt}
+          stroke={mark.style === 'open-dot' ? mark.color.color : undefined}
+          strokeWidth={mark.style === 'open-dot' ? strokeWidth : undefined}
+        />
+      )}
     </g>
   );
 }
@@ -125,7 +156,7 @@ function PaperManagedGlyphRun({
           <path
             d={path}
             key={`${glyphIndex}-${glyph.glyphId}-${glyph.cluster}`}
-            transform={`translate(${glyph.xPt} ${glyph.yPt}) scale(${scale} ${-scale})`}
+            transform={`translate(${glyph.xPt} ${glyph.yPt})${run.glyphRotationDeg ? ` rotate(${run.glyphRotationDeg})` : ''} scale(${scale} ${-scale})`}
           />
         );
       })}
@@ -242,7 +273,7 @@ export function PaperManagedTextLayer({
         <PaperManagedGlyphRun key={`${lineIndex}-${runIndex}`} pathFor={pathFor} run={run} />
       )))}
       {composition.emphasisMarks?.map((mark, index) => (
-        <circle cx={mark.xPt} cy={mark.yPt} fill={mark.color.color} key={`emphasis-${index}`} r={mark.radiusPt} />
+        <PaperManagedEmphasisMark key={`emphasis-${index}`} mark={mark} />
       ))}
     </svg>
   );

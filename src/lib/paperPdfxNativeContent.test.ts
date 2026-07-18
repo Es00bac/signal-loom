@@ -98,6 +98,54 @@ function spotText(name: string, alternate = { c: 0, m: 0.9, y: 0.85, k: 0 }): Pa
   };
 }
 
+function orientationText(): PaperRenderTextNode {
+  const fill = { kind: 'gray' as const, gray: 0, tint: 1 };
+  const node = spotText('PANTONE 185 C');
+  return {
+    ...node,
+    objectId: 'orientation-text',
+    sourceFrameId: 'orientation-text',
+    paints: {
+      runs: [
+        { lineIndex: 0, runIndex: 0, fill },
+        { lineIndex: 0, runIndex: 1, fill },
+      ],
+      paragraphBoxes: [],
+      emphasisMarks: [fill, fill, fill, fill],
+    },
+    composed: {
+      ...node.composed,
+      frameId: 'orientation-text',
+      writingMode: 'vertical-rl',
+      lines: [{
+        ...node.composed.lines[0],
+        text: 'AB',
+        runs: [
+          {
+            ...node.composed.lines[0].runs[0],
+            text: 'A',
+            sourceEnd: 1,
+          },
+          {
+            ...node.composed.lines[0].runs[0],
+            text: 'B',
+            sourceStart: 1,
+            sourceEnd: 2,
+            glyphRotationDeg: 90,
+            glyphs: [{ glyphId: 2, cluster: 1, xAdvance: 7, yAdvance: 0, xOffset: 0, yOffset: 0, xPt: 30, yPt: 25 }],
+          },
+        ],
+      }],
+      emphasisMarks: [
+        { xPt: 50, yPt: 20, radiusPt: 1, color: { kind: 'css-color', color: '#111111' }, style: 'dot' },
+        { xPt: 55, yPt: 20, radiusPt: 1, color: { kind: 'css-color', color: '#111111' }, style: 'open-dot' },
+        { xPt: 60, yPt: 20, radiusPt: 1, color: { kind: 'css-color', color: '#111111' }, style: 'sesame' },
+        { xPt: 65, yPt: 20, radiusPt: 1.25, color: { kind: 'css-color', color: '#111111' }, style: 'circle' },
+      ],
+    },
+  };
+}
+
 function nativeContext(pdf: PDFDocument, standard: 'pdf-x-1a' | 'pdf-x-4' = 'pdf-x-4'): PaperPdfxNativeContext {
   return {
     standard,
@@ -164,6 +212,19 @@ describe('appendPaperNativeContent', () => {
     // y-up conversion, so the text matrix must keep a positive d scale for an unrotated text frame.
     expect(await decodedPageContent(await pdf.save({ useObjectStreams: false })))
       .toMatch(/1 0 0 1 10 75 Tm/);
+  });
+
+  it('writes mixed vertical rotation and distinct emphasis paths into native PDF operators', async () => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    await appendPaperNativeContent(pdf, page, [orientationText()], nativeContext(pdf));
+
+    const content = await decodedPageContent(await pdf.save({ useObjectStreams: false }));
+    expect(content).toMatch(/1 0 0 1 10 75 Tm/);
+    expect(content).toMatch(/0 -1 1 0 30 75 Tm/);
+    expect(content).toMatch(/0\.35 w/);
+    expect(content).toMatch(/S\n/);
+    expect(content.match(/ c\n/g)).toHaveLength(14);
   });
 
   it('rejects an ambiguous spot name with more than one alternate CMYK recipe', async () => {

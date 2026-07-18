@@ -359,4 +359,49 @@ describe('compilePaperRenderPlan', () => {
       tint: 1,
     });
   });
+
+  it('retains run orientation and emphasis geometry in the native render plan', async () => {
+    const base = fixtureDocument();
+    const pageId = base.pages[0].id;
+    const added = addFrameToPaperPage({ ...base, importedFonts: [managedFace()] }, pageId, {
+      kind: 'text',
+      label: 'Vertical managed type',
+      xMm: 10,
+      yMm: 20,
+      widthMm: 40,
+      heightMm: 60,
+      text: 'ABCD花《《強》》無',
+      richText: [{ runs: [
+        { text: 'AB', textOrientation: 'mixed', emphasis: 'dot' },
+        { text: 'CD', textOrientation: 'upright', emphasis: 'open-dot' },
+        { text: '花' },
+        { text: '《《強》》' },
+        { text: '無', emphasis: 'none' },
+      ] }],
+      typography: {
+        fontFamily: 'Fixture Sans',
+        fontSizePt: 12,
+        leadingPt: 14,
+        fontWeight: '400',
+        color: '#111827',
+        writingMode: 'vertical-rl',
+        textOrientation: 'mixed',
+        emphasis: 'circle',
+      },
+    });
+
+    const plan = await compilePaperRenderPlan(added.document, { managedFontResolver: async () => fixtureShaper() });
+    const node = plan.pages[0].nodes.find((candidate) => candidate.kind === 'text' && candidate.objectId === added.frameId);
+
+    expect(node).toMatchObject({ kind: 'text', composed: { writingMode: 'vertical-rl', missingFaces: [] } });
+    if (!node || node.kind !== 'text') throw new Error('Expected a native text node.');
+    const mixed = node.composed.lines.flatMap((line) => line.runs).find((run) => run.text === 'AB');
+    const upright = node.composed.lines.flatMap((line) => line.runs).find((run) => run.text === 'CD');
+    expect(mixed).toMatchObject({ glyphRotationDeg: 90 });
+    expect(upright?.glyphRotationDeg).toBeUndefined();
+    expect(node.composed.emphasisMarks?.map((mark) => mark.style)).toEqual([
+      'dot', 'dot', 'open-dot', 'open-dot', 'circle', 'sesame',
+    ]);
+    expect(node.paints.emphasisMarks).toHaveLength(6);
+  });
 });

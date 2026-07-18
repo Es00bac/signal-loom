@@ -311,10 +311,11 @@ function rectanglePath(x: number, y: number, width: number, height: number): str
 function runBounds(run: PaperRenderTextNode['composed']['lines'][number]['runs'][number]): { x: number; y: number; width: number; height: number; vertical: boolean } | undefined {
   if (run.glyphs.length === 0) return undefined;
   const vertical = (run.advanceYPt ?? 0) > (run.advanceXPt ?? 0);
-  const minX = Math.min(...run.glyphs.map((glyph) => glyph.xPt - run.fontSizePt * 0.08));
-  const minY = Math.min(...run.glyphs.map((glyph) => glyph.yPt - run.fontSizePt * 0.82));
-  const maxX = Math.max(...run.glyphs.map((glyph) => glyph.xPt + run.fontSizePt * 0.88));
-  const maxY = Math.max(...run.glyphs.map((glyph) => glyph.yPt + run.fontSizePt * 0.24));
+  const rotated = run.glyphRotationDeg === 90;
+  const minX = Math.min(...run.glyphs.map((glyph) => glyph.xPt - run.fontSizePt * (rotated ? 0.24 : 0.08)));
+  const minY = Math.min(...run.glyphs.map((glyph) => glyph.yPt - run.fontSizePt * (rotated ? 0.08 : 0.82)));
+  const maxX = Math.max(...run.glyphs.map((glyph) => glyph.xPt + run.fontSizePt * (rotated ? 0.82 : 0.88)));
+  const maxY = Math.max(...run.glyphs.map((glyph) => glyph.yPt + run.fontSizePt * (rotated ? 0.88 : 0.24)));
   return { x: minX, y: minY, width: Math.max(0, maxX - minX), height: Math.max(0, maxY - minY), vertical };
 }
 
@@ -326,6 +327,14 @@ function circlePath(x: number, y: number, radius: number): string {
     `C ${x - radius * k} ${y + radius} ${x - radius} ${y + radius * k} ${x - radius} ${y}`,
     `C ${x - radius} ${y - radius * k} ${x - radius * k} ${y - radius} ${x} ${y - radius}`,
     `C ${x + radius * k} ${y - radius} ${x + radius} ${y - radius * k} ${x + radius} ${y} Z`,
+  ].join(' ');
+}
+
+function sesamePath(x: number, y: number, radius: number): string {
+  return [
+    `M ${x} ${y - radius}`,
+    `C ${x + radius * 0.85} ${y - radius * 0.45} ${x + radius} ${y + radius * 0.45} ${x} ${y + radius}`,
+    `C ${x - radius * 0.5} ${y + radius * 0.25} ${x - radius * 0.45} ${y - radius * 0.4} ${x} ${y - radius} Z`,
   ].join(' ');
 }
 
@@ -435,8 +444,32 @@ function appendEmphasisMarks(node: PaperRenderTextNode, page: PDFPage, context: 
     const paint = node.paints.emphasisMarks[index];
     if (!paint) continue;
     const bounds = { x: mark.xPt - mark.radiusPt, y: mark.yPt - mark.radiusPt, width: mark.radiusPt * 2, height: mark.radiusPt * 2 };
-    appendPath(textPath(node, `emphasis:${index}`, circlePath(mark.xPt, mark.yPt, mark.radiusPt), bounds, { fill: paint }), page, context, evidence);
+    const path = mark.style === 'sesame'
+      ? sesamePath(mark.xPt, mark.yPt, mark.radiusPt)
+      : circlePath(mark.xPt, mark.yPt, mark.radiusPt);
+    const markPaint = mark.style === 'open-dot'
+      ? { stroke: paint, strokeWidthPt: Math.max(0.35, mark.radiusPt * 0.35) }
+      : { fill: paint };
+    appendPath(textPath(node, `emphasis:${index}:${mark.style}`, path, bounds, markPaint), page, context, evidence);
   }
+}
+
+function glyphTextMatrix(
+  transform: [number, number, number, number, number, number],
+  rotationDeg: number | undefined,
+): [number, number, number, number] {
+  const [a, b, c, d] = transform;
+  const radians = (rotationDeg ?? 0) * Math.PI / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  // Compose the page transform with the authored y-down rotation and the font-space y inversion.
+  const matrix: [number, number, number, number] = [
+    a * cosine + c * sine,
+    b * cosine + d * sine,
+    a * sine - c * cosine,
+    b * sine - d * cosine,
+  ];
+  return matrix.map((value) => Math.abs(value) < 1e-12 ? 0 : value) as [number, number, number, number];
 }
 
 async function appendText(node: PaperRenderTextNode, page: PDFPage, context: PaperPdfxNativeContext, evidence: PaperPdfxNativeEvidence): Promise<void> {
@@ -458,6 +491,7 @@ async function appendText(node: PaperRenderTextNode, page: PDFPage, context: Pap
         const [a, b, c, d, e, f] = mediaTransform(node.transform, context.mediaHeightPt);
         const x = a * glyph.xPt + c * glyph.yPt + e;
         const y = b * glyph.xPt + d * glyph.yPt + f;
+        const [textA, textB, textC, textD] = glyphTextMatrix([a, b, c, d, e, f], run.glyphRotationDeg);
         const operators: PDFOperator[] = [pushGraphicsState()];
         if (state) operators.push(setGraphicsState(state));
         operators.push(...paintOperators(page, paint, 'fill', context, node.objectId));
@@ -466,7 +500,7 @@ async function appendText(node: PaperRenderTextNode, page: PDFPage, context: Pap
           setNativeFontAndSize(resource, run.fontSizePt),
           // Glyph outlines are already y-up in font space. `mediaTransform` flips only authored page
           // coordinates, so compose it with the font-space y inversion instead of mirroring the glyphs.
-          setTextMatrix(a, b, -c, -d, x, y),
+          setTextMatrix(textA, textB, textC, textD, x, y),
           showText(PDFHexString.of(glyph.glyphId.toString(16).toUpperCase().padStart(4, '0'))),
           endText(),
           popGraphicsState(),
