@@ -18,7 +18,7 @@ function buildManagedLocalUpscalerCapabilities(device, models = []) {
 
 function classifyLocalUpscalerProcessFailure(exitCode, stderr) {
   const detail = String(stderr ?? '').trim();
-  if (/vulkan|vkcreate|vk_error|no compatible gpu|no gpu device|find[^\n]*gpu/i.test(detail)) {
+  if (/vulkan|\bvk(?:create|enumerate|get|instance|physical|device)[a-z0-9_]*\b|vk_error|no compatible gpu|no gpu device|invalid gpu device|find[^\n]*gpu/i.test(detail)) {
     return {
       code: 'vulkan-unavailable',
       statusCode: 503,

@@ -25,8 +25,10 @@ describe('managed local upscaler runtime truth', () => {
 
   it.each([
     'vkCreateInstance failed: VK_ERROR_INCOMPATIBLE_DRIVER',
+    'vkEnumeratePhysicalDevices failed -3',
     'no Vulkan-capable GPU found',
     'failed to find a Vulkan device',
+    'invalid gpu device',
   ])('classifies a no-Vulkan environment as actionable and non-CPU (%s)', (stderr) => {
     expect(runtimeContract.classifyLocalUpscalerProcessFailure(1, stderr)).toEqual({
       code: 'vulkan-unavailable',
