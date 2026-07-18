@@ -169,6 +169,30 @@ function expectPcm44100Wave(bytes: Uint8Array, payload: Uint8Array): void {
   expect(bytes.slice(44)).toEqual(payload);
 }
 
+function retryingSettings(maxRetries = 3): RuntimeSettingsSnapshot {
+  return {
+    ...settings,
+    providerSettings: {
+      ...settings.providerSettings,
+      batchMaxRetries: maxRetries,
+      batchRetryBaseDelayMs: 1,
+    },
+  } as RuntimeSettingsSnapshot;
+}
+
+async function captureRejection(operation: Promise<unknown>): Promise<Error & {
+  usage?: { provider?: string; modelId?: string; characters?: number };
+}> {
+  return operation.then(
+    () => {
+      throw new Error('Expected operation to reject.');
+    },
+    (error: unknown) => error as Error & {
+      usage?: { provider?: string; modelId?: string; characters?: number };
+    },
+  );
+}
+
 describe('executeNodeRequest ElevenLabs speech', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -376,19 +400,11 @@ describe('executeNodeRequest ElevenLabs audio response materialization', () => {
     ['truncated 16-bit sample', new Uint8Array([0x7f])],
   ])('fails closed without retrying a successful-but-%s PCM response', async (_case, bytes) => {
     const fetchMock = stubModeFetch('speech', byteResponse(bytes, 'application/octet-stream'));
-    const retryingSettings = {
-      ...settings,
-      providerSettings: {
-        ...settings.providerSettings,
-        batchMaxRetries: 3,
-        batchRetryBaseDelayMs: 1,
-      },
-    } as RuntimeSettingsSnapshot;
 
     const run = executeNodeRequest(
       nodeForMode('speech', 'eleven_multilingual_v2'),
       contextForMode('speech', 'Hello there', 'pcm_44100'),
-      retryingSettings,
+      retryingSettings(),
     );
 
     await expect(run).rejects.toBeInstanceOf(NonRetryableError);
@@ -400,23 +416,91 @@ describe('executeNodeRequest ElevenLabs audio response materialization', () => {
       .mockRejectedValueOnce(new TypeError('temporary connection reset'))
       .mockResolvedValueOnce(byteResponse(rawPcmSamples, 'application/octet-stream'));
     vi.stubGlobal('fetch', fetchMock);
-    const retryingSettings = {
-      ...settings,
-      providerSettings: {
-        ...settings.providerSettings,
-        batchMaxRetries: 1,
-        batchRetryBaseDelayMs: 1,
-      },
-    } as RuntimeSettingsSnapshot;
 
     const { blob } = await captureCreatedBlob(() => executeNodeRequest(
       nodeForMode('speech', 'eleven_multilingual_v2'),
       contextForMode('speech', 'Hello there', 'pcm_44100'),
-      retryingSettings,
+      retryingSettings(1),
     ));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expectPcm44100Wave(await blobBytes(blob), rawPcmSamples);
+  });
+
+  it('does not resubmit when reading the accepted response blob fails and retains its usage', async () => {
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      blob: vi.fn().mockRejectedValue(new TypeError('response blob read failed')),
+    } as unknown as Response;
+    const fetchMock = stubModeFetch('speech', response);
+
+    const error = await captureRejection(executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'pcm_44100'),
+      retryingSettings(),
+    ));
+
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect(error.message).toBe('response blob read failed');
+    expect(error.usage).toMatchObject({
+      provider: 'elevenlabs',
+      modelId: 'eleven_multilingual_v2',
+      characters: 'Hello there'.length,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response.blob).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resubmit when accepted response bytes fail to materialize and retains its usage', async () => {
+    const arrayBuffer = vi.fn().mockRejectedValue(new TypeError('audio byte read failed'));
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      blob: vi.fn().mockResolvedValue({
+        type: 'application/octet-stream',
+        size: rawPcmSamples.byteLength,
+        arrayBuffer,
+      }),
+    } as unknown as Response;
+    const fetchMock = stubModeFetch('speech', response);
+
+    const error = await captureRejection(executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'pcm_44100'),
+      retryingSettings(),
+    ));
+
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect(error.message).toBe('audio byte read failed');
+    expect(error.usage).toMatchObject({ provider: 'elevenlabs', characters: 'Hello there'.length });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(response.blob).toHaveBeenCalledTimes(1);
+    expect(arrayBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resubmit when the accepted result object URL cannot be created and retains its usage', async () => {
+    const response = byteResponse(rawPcmSamples, 'application/octet-stream');
+    const responseBlob = vi.spyOn(response, 'blob');
+    const fetchMock = stubModeFetch('speech', response);
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockImplementation(() => {
+      throw new TypeError('object URL creation failed');
+    });
+
+    const error = await captureRejection(executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'pcm_44100'),
+      retryingSettings(),
+    ));
+
+    expect(error).toBeInstanceOf(NonRetryableError);
+    expect(error.message).toBe('object URL creation failed');
+    expect(error.usage).toMatchObject({ provider: 'elevenlabs', characters: 'Hello there'.length });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(responseBlob).toHaveBeenCalledTimes(1);
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
   });
 
   it('cancels while response bytes are materializing and never publishes a stale object URL', async () => {
@@ -446,6 +530,13 @@ describe('executeNodeRequest ElevenLabs audio response materialization', () => {
     controller.abort();
 
     await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(run).rejects.toMatchObject({
+      usage: {
+        provider: 'elevenlabs',
+        modelId: 'eleven_multilingual_v2',
+        characters: 'Hello there'.length,
+      },
+    });
     resolveBlob(new Blob([Uint8Array.from(rawPcmSamples).buffer], { type: 'application/octet-stream' }));
     await Promise.resolve();
     expect(fetchMock).toHaveBeenCalledTimes(1);

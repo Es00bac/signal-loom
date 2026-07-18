@@ -4817,10 +4817,14 @@ async function executeAudioNode(
         }
 
         return {
-          ...await materializeElevenLabsExecutionAudio(response, context.config.audioOutputFormat, abortSignal),
+          ...await materializeAcceptedElevenLabsExecutionAudio(
+            response,
+            context.config.audioOutputFormat,
+            createElevenLabsTtsUsage(modelId, prompt, 'actual'),
+            abortSignal,
+          ),
           resultType: 'audio',
           statusMessage: `Generated with ${modelId}`,
-          usage: createElevenLabsTtsUsage(modelId, prompt, 'actual'),
         };
       }
 
@@ -4850,14 +4854,18 @@ async function executeAudioNode(
         }
 
         return {
-          ...await materializeElevenLabsExecutionAudio(response, context.config.audioOutputFormat, abortSignal),
+          ...await materializeAcceptedElevenLabsExecutionAudio(
+            response,
+            context.config.audioOutputFormat,
+            buildAudioUsage('elevenlabs', modelId, {
+              characters: prompt.length,
+              confidence: 'unknown',
+              notes: ['ElevenLabs sound-effect pricing is not currently mapped in the app.'],
+            }),
+            abortSignal,
+          ),
           resultType: 'audio',
           statusMessage: `Generated sound effect with ${modelId}`,
-          usage: buildAudioUsage('elevenlabs', modelId, {
-            characters: prompt.length,
-            confidence: 'unknown',
-            notes: ['ElevenLabs sound-effect pricing is not currently mapped in the app.'],
-          }),
         };
       }
 
@@ -4892,14 +4900,18 @@ async function executeAudioNode(
         }
 
         return {
-          ...await materializeElevenLabsExecutionAudio(response, outputFormat, abortSignal),
+          ...await materializeAcceptedElevenLabsExecutionAudio(
+            response,
+            outputFormat,
+            buildAudioUsage('elevenlabs', modelId, {
+              characters: prompt.length,
+              confidence: 'unknown',
+              notes: ['ElevenLabs music pricing is not currently mapped in the app.'],
+            }),
+            abortSignal,
+          ),
           resultType: 'audio',
           statusMessage: `Generated music with ${modelId}`,
-          usage: buildAudioUsage('elevenlabs', modelId, {
-            characters: prompt.length,
-            confidence: 'unknown',
-            notes: ['ElevenLabs music pricing is not currently mapped in the app.'],
-          }),
         };
       }
 
@@ -4945,13 +4957,17 @@ async function executeAudioNode(
       }
 
       return {
-        ...await materializeElevenLabsExecutionAudio(response, context.config.audioOutputFormat, abortSignal),
+        ...await materializeAcceptedElevenLabsExecutionAudio(
+          response,
+          context.config.audioOutputFormat,
+          buildAudioUsage('elevenlabs', modelId, {
+            confidence: 'unknown',
+            notes: ['ElevenLabs voice changer pricing is not currently mapped in the app.'],
+          }),
+          abortSignal,
+        ),
         resultType: 'audio',
         statusMessage: `Changed voice with ${modelId}`,
-        usage: buildAudioUsage('elevenlabs', modelId, {
-          confidence: 'unknown',
-          notes: ['ElevenLabs voice changer pricing is not currently mapped in the app.'],
-        }),
       };
     }
     case 'huggingface': {
@@ -4980,20 +4996,44 @@ async function executeAudioNode(
   }
 }
 
-async function materializeElevenLabsExecutionAudio(
+async function materializeAcceptedElevenLabsExecutionAudio(
   response: Response,
   providerOutputFormat: string,
+  usage: UsageTelemetry,
   signal?: AbortSignal,
-): Promise<Pick<ExecutionResult, 'result' | 'blob' | 'mimeType' | 'extension' | 'outputMetadata'>> {
-  const audio = await materializeElevenLabsAudioResult(response, providerOutputFormat, signal);
-  throwIfAborted(signal);
-  return {
-    result: await toResultUrl(audio.blob),
-    blob: audio.blob,
-    mimeType: audio.mimeType,
-    extension: audio.extension,
-    outputMetadata: audio.outputMetadata,
-  };
+): Promise<Pick<ExecutionResult, 'result' | 'blob' | 'mimeType' | 'extension' | 'outputMetadata' | 'usage'>> {
+  try {
+    const audio = await materializeElevenLabsAudioResult(response, providerOutputFormat, signal);
+    throwIfAborted(signal);
+    return {
+      result: await toResultUrl(audio.blob),
+      blob: audio.blob,
+      mimeType: audio.mimeType,
+      extension: audio.extension,
+      outputMetadata: audio.outputMetadata,
+      usage,
+    };
+  } catch (error) {
+    // A successful provider response is the irreversible billing boundary. Everything after it
+    // is local materialization: repeating the outer operation would submit and charge again.
+    // Carry the accepted attempt's usage on both failures and cancellation so Flow can ledger the
+    // financial fact exactly once without publishing a stale or incomplete result.
+    if (isAbortError(error)) {
+      throw Object.assign(
+        createAbortError(error instanceof Error ? error.message : undefined),
+        { usage },
+      );
+    }
+    throw Object.assign(
+      new NonRetryableError(
+        error instanceof Error
+          ? error.message
+          : 'ElevenLabs returned audio, but the accepted response could not be materialized.',
+        { cause: error },
+      ),
+      { usage },
+    );
+  }
 }
 
 async function executeCompositionNode(

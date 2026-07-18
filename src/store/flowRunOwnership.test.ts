@@ -733,6 +733,80 @@ describe('Flow run ownership (AUD-002)', () => {
     expect(useProjectUsageStore.getState().ledger.entries[0]?.costUsd).toBe(0.03);
   });
 
+  it('records one accepted ElevenLabs attempt when post-acceptance materialization fails', async () => {
+    const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
+      mode: 'generate', provider: 'elevenlabs', modelId: 'eleven_multilingual_v2', prompt: 'narration',
+    });
+    mockExecuteNodeRequest.mockRejectedValue(Object.assign(
+      new Error('accepted response byte read failed'),
+      {
+        usage: {
+          source: 'actual',
+          confidence: 'fixed',
+          provider: 'elevenlabs',
+          modelId: 'eleven_multilingual_v2',
+          characters: 9,
+          costUsd: 0.002,
+        },
+      },
+    ));
+
+    await useFlowStore.getState().runNode(nodeId);
+
+    expect(mockExecuteNodeRequest).toHaveBeenCalledTimes(1);
+    expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(1);
+    expect(useProjectUsageStore.getState().ledger.entries[0]).toMatchObject({
+      nodeId,
+      provider: 'elevenlabs',
+      modelId: 'eleven_multilingual_v2',
+      characters: 9,
+      costUsd: 0.002,
+    });
+  });
+
+  it('does not resubmit and keeps one usage entry when accepted media persistence fails', async () => {
+    const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
+      mode: 'generate', provider: 'elevenlabs', modelId: 'eleven_multilingual_v2', prompt: 'narration',
+    });
+    mockExecuteNodeRequest.mockResolvedValue({
+      result: 'blob:accepted-elevenlabs-audio',
+      resultType: 'audio',
+      blob: new Blob(['accepted audio'], { type: 'audio/mpeg' }),
+      mimeType: 'audio/mpeg',
+      extension: 'mp3',
+      statusMessage: 'Generated',
+      usage: {
+        source: 'actual',
+        confidence: 'fixed',
+        provider: 'elevenlabs',
+        modelId: 'eleven_multilingual_v2',
+        characters: 9,
+        costUsd: 0.002,
+      },
+    });
+    const originalAddAssetItem = useSourceBinStore.getState().addAssetItem;
+    useSourceBinStore.setState({
+      addAssetItem: vi.fn().mockRejectedValue(new Error('Source persistence failed')),
+    });
+
+    try {
+      await useFlowStore.getState().runNode(nodeId);
+    } finally {
+      useSourceBinStore.setState({ addAssetItem: originalAddAssetItem });
+    }
+
+    expect(mockExecuteNodeRequest).toHaveBeenCalledTimes(1);
+    expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(1);
+    expect(useProjectUsageStore.getState().ledger.entries[0]).toMatchObject({
+      nodeId,
+      provider: 'elevenlabs',
+      modelId: 'eleven_multilingual_v2',
+      characters: 9,
+      costUsd: 0.002,
+    });
+    expect(findNodeInHydratedCanvas(nodeId)?.data.error).toBe('Source persistence failed');
+  });
+
   it('removes a Source item when ownership goes stale during Source persistence', async () => {
     const { promise, resolve } = deferred<ReturnType<typeof makeImageResult>>();
     mockExecuteNodeRequest.mockReturnValue(promise);
@@ -741,8 +815,8 @@ describe('Flow run ownership (AUD-002)', () => {
     });
     const originalAdd = useSourceBinStore.getState().addAssetItem;
     useSourceBinStore.setState({
-      addAssetItem: vi.fn(async (item, targetBinId) => {
-        const added = await originalAdd(item, targetBinId);
+      addAssetItem: vi.fn(async (item, targetBinId, options) => {
+        const added = await originalAdd(item, targetBinId, options);
         useFlowStore.getState().updateNodeData(nodeId, 'prompt', 'edited while writing Source');
         return added;
       }),
