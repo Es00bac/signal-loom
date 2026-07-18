@@ -77,7 +77,9 @@ function startDelayedRememberedProject(options: {
   };
 }
 
-function startDelayedBlankProject() {
+function startDelayedBlankProject(options: {
+  authorizeDirtyImageReplacement?: (projection: { dirtyDocumentCount: number }) => Promise<boolean>;
+} = {}) {
   let requestCurrent = true;
   let resolveNativeState!: () => void;
   const delayedNativeState = new Promise<void>((resolve) => {
@@ -86,7 +88,7 @@ function startDelayedBlankProject() {
   const result = delayedNativeState.then(() => applyNativeStartupProjectReplacement({
     startBlank: true,
     save: async () => ({ status: 'failed', error: 'save not selected' }),
-    authorizeDirtyImageReplacement: async () => false,
+    authorizeDirtyImageReplacement: options.authorizeDirtyImageReplacement ?? (async () => false),
     isStartupRequestCurrent: () => requestCurrent,
   }));
   return {
@@ -164,15 +166,41 @@ describe('delayed native startup project replacement', () => {
     expect(usePaperStore.getState().isDocumentDirty()).toBe(false);
   });
 
-  it('still blocks blank startup for genuinely dirty hydrated Paper work', async () => {
+  it('recovers genuinely dirty hydrated Paper work without prompting during blank startup', async () => {
     makePaperDirty('Hydrated dirty Paper');
     const startup = startDelayedBlankProject();
     startup.resolveNativeState();
-    await waitForPaperDecision();
 
-    usePaperLossPreventionStore.getState().cancel();
-    await expect(startup.result).resolves.toBe('preserved-live-work');
-    expect(usePaperStore.getState().isDocumentDirty()).toBe(true);
+    await expect(startup.result).resolves.toBe('blank-project');
+    expect(usePaperLossPreventionStore.getState().activeRequest).toBeNull();
+    expect(usePaperStore.getState().isDocumentDirty()).toBe(false);
+    expect(usePaperStore.getState().discardedDocumentRecoveries).toEqual([
+      expect.objectContaining({
+        reason: 'startup-recovery',
+        snapshot: expect.objectContaining({
+          document: expect.objectContaining({ title: 'Hydrated dirty Paper' }),
+        }),
+      }),
+    ]);
+  });
+
+  it('recovers dirty hydrated Image work without asking for discard during blank startup', async () => {
+    const authorize = vi.fn(async () => false);
+    const liveImage = imageDocument('hydrated-startup-image');
+    useImageEditorStore.setState({ documents: [liveImage], activeDocId: liveImage.id });
+    const startup = startDelayedBlankProject({ authorizeDirtyImageReplacement: authorize });
+    startup.resolveNativeState();
+
+    await expect(startup.result).resolves.toBe('blank-project');
+    expect(authorize).not.toHaveBeenCalled();
+    expect(usePaperLossPreventionStore.getState().activeRequest).toBeNull();
+    expect(useImageEditorStore.getState().documents).toEqual([]);
+    expect(useImageEditorStore.getState().discardedDocumentRecoveries).toEqual([
+      expect.objectContaining({
+        reason: 'startup-recovery',
+        snapshot: expect.objectContaining({ title: 'Image hydrated-startup-image' }),
+      }),
+    ]);
   });
 
   it('never invokes an Image dirty accessor that could update Flow during remembered startup', async () => {

@@ -1,7 +1,7 @@
 import type { FlowProjectDocument } from './projectLibrary';
 import {
   replaceProjectDocument,
-  replaceWithBlankProject,
+  resetStartupProjectDocumentWithCompleteRecovery,
   type DirtyImageReplacementAuthorization,
 } from './projectDocumentActions';
 import type { PaperLossSaveResult } from '../store/paperLossPreventionStore';
@@ -57,20 +57,17 @@ export async function applyNativeStartupProjectReplacement(
     }
 
     if (!options.startBlank) return 'preserved-live-work';
-    const replaced = await replaceWithBlankProject({
-      key: 'app:startup-blank-project',
-      title: 'Save Paper changes before starting the workspace?',
-      message: 'Startup found live Paper changes before the blank workspace was ready. Save the current project, discard with recovery, or cancel.',
-      save: options.save,
-      authorizeDirtyImageReplacement: options.authorizeDirtyImageReplacement,
-      transactionBookkeeping: 'reset-source-library-native-sync',
-      isReplacementRequestCurrent,
-    });
-    // The successful reset is main's canonical blank project, not a user-created unsaved Paper
-    // publication. Keep only this startup baseline clean so a queued OS open can immediately run
-    // its own replacement decision. File > New and createNewDocument retain their dirty semantics.
-    if (replaced) usePaperStore.getState().markAllDocumentsProjectSaved();
-    return replaced ? 'blank-project' : stale ? 'stale-startup' : 'preserved-live-work';
+    // Persisted renderer stores hydrate before native state resolves. Blank startup intentionally
+    // does not reopen that prior workspace, so it must not present the explicit Open/New loss
+    // dialog or attempt a save before native project authority has been adopted. Capture any dirty
+    // hydrated Paper/Image documents as bounded local recoveries, then establish the canonical
+    // blank project under the same startup request epoch.
+    await resetStartupProjectDocumentWithCompleteRecovery(isReplacementRequestCurrent);
+    if (!isReplacementRequestCurrent()) return 'stale-startup';
+    // A native blank launch is a canonical startup baseline, not a user-created unsaved Paper
+    // publication. File > New and explicit Paper document creation retain their dirty semantics.
+    usePaperStore.getState().markAllDocumentsProjectSaved();
+    return 'blank-project';
   } catch (error) {
     if (stale) return 'stale-startup';
     throw error;

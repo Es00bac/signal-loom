@@ -631,6 +631,7 @@ export type PaperDocumentRecoveryReason =
   | 'document-replacement'
   | 'project-replacement'
   | 'crash-recovery'
+  | 'startup-recovery'
   | 'shutdown'
   | 'baton-handoff';
 

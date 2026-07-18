@@ -1382,41 +1382,56 @@ export interface CompleteRecoveryProjectResetResult {
   capturedDirtyPaperDocuments: number;
 }
 
+type CompleteRecoveryProjectResetReason = 'crash-recovery' | 'startup-recovery';
+
+interface CompleteRecoveryProjectResetOptions {
+  reason: CompleteRecoveryProjectResetReason;
+  operationLabel: string;
+  isReplacementRequestCurrent?: ProjectReplacementRequestGuard;
+  transactionBookkeeping?: ProjectReplacementTransactionBookkeeping;
+}
+
 /**
- * Privileged reset boundary used only after the recovery UI's explicit confirmation. It does not
- * mint or consume a caller capability: it first captures every dirty Image/Paper document, then
- * authorizes only that exact post-capture workspace inside the closed replacement transaction.
+ * Closed reset boundary for flows that guarantee a blank project while retaining every dirty
+ * Image/Paper document as a bounded local recovery. It authorizes only the exact post-capture
+ * workspace inside the replacement transaction. An optional outer request epoch keeps delayed
+ * startup work from replacing a newer explicit project open.
  */
-export async function resetProjectDocumentWithCompleteRecovery(): Promise<CompleteRecoveryProjectResetResult> {
+async function resetProjectDocumentWithCompleteRecoveryReason(
+  options: CompleteRecoveryProjectResetOptions,
+): Promise<CompleteRecoveryProjectResetResult> {
   const requestId = beginProjectReplacementRequest();
+  assertGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent);
   const workspaceToken = captureProjectWorkspaceToken();
   const imageInspection = tryInspectDirtyImageReplacementDocuments(workspaceToken.image.documents);
   if (!imageInspection || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
-    throw new Error('Crash reset was blocked because Image document metadata could not be inspected safely.');
+    throw new Error(`${options.operationLabel} was blocked because Image document metadata could not be inspected safely.`);
   }
 
   const paperSnapshot = workspaceToken.paper.exportSnapshot();
   const dirtyPaperIds = paperSnapshot.documents
     ?.filter((document) => workspaceToken.paper.isDocumentDirty(document.id))
     .map((document) => document.id) ?? [];
-  if (!isProjectReplacementRequestCurrent(requestId) || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
+  if (!isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)
+    || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
     throw new ProjectReplacementPreparationStaleError();
   }
 
   const preparedImageRecoveries = await workspaceToken.image.prepareDocumentRecovery(
     imageInspection.dirtyDocumentIds,
-    'crash-recovery',
+    options.reason,
   );
   let imageRecoveryCommitted = false;
   let capturedDirtyImageDocuments: number;
   try {
     // Encoding pixels is asynchronous. No recovery or project mutation is allowed until every live
     // store identity/version is proven to still be the one inspected above.
-    if (!isProjectReplacementRequestCurrent(requestId) || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
+    if (!isGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent)
+      || !isProjectWorkspaceTokenCurrent(workspaceToken)) {
       throw new ProjectReplacementPreparationStaleError();
     }
     if (preparedImageRecoveries.length !== imageInspection.dirtyDocumentIds.length) {
-      throw new Error('Crash reset was blocked because not every dirty Image document could be captured.');
+      throw new Error(`${options.operationLabel} was blocked because not every dirty Image document could be captured.`);
     }
 
     capturedDirtyImageDocuments = workspaceToken.image
@@ -1427,14 +1442,16 @@ export async function resetProjectDocumentWithCompleteRecovery(): Promise<Comple
       workspaceToken.image.disposePreparedDocumentRecovery(preparedImageRecoveries);
     }
   }
+  assertGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent);
   const currentPaper = usePaperStore.getState();
   const capturedDirtyPaperDocuments = currentPaper.captureDocumentRecovery(
     dirtyPaperIds,
-    'crash-recovery',
+    options.reason,
   ).length;
   if (capturedDirtyPaperDocuments !== dirtyPaperIds.length) {
-    throw new Error('Crash reset was blocked because not every dirty Paper document could be captured.');
+    throw new Error(`${options.operationLabel} was blocked because not every dirty Paper document could be captured.`);
   }
+  assertGuardedReplacementRequestCurrent(requestId, options.isReplacementRequestCurrent);
 
   const authorization = captureInternalProjectReplacementAuthorization();
   await restoreNormalizedProjectDocument(
@@ -1442,10 +1459,35 @@ export async function resetProjectDocumentWithCompleteRecovery(): Promise<Comple
     normalizeIncomingProjectDocument(undefined),
     authorization.paper,
     authorization.image,
-    undefined,
+    options.transactionBookkeeping,
     'reset',
+    options.isReplacementRequestCurrent,
   );
   return { capturedDirtyImageDocuments, capturedDirtyPaperDocuments };
+}
+
+/** Recovery UI reset after the user explicitly confirms recovery mode. */
+export function resetProjectDocumentWithCompleteRecovery(): Promise<CompleteRecoveryProjectResetResult> {
+  return resetProjectDocumentWithCompleteRecoveryReason({
+    reason: 'crash-recovery',
+    operationLabel: 'Crash reset',
+  });
+}
+
+/**
+ * Native blank startup discards hydrated prior-session workspace state from the live canvas, but
+ * keeps dirty documents locally recoverable. The startup splash prevents live user edits during
+ * this short authority-adoption window; the outer epoch additionally retires delayed requests.
+ */
+export function resetStartupProjectDocumentWithCompleteRecovery(
+  isReplacementRequestCurrent: ProjectReplacementRequestGuard,
+): Promise<CompleteRecoveryProjectResetResult> {
+  return resetProjectDocumentWithCompleteRecoveryReason({
+    reason: 'startup-recovery',
+    operationLabel: 'Blank startup reset',
+    isReplacementRequestCurrent,
+    transactionBookkeeping: 'reset-source-library-native-sync',
+  });
 }
 
 function captureDirtyImageReplacementAuthorizationCandidate(): Readonly<{

@@ -2230,6 +2230,7 @@ function sanitizePaperDiscardRecoveries(value: unknown): PaperDiscardedDocumentR
         && reason !== 'document-replacement'
         && reason !== 'project-replacement'
         && reason !== 'crash-recovery'
+        && reason !== 'startup-recovery'
         && reason !== 'shutdown'
         && reason !== 'baton-handoff')
     ) return [];

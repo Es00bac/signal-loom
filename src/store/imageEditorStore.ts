@@ -128,7 +128,7 @@ function trimHistory(stack: EditorOperation[]): EditorOperation[] {
 
 const DEFAULT_IMAGE_BACKGROUND_COLOR = '#000000';
 
-export type ImageDocumentRecoveryReason = 'crash-recovery';
+export type ImageDocumentRecoveryReason = 'crash-recovery' | 'startup-recovery';
 
 export interface ImageDiscardedDocumentRecovery {
   id: string;
