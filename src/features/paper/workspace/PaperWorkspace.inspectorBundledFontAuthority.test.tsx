@@ -314,6 +314,50 @@ describe('Paper Inspector bundled-font selection authority (FBL-025)', () => {
     unregister();
   });
 
+  it('suppresses the success notice when a no-live-editor commit loses the store target', async () => {
+    let resolveInstall: ((font: PaperImportedFont) => void) | undefined;
+    mocks.install.mockImplementation(() => new Promise<PaperImportedFont>((resolve) => { resolveInstall = resolve; }));
+    const a = makeDocument('A', 'A without a live editor');
+    const replacement = makeDocument('Replacement', 'Store replacement with the same IDs');
+    setStore(a);
+    render(a);
+
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Choose inspector authority font')?.click());
+    await act(async () => { await vi.waitFor(() => expect(mocks.install).toHaveBeenCalledTimes(1)); });
+    // Leave the mounted Inspector props untouched so its operation authority is still current, but replace
+    // the actual store target. The synchronous fallback must propagate the store commit's false result.
+    setStore(replacement);
+    await act(async () => resolveInstall?.(installedFace));
+
+    expect(usePaperStore.getState().document).toBe(replacement);
+    expect(usePaperStore.getState().document.importedFonts).toBeUndefined();
+    expect(usePaperStore.getState().document.pages[0].frames[0].typography.fontFamily).not.toBe(bundledFamily.family);
+    expect(usePaperStore.getState().undoStack).toEqual([]);
+    expect(host.textContent).not.toContain('pinned to this document');
+    expect(mocks.authenticate).not.toHaveBeenCalled();
+    expect(mocks.showAlertDialog).not.toHaveBeenCalled();
+  });
+
+  it('retains current no-live-editor commit and success-notice behavior', async () => {
+    mocks.install.mockResolvedValue(installedFace);
+    const a = makeDocument('A', 'A without a live editor');
+    setStore(a);
+    render(a);
+
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Choose inspector authority font')?.click());
+    await act(async () => {
+      await vi.waitFor(() => expect(host.textContent).toContain('pinned to this document'));
+    });
+
+    expect(usePaperStore.getState().document.importedFonts).toEqual([installedFace]);
+    expect(usePaperStore.getState().document.pages[0].frames[0].typography.fontFamily).toBe(bundledFamily.family);
+    expect(usePaperStore.getState().undoStack).toHaveLength(1);
+    expect(mocks.authenticate).not.toHaveBeenCalled();
+    expect(mocks.showAlertDialog).not.toHaveBeenCalled();
+  });
+
   it('commits each current Inspector selection exactly once to its exact target', async () => {
     mocks.install.mockResolvedValueOnce({ ...installedFace, id: 'installed-first' }).mockResolvedValueOnce({ ...installedFace, id: 'installed-second' });
     mocks.authenticate.mockResolvedValue(undefined);

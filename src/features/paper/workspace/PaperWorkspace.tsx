@@ -11266,8 +11266,7 @@ export function PaperInspector({
       operationContext,
     );
     if (!(resolved instanceof Promise)) {
-      commit(resolved);
-      return;
+      return commit(resolved);
     }
     return resolved.then(commit).catch((error) => {
       if (operationAuthority && !operationAuthority.isCurrent()) return false;
