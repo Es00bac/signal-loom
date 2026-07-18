@@ -95,7 +95,8 @@ export const SettingsModal: React.FC = () => {
   } = useSettingsStore();
   const { t, tf } = useI18n();
   const keyStorageStatus = getApiKeyStorageStatus(apiKeys);
-  const vertexPlatform: 'desktop' | 'mobile' = getSignalLoomNativeBridge()
+  const nativeBridge = getSignalLoomNativeBridge();
+  const vertexPlatform: 'desktop' | 'mobile' = nativeBridge
     ? 'desktop'
     : (Capacitor.getPlatform?.() === 'android' ? 'mobile' : 'desktop');
   const vertexAuth = useVertexAuth({ providerSettings, setProviderSetting, platform: vertexPlatform });
@@ -117,6 +118,43 @@ export const SettingsModal: React.FC = () => {
   const imageModelPricingEntries = listImageModelPricingEntries();
   const [androidAcceleratorStatus, setAndroidAcceleratorStatus] = React.useState<string>('');
   const [androidAcceleratorChecking, setAndroidAcceleratorChecking] = React.useState(false);
+  const [reopenLastProjectOnStartup, setReopenLastProjectOnStartup] = React.useState(false);
+  const [startupPreferenceSaving, setStartupPreferenceSaving] = React.useState(false);
+  const [startupPreferenceError, setStartupPreferenceError] = React.useState('');
+
+  React.useEffect(() => {
+    if (!isSettingsOpen || !nativeBridge?.setReopenLastProjectOnStartup) return;
+    let cancelled = false;
+    void nativeBridge.getNativeState()
+      .then((state) => {
+        if (!cancelled) setReopenLastProjectOnStartup(state.reopenLastProjectOnStartup === true);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStartupPreferenceError(error instanceof Error ? error.message : t('settings.err.startupPreference'));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSettingsOpen, nativeBridge, t]);
+
+  const handleReopenLastProjectChange = async (enabled: boolean) => {
+    if (!nativeBridge?.setReopenLastProjectOnStartup) return;
+    const previous = reopenLastProjectOnStartup;
+    setReopenLastProjectOnStartup(enabled);
+    setStartupPreferenceSaving(true);
+    setStartupPreferenceError('');
+    try {
+      const result = await nativeBridge.setReopenLastProjectOnStartup(enabled);
+      setReopenLastProjectOnStartup(result.reopenLastProjectOnStartup);
+    } catch (error) {
+      setReopenLastProjectOnStartup(previous);
+      setStartupPreferenceError(error instanceof Error ? error.message : t('settings.err.startupPreference'));
+    } finally {
+      setStartupPreferenceSaving(false);
+    }
+  };
 
   const handleRefresh = async () => {
     await refreshCatalogs({
@@ -330,6 +368,24 @@ export const SettingsModal: React.FC = () => {
               options={APP_LOCALES.map((code) => ({ value: code, label: APP_LOCALE_ENDONYM[code] }))}
               value={locale}
             />
+            {nativeBridge?.setReopenLastProjectOnStartup ? (
+              <label className="flex items-start gap-3 rounded-xl border border-gray-800 bg-[#111217]/50 px-4 py-3 text-sm text-gray-300">
+                <input
+                  checked={reopenLastProjectOnStartup}
+                  className="mt-1"
+                  disabled={startupPreferenceSaving}
+                  onChange={(event) => void handleReopenLastProjectChange(event.target.checked)}
+                  type="checkbox"
+                />
+                <span className="space-y-1">
+                  <span className="block font-medium text-gray-200">{t('settings.field.reopenLastProject')}</span>
+                  <span className="block text-xs leading-5 text-gray-500">{t('settings.desc.reopenLastProject')}</span>
+                  {startupPreferenceError ? (
+                    <span className="block text-xs leading-5 text-red-300">{startupPreferenceError}</span>
+                  ) : null}
+                </span>
+              </label>
+            ) : null}
           </Section>
 
           <Section title={t('settings.section.apiKeys')}>

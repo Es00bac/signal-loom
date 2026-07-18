@@ -260,6 +260,8 @@ export interface NativeState {
   currentProjectPath?: string;
   currentScratchDirectoryPath?: string;
   startupProject?: NativeProjectFileResult;
+  /** Opt-in only: a normal desktop launch starts with a blank project. */
+  reopenLastProjectOnStartup?: boolean;
   workspace?: WorkspaceWindowView;
   platform: string;
   isDev: boolean;
@@ -705,6 +707,9 @@ export interface NativeBundledFontLibraryStatus {
 
 export interface SignalLoomNativeBridge {
   getNativeState: () => Promise<NativeState>;
+  setReopenLastProjectOnStartup?: (
+    enabled: boolean,
+  ) => Promise<{ reopenLastProjectOnStartup: boolean }>;
   /**
    * Dedicated signal-loom-font:// transport capability (FBL-025). A complete bridge is installed
    * even when the main process found no bundled-font-library root, in which case every

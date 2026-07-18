@@ -7,9 +7,10 @@ function buildStartupProjectStatePath(userDataPath) {
   return join(userDataPath, STARTUP_PROJECT_STATE_FILE);
 }
 
-function serializeStartupProjectState(filePath) {
+function serializeStartupProjectState(filePath, reopenLastProjectOnStartup = false) {
   return `${JSON.stringify({
-    currentProjectPath: filePath,
+    ...(filePath ? { currentProjectPath: filePath } : {}),
+    reopenLastProjectOnStartup: reopenLastProjectOnStartup === true,
     updatedAt: new Date().toISOString(),
   }, null, 2)}\n`;
 }
@@ -25,6 +26,14 @@ function parseStartupProjectState(contents) {
   }
 }
 
+function parseStartupProjectReopenPreference(contents) {
+  try {
+    return JSON.parse(contents)?.reopenLastProjectOnStartup === true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveStartupProjectPath(filePath, fileExists) {
   if (!filePath || !filePath.toLowerCase().endsWith(SIGNAL_LOOM_PROJECT_EXTENSION)) {
     return undefined;
@@ -36,6 +45,7 @@ function resolveStartupProjectPath(filePath, fileExists) {
 module.exports = {
   STARTUP_PROJECT_STATE_FILE,
   buildStartupProjectStatePath,
+  parseStartupProjectReopenPreference,
   parseStartupProjectState,
   resolveStartupProjectPath,
   serializeStartupProjectState,

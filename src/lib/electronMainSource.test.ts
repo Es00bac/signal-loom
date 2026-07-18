@@ -76,6 +76,16 @@ describe('Electron main process source guards', () => {
     expect(source).toMatch(/if \(rememberedPath && !resolvedPath\)[\s\S]*await forgetRememberedProjectPath\(\)/);
   });
 
+  it('starts blank by default and exposes an opt-in last-project startup preference', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+    const preload = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
+
+    expect(source).toContain('let reopenLastProjectOnStartup = false;');
+    expect(source).toMatch(/async function loadRememberedStartupProject\(\)[\s\S]*if \(!reopenLastProjectOnStartup \|\| !filePath\)/);
+    expect(source).toContain("ipcMain.handle('signal-loom:set-reopen-last-project-on-startup'");
+    expect(preload).toContain("setReopenLastProjectOnStartup: (enabled) => ipcRenderer.invoke('signal-loom:set-reopen-last-project-on-startup', enabled)");
+  });
+
   it('serves native asset protocol requests only after capability registration', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
 

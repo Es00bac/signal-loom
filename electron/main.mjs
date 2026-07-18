@@ -66,6 +66,7 @@ const { createProjectAuthority, normalizeProjectSavePayload } = projectAuthority
 const { getElectronDialogFilterGroups } = mediaFormatRegistryModule;
 const {
   buildStartupProjectStatePath,
+  parseStartupProjectReopenPreference,
   parseStartupProjectState,
   resolveStartupProjectPath,
   serializeStartupProjectState,
@@ -130,6 +131,10 @@ let currentProjectPath = undefined;
 let currentScratchDirectoryPath = undefined;
 let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
+// Reopening is opt-in. Keep the last path separately so a blank startup can still offer the
+// preference without binding this window to that project's authority or source state.
+let rememberedProjectPath = undefined;
+let reopenLastProjectOnStartup = false;
 // Set once by installProtocolHandlers() from the same resolveBundledFontLibraryRoot() call that
 // decides whether signal-loom-font:// can actually serve a face (FBL-025). undefined means no
 // audited font-library root was found, so every signal-loom-font request will 404.
@@ -1038,25 +1043,61 @@ async function rememberProjectPath(filePath) {
   }
 
   await mkdir(app.getPath('userData'), { recursive: true });
-  await writeFile(getStartupProjectStatePath(), serializeStartupProjectState(filePath), 'utf8');
+  rememberedProjectPath = filePath;
+  await writeFile(
+    getStartupProjectStatePath(),
+    serializeStartupProjectState(filePath, reopenLastProjectOnStartup),
+    'utf8',
+  );
 }
 
 async function forgetRememberedProjectPath() {
+  rememberedProjectPath = undefined;
+  if (reopenLastProjectOnStartup) {
+    await mkdir(app.getPath('userData'), { recursive: true });
+    await writeFile(
+      getStartupProjectStatePath(),
+      serializeStartupProjectState(undefined, reopenLastProjectOnStartup),
+      'utf8',
+    );
+    return;
+  }
   await rm(getStartupProjectStatePath(), { force: true });
 }
 
 async function readRememberedProjectPath() {
   try {
     const contents = await readFile(getStartupProjectStatePath(), 'utf8');
+    reopenLastProjectOnStartup = parseStartupProjectReopenPreference(contents);
     const rememberedPath = parseStartupProjectState(contents);
     const resolvedPath = resolveStartupProjectPath(rememberedPath, existsSync);
     if (rememberedPath && !resolvedPath) {
       await forgetRememberedProjectPath();
     }
+    rememberedProjectPath = resolvedPath;
     return resolvedPath;
   } catch {
+    rememberedProjectPath = undefined;
+    reopenLastProjectOnStartup = false;
     return undefined;
   }
+}
+
+async function setReopenLastProjectOnStartup(enabled) {
+  reopenLastProjectOnStartup = enabled === true;
+  const filePath = currentProjectPath ?? rememberedProjectPath;
+  if (!filePath && !reopenLastProjectOnStartup) {
+    await rm(getStartupProjectStatePath(), { force: true });
+    return reopenLastProjectOnStartup;
+  }
+  await mkdir(app.getPath('userData'), { recursive: true });
+  await writeFile(
+    getStartupProjectStatePath(),
+    serializeStartupProjectState(filePath, reopenLastProjectOnStartup),
+    'utf8',
+  );
+  rememberedProjectPath = filePath;
+  return reopenLastProjectOnStartup;
 }
 
 function setCurrentProjectAssetRoots(filePath, document, scratchDirectoryPath) {
@@ -1074,7 +1115,7 @@ async function loadRememberedStartupProject() {
   // the remembered project first so rejecting/canceling a startup intent leaves the old canonical
   // project intact instead of silently replacing it with a blank baton.
   const filePath = await readRememberedProjectPath();
-  if (!filePath) {
+  if (!reopenLastProjectOnStartup || !filePath) {
     setCurrentProjectAssetRoots(undefined, undefined, undefined);
     startupProject = undefined;
     await resetSourceLibrarySnapshot();
@@ -1484,9 +1525,13 @@ async function chooseProjectSavePath(existingPath, parentWindow) {
 async function stageProjectStartupRecord(filePath) {
   const statePath = getStartupProjectStatePath();
   const previous = await readFile(statePath).catch(() => undefined);
-  const next = !filePath || isSignalLoomProjectBackupPath(filePath)
+  const previousRememberedProjectPath = rememberedProjectPath;
+  const nextProjectPath = !filePath || isSignalLoomProjectBackupPath(filePath)
     ? undefined
-    : Buffer.from(serializeStartupProjectState(filePath), 'utf8');
+    : filePath;
+  const next = nextProjectPath || reopenLastProjectOnStartup
+    ? Buffer.from(serializeStartupProjectState(nextProjectPath, reopenLastProjectOnStartup), 'utf8')
+    : undefined;
   return {
     commit() {
       if (next) {
@@ -1495,6 +1540,7 @@ async function stageProjectStartupRecord(filePath) {
       } else {
         rmSync(statePath, { force: true });
       }
+      rememberedProjectPath = nextProjectPath;
     },
     async rollback() {
       if (previous) {
@@ -1502,6 +1548,7 @@ async function stageProjectStartupRecord(filePath) {
       } else {
         rmSync(statePath, { force: true });
       }
+      rememberedProjectPath = previousRememberedProjectPath;
     },
   };
 }
@@ -3143,6 +3190,7 @@ function installIpcHandlers() {
       currentProjectPath,
       currentScratchDirectoryPath,
       startupProject,
+      reopenLastProjectOnStartup,
       workspace: window ? getWorkspaceForWindow(window) ?? activeWorkspace : activeWorkspace,
       platform: process.platform,
       isDev,
@@ -3150,6 +3198,10 @@ function installIpcHandlers() {
       webContentsId: event.sender.id,
     };
   });
+
+  ipcMain.handle('signal-loom:set-reopen-last-project-on-startup', async (_event, enabled) => ({
+    reopenLastProjectOnStartup: await setReopenLastProjectOnStartup(enabled === true),
+  }));
 
   ipcMain.handle('signal-loom:clear-project-path', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);

@@ -16,6 +16,7 @@ function onChannel(channel, callback) {
 
 contextBridge.exposeInMainWorld('signalLoomNative', {
   getNativeState: () => ipcRenderer.invoke('signal-loom:get-native-state'),
+  setReopenLastProjectOnStartup: (enabled) => ipcRenderer.invoke('signal-loom:set-reopen-last-project-on-startup', enabled),
   bundledFontLibraryStatus: () => ipcRenderer.invoke('signal-loom:font-library-status'),
   clearProjectPath: (request) => ipcRenderer.invoke('signal-loom:clear-project-path', request),
   openProjectFile: (request) => ipcRenderer.invoke('signal-loom:project-open', request),

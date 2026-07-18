@@ -716,6 +716,13 @@ export const MESSAGES = {
   'settings.section.imageProviderSetup': { en: 'Image Provider Setup & Costs', ja: '画像プロバイダーの設定と料金' },
   'settings.section.imageModelCostTable': { en: 'Image Model Cost Table', ja: '画像モデル料金表' },
 
+  'settings.field.reopenLastProject': { en: 'Reopen previous project on startup', ja: '起動時に前回のプロジェクトを開く' },
+  'settings.desc.reopenLastProject': {
+    en: 'Off by default. When disabled, Sloom Studio starts with a new blank project; open saved .sloom files normally from File → Open.',
+    ja: '既定ではオフです。無効の場合、Sloom Studio は新しい空のプロジェクトで起動します。保存済みの .sloom ファイルは「ファイル」→「開く」から通常どおり開けます。',
+  },
+  'settings.err.startupPreference': { en: 'Could not update the startup preference.', ja: '起動設定を更新できませんでした。' },
+
   // Settings — runtime option field labels
   'settings.field.openaiBaseUrl': { en: 'OpenAI-compatible base URL', ja: 'OpenAI 互換ベース URL' },
   'settings.field.atlasBaseUrl': { en: 'Atlas base URL', ja: 'Atlas ベース URL' },
