@@ -224,8 +224,8 @@ export async function upscaleImageDocumentUniversal(input: UniversalImageUpscale
 
     return {
       document: replaceDocumentWithSingleUpscaledLayer(input.doc, bitmap, target.width, target.height, {
-        idSuffix: 'cpu-upscale',
-        metadataSourceFormat: 'local-cpu-upscale',
+        idSuffix: 'vulkan-upscale',
+        metadataSourceFormat: 'Real-ESRGAN Vulkan',
         statusLabel: 'Local Vulkan AI',
       }),
       provider: 'local-ai-cpu',

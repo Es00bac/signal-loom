@@ -1034,7 +1034,7 @@ function paperPrintUpscaleProviderTelemetryLabel(
     case 'android-native':
       return { provider: 'android-native', modelId: 'signal-loom-android-native-bitmap' };
     case 'local-ai-cpu':
-      return { provider: 'local', modelId: 'cpu-ai-upscaler' };
+      return { provider: 'local', modelId: 'realesrgan-ncnn-vulkan' };
     case 'browser':
       return { provider: 'local', modelId: 'browser-canvas-upscale' };
   }

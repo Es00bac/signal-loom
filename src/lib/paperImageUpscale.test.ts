@@ -423,6 +423,20 @@ describe('paperImageUpscale', () => {
       costUsd: 0.02,
       notes: ['exact local fit after AI upscale'],
     });
+
+    expect(buildPaperPrintUpscaleUsageTelemetry({
+      provider: 'local-ai-cpu',
+      estimatedCostUsd: 0,
+      notes: ['managed Vulkan runtime'],
+    })).toEqual({
+      source: 'actual',
+      confidence: 'fixed',
+      provider: 'local',
+      modelId: 'realesrgan-ncnn-vulkan',
+      imageCount: 1,
+      costUsd: 0,
+      notes: ['managed Vulkan runtime'],
+    });
   });
 
   it('builds a frame patch that swaps in the upscaled image without changing the visible crop', () => {

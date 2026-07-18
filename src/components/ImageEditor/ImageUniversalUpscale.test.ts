@@ -472,12 +472,15 @@ describe('ImageUniversalUpscale', () => {
       id: 'doc-2',
       width: 256,
       height: 200,
-      activeLayerId: 'cpu-upscale-doc-2',
+      activeLayerId: 'vulkan-upscale-doc-2',
       hasSelection: false,
     });
     expect(result.document.layers[0]).toMatchObject({
-      id: 'cpu-upscale-doc-2',
+      id: 'vulkan-upscale-doc-2',
       name: 'Local Vulkan AI upscale',
+      metadata: expect.objectContaining({
+        sourceFormat: 'Real-ESRGAN Vulkan',
+      }),
     });
   });
 
