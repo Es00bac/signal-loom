@@ -3,11 +3,14 @@ import {
   clearProjectSyncChannels,
   getProjectSyncChannel,
   getProjectSyncEventsSince,
+  getHostProjectSyncAsset,
   getProjectSyncVersion,
   getRegisteredProjectSyncChannelIds,
   recordProjectSyncChange,
+  recordProjectSyncAsset,
   registerProjectSyncChannel,
   resetProjectSyncLog,
+  retainProjectSyncAssets,
   waitForProjectSyncEvents,
   type ProjectSyncChannel,
 } from './projectSyncService';
@@ -106,6 +109,26 @@ describe('projectSyncService — host-authority event log', () => {
     resetProjectSyncLog();
     expect(getProjectSyncVersion()).toBe(0);
     expect(getProjectSyncEventsSince(0)).toEqual([]);
+  });
+});
+
+describe('projectSyncService — retained workspace assets', () => {
+  afterEach(() => {
+    resetProjectSyncLog();
+  });
+
+  it('keeps a declared Paper inventory larger than the generic 256-entry transient tail', () => {
+    const assetIds = Array.from({ length: 300 }, (_, index) => `sha256:${index.toString(16).padStart(64, '0')}`);
+    retainProjectSyncAssets('paper', assetIds);
+    for (const [index, assetId] of assetIds.entries()) {
+      recordProjectSyncAsset('paper', assetId, `data:application/octet-stream;base64,${index}`);
+    }
+    expect(getHostProjectSyncAsset('paper', assetIds[0])).toBe('data:application/octet-stream;base64,0');
+    expect(getHostProjectSyncAsset('paper', assetIds[299])).toBe('data:application/octet-stream;base64,299');
+
+    retainProjectSyncAssets('paper', assetIds.slice(250));
+    expect(getHostProjectSyncAsset('paper', assetIds[0])).toBeNull();
+    expect(getHostProjectSyncAsset('paper', assetIds[250])).toBe('data:application/octet-stream;base64,250');
   });
 });
 

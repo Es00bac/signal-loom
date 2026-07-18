@@ -12,6 +12,7 @@ import {
   getProjectSyncVersion,
   recordProjectSyncAsset,
   recordProjectSyncChange,
+  retainProjectSyncAssets,
   waitForProjectSyncEvents,
   type ProjectSyncChannelId,
 } from './projectSyncService';
@@ -314,6 +315,16 @@ export async function resolveLanRequest(req: { method: string; path: string; bod
   // (content-addressed by `layerId@bitmapVersion`) just before publishing the pixel-pointer op, so the
   // phone can serve them to every other client. Body: `{ asset: <base64 data URL> }`.
   if (req.method === 'PUT') {
+    const inventoryRoute = parseProjectChannelRoute(path.split('?')[0]);
+    if (inventoryRoute?.action === 'assets') {
+      const body = parseJsonBody<{ assetIds?: unknown }>(req.body);
+      if (!Array.isArray(body?.assetIds)
+        || body.assetIds.some((assetId) => typeof assetId !== 'string' || !assetId)) {
+        return { ok: false, error: 'A project sync asset inventory must contain only non-empty ids.' };
+      }
+      retainProjectSyncAssets(inventoryRoute.channel, [...new Set(body.assetIds)]);
+      return { ok: true };
+    }
     const assetRoute = parseProjectAssetRoute(path.split('?')[0]);
     if (assetRoute) {
       const body = parseJsonBody<{ asset?: string }>(req.body);

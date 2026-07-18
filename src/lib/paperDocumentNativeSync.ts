@@ -1,7 +1,16 @@
-import type { PaperDocument, PaperFrame, PaperFramePatch } from '../types/paper';
+import type {
+  PaperDocument,
+  PaperDocumentSnapshot,
+  PaperFrame,
+  PaperFramePatch,
+  PaperWorkspaceDocumentSnapshot,
+} from '../types/paper';
 import { updatePaperFrame } from './paperDocument';
-import type { BinaryAssetId } from '../shared/assets/contentAddressedAsset';
-import { collectReachablePaperAssetIds } from '../features/paper/assets/PaperDocumentAssets';
+import type { BinaryAssetId, BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
+import {
+  collectReachablePaperAssetIds,
+  collectReachablePaperAssetRefs,
+} from '../features/paper/assets/PaperDocumentAssets';
 
 /**
  * Paper workspace channel for the unified cross-device op-sync (task #52; core in
@@ -30,9 +39,38 @@ import { collectReachablePaperAssetIds } from '../features/paper/assets/PaperDoc
  * nothing changes, which the channel uses to decide whether to re-render / re-broadcast.
  */
 
+export const PAPER_WORKSPACE_SYNC_SCHEMA_VERSION = 1 as const;
+
+/** Local filesystem save provenance is intentionally never shared between devices. */
+export type PaperWorkspaceSyncDocument = Omit<PaperWorkspaceDocumentSnapshot, 'persistence'>;
+
+/**
+ * Versioned, self-contained Paper workspace metadata. Managed bytes are kept out of JSON, but their
+ * complete immutable references ride here so the policy layer can authenticate every fetched record
+ * before publishing any of these documents to the live store.
+ */
+export interface PaperWorkspaceSyncEnvelopeV1 {
+  activeDocumentId: string;
+  documents: PaperWorkspaceSyncDocument[];
+  assetRefs: BinaryAssetRef[];
+}
+
+/**
+ * The current envelope deliberately retains the historical snapshot discriminator and active
+ * `document` field. Older peers therefore apply the active document instead of falling through an
+ * unknown-op switch, while current peers authenticate and atomically apply `workspace`.
+ */
+export interface PaperWorkspaceSnapshotChange {
+  type: 'paper-document-snapshot';
+  document: PaperDocument;
+  assetIds?: BinaryAssetId[];
+  schemaVersion: typeof PAPER_WORKSPACE_SYNC_SCHEMA_VERSION;
+  workspace: PaperWorkspaceSyncEnvelopeV1;
+}
+
 export type PaperDocumentNativeChange =
   /** Full document snapshot — seed, version-gap repair, and the fallback for any non-frame change. */
-  | { type: 'paper-document-snapshot'; document: PaperDocument; assetIds?: BinaryAssetId[] }
+  | { type: 'paper-document-snapshot'; document: PaperDocument; assetIds?: BinaryAssetId[]; schemaVersion?: number; workspace?: PaperWorkspaceSyncEnvelopeV1 }
   /** A frame was created on a page. Idempotent: ignored if that frame id already exists on the page. */
   | { type: 'paper-frame-added'; pageId: string; frame: PaperFrame }
   /** A frame was moved (typically the coalesced final position of a drag, not every pointer frame). */
@@ -183,4 +221,69 @@ export function createPaperDocumentSnapshotChange(document: PaperDocument): Pape
     document,
     ...(assetIds.length ? { assetIds } : {}),
   };
+}
+
+/**
+ * Build the current schema-v1 workspace payload from the store's persistence-safe export. The
+ * ordered document array is the tab order. Reachability is recomputed from document content rather
+ * than trusting advisory `assetIds`, and conflicting references fail before any network publication.
+ */
+export function createPaperWorkspaceSnapshotChange(
+  snapshot: PaperDocumentSnapshot,
+): PaperWorkspaceSnapshotChange {
+  const sourceDocuments = snapshot.documents?.length
+    ? snapshot.documents
+    : [{
+      id: snapshot.activeDocumentId || snapshot.document.id || 'paper-document',
+      document: snapshot.document,
+      assetIds: snapshot.assetIds,
+      selectedPageId: snapshot.selectedPageId,
+      selectedFrameId: snapshot.selectedFrameId,
+      selectedFrameIds: snapshot.selectedFrameIds,
+      tool: snapshot.tool,
+      zoom: snapshot.zoom,
+    } satisfies PaperWorkspaceDocumentSnapshot];
+  const documents: PaperWorkspaceSyncDocument[] = sourceDocuments.map(
+    ({ persistence: _localPersistence, ...candidate }) => ({
+      ...candidate,
+      assetIds: collectReachablePaperAssetIds(candidate.document),
+    }),
+  );
+  const activeDocumentId = documents.some((candidate) => candidate.id === snapshot.activeDocumentId)
+    ? snapshot.activeDocumentId!
+    : documents[0]?.id ?? '';
+  const assetRefsById = new Map<BinaryAssetId, BinaryAssetRef>();
+  for (const candidate of documents) {
+    for (const ref of collectReachablePaperAssetRefs(candidate.document)) {
+      const existing = assetRefsById.get(ref.id);
+      if (existing && (
+        existing.sha256 !== ref.sha256
+        || existing.mimeType !== ref.mimeType
+        || existing.byteLength !== ref.byteLength
+      )) {
+        throw new Error(`Paper workspace asset ${ref.id} has conflicting managed metadata.`);
+      }
+      if (!existing) assetRefsById.set(ref.id, { ...ref });
+    }
+  }
+  return {
+    type: 'paper-document-snapshot',
+    document: documents.find((candidate) => candidate.id === activeDocumentId)?.document
+      ?? snapshot.document,
+    assetIds: [...assetRefsById.keys()].sort(),
+    schemaVersion: PAPER_WORKSPACE_SYNC_SCHEMA_VERSION,
+    workspace: {
+      activeDocumentId,
+      documents,
+      assetRefs: [...assetRefsById.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    },
+  };
+}
+
+export function isPaperWorkspaceSnapshotChange(
+  change: PaperDocumentNativeChange,
+): change is PaperWorkspaceSnapshotChange {
+  return change.type === 'paper-document-snapshot'
+    && change.schemaVersion === PAPER_WORKSPACE_SYNC_SCHEMA_VERSION
+    && change.workspace !== undefined;
 }

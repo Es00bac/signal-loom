@@ -140,6 +140,27 @@ describe('androidLanServer', () => {
       maxBytes: 256, sampleBytes: 64, transportIdentity: 'sha256:source-identity',
     });
   });
+
+  it('accepts a project-channel asset inventory before the content-addressed uploads', async () => {
+    const base = '/__loom/api/project/paper';
+    await expect(resolveLanRequest({
+      method: 'PUT',
+      path: `${base}/assets`,
+      body: JSON.stringify({ assetIds: ['sha256:one', 'sha256:two'] }),
+    })).resolves.toEqual({ ok: true });
+    await expect(resolveLanRequest({
+      method: 'PUT',
+      path: `${base}/asset/sha256%3Aone`,
+      body: JSON.stringify({ asset: 'data:application/octet-stream;base64,AQ==' }),
+    })).resolves.toEqual({ ok: true });
+    await expect(resolveLanRequest({
+      method: 'GET', path: `${base}/asset/sha256%3Aone`,
+    })).resolves.toEqual({ asset: 'data:application/octet-stream;base64,AQ==' });
+
+    await expect(resolveLanRequest({
+      method: 'PUT', path: `${base}/assets`, body: JSON.stringify({ assetIds: ['ok', 2] }),
+    })).resolves.toMatchObject({ ok: false });
+  });
 });
 
 describe('androidLanServer — baton write-gate', () => {

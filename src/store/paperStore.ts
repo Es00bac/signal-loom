@@ -48,7 +48,9 @@ import {
 } from '../lib/paperComicSfx';
 import {
   applyPaperDocumentNativeChange,
+  isPaperWorkspaceSnapshotChange,
   type PaperDocumentNativeChange,
+  type PaperWorkspaceSyncEnvelopeV1,
 } from '../lib/paperDocumentNativeSync';
 import {
   collectReachablePaperAssetIds,
@@ -268,6 +270,8 @@ interface PaperActions {
    * actually changed (so a self-echoed op never thrashes).
    */
   applyRemotePaperDocumentChange: (change: PaperDocumentNativeChange) => boolean;
+  /** Atomically replace the remotely-authenticated Paper tab catalog and active tab. */
+  applyRemotePaperWorkspaceSnapshot: (workspace: PaperWorkspaceSyncEnvelopeV1) => boolean;
 }
 
 const initialDocument = createDefaultPaperDocument({ title: 'Untitled Paper Layout' });
@@ -1322,12 +1326,78 @@ export const usePaperStore = create<PaperState & PaperActions>()(
       },
 
       applyRemotePaperDocumentChange: (change) => {
+        if (isPaperWorkspaceSnapshotChange(change)) {
+          return get().applyRemotePaperWorkspaceSnapshot(change.workspace);
+        }
         let changed = false;
         set((state) => {
-          const nextDocument = applyPaperDocumentNativeChange(state.document, change);
-          if (nextDocument === state.document) return {};
+          const documents = syncActivePaperDocument(state);
+          const targetId = findLegacyPaperChangeTarget(documents, state.activeDocumentId, change);
+          if (!targetId) return {};
+          const target = documents.find((candidate) => candidate.id === targetId);
+          if (!target) return {};
+          const nextDocument = applyPaperDocumentNativeChange(target.document, change);
+          if (nextDocument === target.document) return {};
           changed = true;
-          return { document: nextDocument, ...reconcilePaperSelection(state, nextDocument) };
+          const selection = reconcilePaperWorkspaceSelection(target, nextDocument);
+          const nextDocuments = documents.map((candidate) => candidate.id === targetId
+            ? {
+              ...candidate,
+              document: nextDocument,
+              assetIds: collectReachablePaperAssetIds(nextDocument),
+              ...selection,
+            }
+            : candidate);
+          if (targetId !== state.activeDocumentId) {
+            return {
+              documents: nextDocuments,
+              documentHistories: removePaperDocumentHistory(state.documentHistories, targetId),
+            };
+          }
+          return {
+            documents: nextDocuments,
+            document: nextDocument,
+            ...reconcilePaperSelection(state, nextDocument),
+            ...freshPaperDocumentHistoryPatch(state.documentHistories, targetId),
+          };
+        });
+        return changed;
+      },
+
+      applyRemotePaperWorkspaceSnapshot: (workspace) => {
+        let changed = false;
+        set((state) => {
+          const declaredActive = workspace.documents.find(
+            (candidate) => candidate.id === workspace.activeDocumentId,
+          );
+          if (!declaredActive) return {};
+          const sanitized = sanitizePaperSnapshot({
+            document: declaredActive.document,
+            documents: workspace.documents,
+            activeDocumentId: workspace.activeDocumentId,
+          }, 'preserve');
+          const existingById = new Map(syncActivePaperDocument(state).map((candidate) => [candidate.id, candidate]));
+          const nextDocuments = sanitized.documents.map((candidate) => ({
+            ...candidate,
+            persistence: existingById.get(candidate.id)?.persistence ?? { kind: 'new' as const },
+          }));
+          const active = nextDocuments.find((candidate) => candidate.id === sanitized.activeDocumentId);
+          if (!active) return {};
+          if (samePaperWorkspaceSyncState(state, nextDocuments, active.id)) return {};
+          changed = true;
+          const documentInstanceIds = Object.fromEntries(nextDocuments.map((candidate) => [
+            candidate.id,
+            state.documentInstanceIds[candidate.id] ?? makePaperRuntimeId('paper-tab-instance'),
+          ]));
+          return {
+            documents: nextDocuments,
+            documentInstanceIds,
+            activeDocumentId: active.id,
+            ...paperStatePatchFromWorkspaceSnapshot(active),
+            undoStack: [],
+            redoStack: [],
+            documentHistories: {},
+          };
         });
         return changed;
       },
@@ -1501,6 +1571,70 @@ function syncActivePaperDocument(state: PaperState): PaperWorkspaceDocumentSnaps
   const activeIndex = state.documents.findIndex((candidate) => candidate.id === state.activeDocumentId);
   if (activeIndex < 0) return [...state.documents, activeDocument];
   return state.documents.map((candidate, index) => index === activeIndex ? activeDocument : candidate);
+}
+
+/**
+ * Old clients address one document implicitly. Route their ops only when identity is unambiguous;
+ * this preserves single-tab interoperability without letting a tab switch overwrite an unrelated
+ * active body on a modern multi-tab receiver.
+ */
+function findLegacyPaperChangeTarget(
+  documents: PaperWorkspaceDocumentSnapshot[],
+  activeDocumentId: string,
+  change: PaperDocumentNativeChange,
+): string | null {
+  if (change.type === 'paper-document-snapshot') {
+    const matches = documents.filter((candidate) =>
+      candidate.id === change.document.id || candidate.document.id === change.document.id);
+    if (matches.length === 1) return matches[0].id;
+    if (matches.length === 0 && documents.length === 1) return documents[0].id;
+    return null;
+  }
+
+  const matches = documents.filter((candidate) =>
+    candidate.document.pages.some((page) => page.id === change.pageId));
+  if (matches.length === 1) return matches[0].id;
+  // Duplicate page identities are malformed/ambiguous. Even preferring the active tab could apply an
+  // older sender's edit to unrelated content, so fail closed.
+  if (matches.length > 1) return null;
+  const active = documents.find((candidate) => candidate.id === activeDocumentId);
+  return active?.document.pages.some((page) => page.id === change.pageId) ? active.id : null;
+}
+
+function reconcilePaperWorkspaceSelection(
+  workspaceDocument: PaperWorkspaceDocumentSnapshot,
+  document: PaperDocument,
+): Pick<PaperWorkspaceDocumentSnapshot, 'selectedPageId' | 'selectedFrameId' | 'selectedFrameIds'> {
+  const selectedPageId = workspaceDocument.selectedPageId
+    && document.pages.some((page) => page.id === workspaceDocument.selectedPageId)
+    ? workspaceDocument.selectedPageId
+    : document.pages[0]?.id ?? '';
+  const page = document.pages.find((candidate) => candidate.id === selectedPageId);
+  const validFrameIds = new Set(page?.frames.map((frame) => frame.id) ?? []);
+  const selectedFrameId = workspaceDocument.selectedFrameId
+    && validFrameIds.has(workspaceDocument.selectedFrameId)
+    ? workspaceDocument.selectedFrameId
+    : undefined;
+  const selectedFrameIds = (workspaceDocument.selectedFrameIds ?? [])
+    .filter((frameId) => validFrameIds.has(frameId));
+  return {
+    selectedPageId,
+    selectedFrameId: selectedFrameId ?? selectedFrameIds[0],
+    selectedFrameIds,
+  };
+}
+
+function samePaperWorkspaceSyncState(
+  state: PaperState,
+  nextDocuments: PaperWorkspaceDocumentSnapshot[],
+  nextActiveDocumentId: string,
+): boolean {
+  if (state.activeDocumentId !== nextActiveDocumentId) return false;
+  const syncProjection = (documents: PaperWorkspaceDocumentSnapshot[]) => documents.map(
+    ({ persistence: _localPersistence, ...candidate }) => candidate,
+  );
+  return JSON.stringify(syncProjection(syncActivePaperDocument(state)))
+    === JSON.stringify(syncProjection(nextDocuments));
 }
 
 function paperStatePatchFromWorkspaceSnapshot(

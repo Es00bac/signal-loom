@@ -4,79 +4,201 @@ import { isServedLanSession } from './remoteHostClient';
 import { ensureProjectSyncChannelStarted } from './projectSyncClient';
 import { registerProjectSyncChannel, type ProjectSyncChannel } from './projectSyncService';
 import {
-  createPaperDocumentSnapshotChange,
-  diffPaperDocumentNativeChanges,
+  getProjectSyncAsset,
+  prepareVerifiedProjectSyncAssets,
+  putVerifiedProjectSyncAsset,
+} from './projectSyncAssets';
+import {
+  createPaperWorkspaceSnapshotChange,
+  isPaperWorkspaceSnapshotChange,
   type PaperDocumentNativeChange,
+  type PaperWorkspaceSnapshotChange,
 } from './paperDocumentNativeSync';
-import type { PaperDocument } from '../types/paper';
+import { paperAssetRepository } from '../features/paper/assets/PaperAssetRuntime';
+import type { PaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
+import { collectReachablePaperAssetRefs } from '../features/paper/assets/PaperDocumentAssets';
+import {
+  isBinaryAssetRef,
+  verifyBinaryAssetRecord,
+  type BinaryAssetId,
+  type BinaryAssetRecord,
+  type BinaryAssetRef,
+} from '../shared/assets/contentAddressedAsset';
+import { sanitizePaperSnapshot as sanitizeProjectPaperSnapshot } from './projectValidation';
 
 /**
- * Paper workspace's seat on the unified cross-device op-sync (task #52). The **policy** layer wiring the
- * pure op model ([[paperDocumentNativeSync]]) and the live store (`paperStore`) to the shared transport
- * ([[projectSyncService]] + `androidLanServer` + `projectSyncClient`) — the Paper analog of
- * [[flowSyncChannel]], reusing the exact generic transport/client proven by Flow (`docs/notes/766`):
+ * Paper's cross-device policy layer. Current peers exchange a schema-v1 workspace envelope that
+ * preserves the complete ordered tab catalog and active tab. Its discriminator and active `document`
+ * remain the historical `paper-document-snapshot` shape, so an older peer safely applies the active
+ * document while a current peer authenticates all managed records and atomically applies the workspace.
  *
- *  - **Apply (inbound):** a `ProjectSyncChannel` whose `applyRemote` drives
- *    `paperStore.applyRemotePaperDocumentChange` inside an **echo guard**, and whose `snapshot` exports
- *    the live document for a client's seed.
- *  - **Emit (outbound):** one passive `usePaperStore.subscribe` that diffs the document after store
- *    changes and pushes the minimal frame ops via `notifyLanProjectChange`.
- *
- * Difference from Flow: Paper has **no store-visible drag flag** (the canvas interaction lives in
- * component-local React state and commits to the store on every pointer-move during a frame drag/resize).
- * So instead of skipping while `node.dragging`, the emit is **coalesced** with a short trailing debounce
- * (collapses a drag's burst of per-move writes into the final position) plus a max-wait so a sustained
- * drag still streams periodically for liveness. Ops are idempotent, so the worst case of an extra emit is
- * a remote no-op, not corruption.
- *
- * Echo-loop + authority safety (identical to Flow):
- *  - `applyingRemote` suppresses the emit our own `applyRemote` provokes.
- *  - `canEmit` starts true only on the phone authority; a served client stays mute until it has applied
- *    its first remote op (the seed), so it can never push its stale local document over the phone's on
- *    connect — it only emits deltas a user makes *after* it is in sync.
+ * Managed image, font/license, and ICC bytes travel out-of-band under their immutable SHA-256 id.
+ * Outbound publication is bytes-before-envelope; inbound application stages and verifies every
+ * reachable record before changing the store. Missing/corrupt records defer the whole envelope.
  */
 
 export const PAPER_SYNC_CHANNEL = 'paper';
 
-/** Trailing-debounce window — collapses the per-pointer-move writes of a frame drag into one emit. */
 const EMIT_COALESCE_MS = 90;
-/** …but never hold a sustained drag longer than this before streaming an interim op (liveness). */
 const EMIT_MAX_WAIT_MS = 220;
 
-/** True while we are applying a remote op — the emit subscription must not re-broadcast it. */
 let applyingRemote = false;
-/** A served client only earns the right to emit after it has synced from the authority once. */
 let canEmit = false;
-/** Baseline document the subscription diffs against; null until the first observation. */
-let lastDocument: PaperDocument | null = null;
+let lastWorkspaceFingerprint: string | null = null;
 let initialized = false;
-/** Pending coalesced-emit timer + when the current pending burst began (for the max-wait). */
+let unsubscribeStore: (() => void) | null = null;
 let emitTimer: ReturnType<typeof setTimeout> | null = null;
 let firstPendingAt = 0;
 
-function currentDocument(): PaperDocument {
-  return usePaperStore.getState().document;
-}
+let assetRepository: PaperAssetRepository = paperAssetRepository;
+let prepareAssets = prepareVerifiedProjectSyncAssets;
+let putAsset = putVerifiedProjectSyncAsset;
+let getAsset = getProjectSyncAsset;
 
-/** Cheap predicate: does this client participate in project sync at all? Keeps non-sync sessions free. */
+/** Serialize async asset publication and apply so a slower older envelope cannot land after a newer one. */
+let outboundTail: Promise<void> = Promise.resolve();
+let inboundTail: Promise<void> = Promise.resolve();
+
 function isPaperSyncActive(): boolean {
   return isAndroidLanServerAvailable() || isServedLanSession();
 }
 
-const paperChannel: ProjectSyncChannel<PaperDocumentNativeChange> = {
-  id: PAPER_SYNC_CHANNEL,
-  applyRemote(change) {
-    applyingRemote = true;
-    try {
-      return usePaperStore.getState().applyRemotePaperDocumentChange(change);
-    } finally {
-      applyingRemote = false;
+function currentWorkspaceChange(): PaperWorkspaceSnapshotChange {
+  return createPaperWorkspaceSnapshotChange(usePaperStore.getState().exportSnapshot());
+}
+
+function workspaceFingerprint(change: PaperWorkspaceSnapshotChange): string {
+  return JSON.stringify(change.workspace);
+}
+
+function sameAssetRef(left: BinaryAssetRef, right: BinaryAssetRef): boolean {
+  return left.id === right.id
+    && left.sha256 === right.sha256
+    && left.mimeType === right.mimeType
+    && left.byteLength === right.byteLength
+    && left.fileName === right.fileName;
+}
+
+function validateWorkspaceChange(change: PaperDocumentNativeChange): PaperWorkspaceSnapshotChange | null {
+  if (!isPaperWorkspaceSnapshotChange(change)) return null;
+  const { workspace } = change;
+  if (!workspace.documents.length) return null;
+  const tabIds = new Set<string>();
+  for (const candidate of workspace.documents) {
+    if (!candidate || typeof candidate.id !== 'string' || !candidate.id || tabIds.has(candidate.id)) return null;
+    if (!candidate.document || !Array.isArray(candidate.document.pages)) return null;
+    tabIds.add(candidate.id);
+  }
+  if (!tabIds.has(workspace.activeDocumentId)) return null;
+  const activeDocument = workspace.documents.find(
+    (candidate) => candidate.id === workspace.activeDocumentId,
+  )?.document;
+  if (!activeDocument || JSON.stringify(change.document) !== JSON.stringify(activeDocument)) return null;
+
+  let expectedRefs: BinaryAssetRef[];
+  try {
+    const byId = new Map<BinaryAssetId, BinaryAssetRef>();
+    for (const candidate of workspace.documents) {
+      for (const ref of collectReachablePaperAssetRefs(candidate.document)) {
+        const existing = byId.get(ref.id);
+        if (existing && !sameAssetRef(existing, ref)) return null;
+        if (!existing) byId.set(ref.id, ref);
+      }
     }
-  },
-  snapshot() {
-    return createPaperDocumentSnapshotChange(currentDocument());
-  },
-};
+    expectedRefs = [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
+  } catch {
+    return null;
+  }
+  if (workspace.assetRefs.length !== expectedRefs.length) return null;
+  for (let index = 0; index < expectedRefs.length; index += 1) {
+    const declared = workspace.assetRefs[index];
+    if (!isBinaryAssetRef(declared) || !sameAssetRef(declared, expectedRefs[index])) return null;
+  }
+
+  // Project validation rejects malformed/inline managed references. Sync is stricter than file restore:
+  // any quarantine or repair means the envelope is deferred, never partially repaired into live state.
+  const sanitized = sanitizeProjectPaperSnapshot({
+    document: change.document,
+    documents: workspace.documents,
+    activeDocumentId: workspace.activeDocumentId,
+    assetIds: expectedRefs.map((ref) => ref.id),
+  });
+  if (!sanitized || sanitized.recovery) return null;
+  if (sanitized.documents?.length !== workspace.documents.length) return null;
+  if (sanitized.activeDocumentId !== workspace.activeDocumentId) return null;
+  return change;
+}
+
+function bytesToDataUrl(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return `data:application/octet-stream;base64,${btoa(binary)}`;
+}
+
+function bytesFromDataUrl(value: string): Uint8Array | null {
+  const match = /^data:[^,]*;base64,([a-z0-9+/=]*)$/i.exec(value);
+  if (!match) return null;
+  try {
+    const binary = atob(match[1]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+async function recordMatchesRef(record: BinaryAssetRecord | undefined, ref: BinaryAssetRef): Promise<boolean> {
+  return Boolean(record && sameAssetRef(record.ref, ref) && await verifyBinaryAssetRecord(record));
+}
+
+async function publishWorkspaceAssets(change: PaperWorkspaceSnapshotChange): Promise<void> {
+  const assetIds = change.workspace.assetRefs.map((ref) => ref.id);
+  if (!await prepareAssets(PAPER_SYNC_CHANNEL, assetIds)) {
+    throw new Error('Paper sync deferred: the managed asset inventory was not acknowledged by the authority.');
+  }
+  for (const ref of change.workspace.assetRefs) {
+    const record = await assetRepository.get(ref.id);
+    if (!await recordMatchesRef(record, ref)) {
+      throw new Error(`Paper sync deferred: managed asset ${ref.id} is missing, corrupt, or mismatched.`);
+    }
+    if (!await putAsset(PAPER_SYNC_CHANNEL, ref.id, bytesToDataUrl(record!.bytes))) {
+      throw new Error(`Paper sync deferred: managed asset ${ref.id} was not acknowledged by the authority.`);
+    }
+  }
+}
+
+/** Fetch and verify the complete asset set without mutating the repository. */
+async function stageInboundAssets(change: PaperWorkspaceSnapshotChange): Promise<BinaryAssetRecord[] | null> {
+  const staged: BinaryAssetRecord[] = [];
+  for (const ref of change.workspace.assetRefs) {
+    const existing = await assetRepository.get(ref.id);
+    if (await recordMatchesRef(existing, ref)) continue;
+    const encoded = await getAsset(PAPER_SYNC_CHANNEL, ref.id);
+    if (!encoded) return null;
+    const bytes = bytesFromDataUrl(encoded);
+    if (!bytes) return null;
+    const record: BinaryAssetRecord = { ref: { ...ref }, bytes };
+    if (!await recordMatchesRef(record, ref)) return null;
+    staged.push(record);
+  }
+  return staged;
+}
+
+async function commitStagedAssets(records: BinaryAssetRecord[]): Promise<boolean> {
+  try {
+    for (const record of records) {
+      const stored = await assetRepository.put(record);
+      if (!sameAssetRef(stored, record.ref)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function clearPendingEmit(): void {
   if (emitTimer) {
@@ -86,39 +208,40 @@ function clearPendingEmit(): void {
   firstPendingAt = 0;
 }
 
-/** Diff the live document against the baseline and push the minimal ops. Resets the coalescer. */
-function flushEmit(): void {
-  clearPendingEmit();
+async function flushEmitWork(): Promise<void> {
   if (!canEmit || !isPaperSyncActive()) {
-    lastDocument = currentDocument();
+    lastWorkspaceFingerprint = workspaceFingerprint(currentWorkspaceChange());
     return;
   }
-  const next = currentDocument();
-  if (lastDocument === null) {
-    lastDocument = next;
-    return;
-  }
-  const ops = diffPaperDocumentNativeChanges(lastDocument, next);
-  lastDocument = next;
-  for (const op of ops) notifyLanProjectChange(PAPER_SYNC_CHANNEL, op);
+  const change = currentWorkspaceChange();
+  const fingerprint = workspaceFingerprint(change);
+  if (fingerprint === lastWorkspaceFingerprint) return;
+  await publishWorkspaceAssets(change);
+  notifyLanProjectChange(PAPER_SYNC_CHANNEL, change);
+  lastWorkspaceFingerprint = fingerprint;
 }
 
-/** Schedule a coalesced emit: debounce by EMIT_COALESCE_MS, but never wait past EMIT_MAX_WAIT_MS. */
+function flushEmit(): Promise<void> {
+  clearPendingEmit();
+  const work = outboundTail.then(flushEmitWork);
+  outboundTail = work.catch((error: unknown) => {
+    console.warn('[paper-sync] Workspace publication deferred.', error);
+  });
+  return outboundTail;
+}
+
 function scheduleEmit(): void {
   const now = Date.now();
   if (!firstPendingAt) firstPendingAt = now;
   if (emitTimer) clearTimeout(emitTimer);
   const delay = Math.max(0, Math.min(EMIT_COALESCE_MS, EMIT_MAX_WAIT_MS - (now - firstPendingAt)));
-  emitTimer = setTimeout(flushEmit, delay);
+  emitTimer = setTimeout(() => void flushEmit(), delay);
 }
 
 function handleStoreChange(): void {
   if (applyingRemote) {
-    // We just synced from the authority. From now on our edits are safe to push, and the baseline must
-    // track the applied state so the next user edit diffs against it. Drop any pending local emit so we
-    // never diff across the freshly-applied baseline.
     canEmit = true;
-    lastDocument = currentDocument();
+    lastWorkspaceFingerprint = workspaceFingerprint(currentWorkspaceChange());
     clearPendingEmit();
     return;
   }
@@ -126,33 +249,101 @@ function handleStoreChange(): void {
   scheduleEmit();
 }
 
-/**
- * Register the Paper channel and wire its passive (coalesced) emit subscription. Idempotent. Called when
- * `paperStore` loads (channel-init tied to the Paper workspace being present, zero app-startup cost), and
- * it asks the client to begin syncing this channel if a served session is already paired.
- */
+async function applyRemoteChange(change: PaperDocumentNativeChange): Promise<boolean> {
+  if (isPaperWorkspaceSnapshotChange(change)) {
+    const validated = validateWorkspaceChange(change);
+    if (!validated) {
+      console.warn('[paper-sync] Rejected malformed or unsupported workspace envelope.');
+      return false;
+    }
+    const staged = await stageInboundAssets(validated);
+    if (!staged || !await commitStagedAssets(staged)) {
+      console.warn('[paper-sync] Workspace application deferred until every managed asset verifies.');
+      return false;
+    }
+    applyingRemote = true;
+    try {
+      const changed = usePaperStore.getState().applyRemotePaperWorkspaceSnapshot(validated.workspace);
+      canEmit = true;
+      lastWorkspaceFingerprint = workspaceFingerprint(currentWorkspaceChange());
+      clearPendingEmit();
+      return changed;
+    } finally {
+      applyingRemote = false;
+    }
+  }
+
+  // Deliberate legacy path. The store routes by document/page identity and rejects ambiguous
+  // multi-tab replacement while keeping its live body and catalog entry coherent.
+  applyingRemote = true;
+  try {
+    const changed = usePaperStore.getState().applyRemotePaperDocumentChange(change);
+    canEmit = true;
+    lastWorkspaceFingerprint = workspaceFingerprint(currentWorkspaceChange());
+    clearPendingEmit();
+    return changed;
+  } finally {
+    applyingRemote = false;
+  }
+}
+
+const paperChannel: ProjectSyncChannel<PaperDocumentNativeChange> = {
+  id: PAPER_SYNC_CHANNEL,
+  applyRemote(change) {
+    let result = false;
+    const work = inboundTail.then(async () => {
+      result = await applyRemoteChange(change);
+    });
+    inboundTail = work.catch((error: unknown) => {
+      console.warn('[paper-sync] Remote workspace application failed.', error);
+    });
+    return inboundTail.then(() => result);
+  },
+  async snapshot() {
+    const change = currentWorkspaceChange();
+    await publishWorkspaceAssets(change);
+    return change;
+  },
+};
+
 export function initializePaperSyncChannel(): void {
   if (initialized) return;
   initialized = true;
-
   registerProjectSyncChannel(paperChannel);
   canEmit = isAndroidLanServerAvailable();
-  lastDocument = currentDocument();
-  usePaperStore.subscribe(handleStoreChange);
-
+  lastWorkspaceFingerprint = workspaceFingerprint(currentWorkspaceChange());
+  unsubscribeStore = usePaperStore.subscribe(handleStoreChange);
   void ensureProjectSyncChannelStarted(PAPER_SYNC_CHANNEL);
 }
 
-/** Test-only: reset module state between cases. */
 export function __resetPaperSyncChannelForTests(): void {
   applyingRemote = false;
   canEmit = false;
-  lastDocument = null;
+  lastWorkspaceFingerprint = null;
   initialized = false;
+  unsubscribeStore?.();
+  unsubscribeStore = null;
+  assetRepository = paperAssetRepository;
+  prepareAssets = prepareVerifiedProjectSyncAssets;
+  putAsset = putVerifiedProjectSyncAsset;
+  getAsset = getProjectSyncAsset;
+  outboundTail = Promise.resolve();
+  inboundTail = Promise.resolve();
   clearPendingEmit();
 }
 
-/** Test-only: force any pending coalesced emit to run now (bypasses the debounce timer). */
-export function __flushPaperSyncEmitForTests(): void {
-  flushEmit();
+export function __setPaperSyncDepsForTests(deps: {
+  repository?: PaperAssetRepository;
+  prepareAssets?: typeof prepareVerifiedProjectSyncAssets;
+  putAsset?: typeof putVerifiedProjectSyncAsset;
+  getAsset?: typeof getProjectSyncAsset;
+}): void {
+  if (deps.repository) assetRepository = deps.repository;
+  if (deps.prepareAssets) prepareAssets = deps.prepareAssets;
+  if (deps.putAsset) putAsset = deps.putAsset;
+  if (deps.getAsset) getAsset = deps.getAsset;
+}
+
+export async function __flushPaperSyncEmitForTests(): Promise<void> {
+  await flushEmit();
 }

@@ -280,28 +280,49 @@ export async function storePaperDataUrlAsset(
 }
 
 export function collectReachablePaperAssetIds(document: PaperDocument): BinaryAssetId[] {
+  return collectReachablePaperAssetRefs(document).map((ref) => ref.id);
+}
+
+/**
+ * Exact managed records reachable from one Paper document. Sync and packaging need the complete
+ * reference, not only the digest id, so a receiver can reject metadata substitution before bytes
+ * become usable. A single digest with conflicting metadata is invalid authored state.
+ */
+export function collectReachablePaperAssetRefs(document: PaperDocument): BinaryAssetRef[] {
   const managed = document as unknown as PaperDocumentWithManagedAssets;
-  const ids = new Set<BinaryAssetId>();
+  const refs = new Map<BinaryAssetId, BinaryAssetRef>();
+
+  const add = (ref: BinaryAssetRef): void => {
+    const existing = refs.get(ref.id);
+    if (existing && (
+      existing.sha256 !== ref.sha256
+      || existing.mimeType !== ref.mimeType
+      || existing.byteLength !== ref.byteLength
+    )) {
+      throw new Error(`Paper asset ${ref.id} has conflicting managed metadata.`);
+    }
+    if (!existing) refs.set(ref.id, { ...ref });
+  };
 
   for (const page of [...(managed.pages ?? []), ...(managed.parentPages ?? [])]) {
     for (const frame of page.frames ?? []) {
       const locator = frame.asset?.locator;
       if (locator?.kind === 'managed' && isBinaryAssetRef(locator.ref)) {
-        ids.add(locator.ref.id);
+        add(locator.ref);
       }
     }
   }
 
   for (const font of managed.importedFonts ?? []) {
-    if (isBinaryAssetRef(font.fontAsset)) ids.add(font.fontAsset.id);
-    if (isBinaryAssetRef(font.license?.textAsset)) ids.add(font.license.textAsset.id);
+    if (isBinaryAssetRef(font.fontAsset)) add(font.fontAsset);
+    if (isBinaryAssetRef(font.license?.textAsset)) add(font.license.textAsset);
   }
 
   for (const profile of managed.managedIccProfiles ?? []) {
-    if (isPaperManagedIccProfile(profile)) ids.add(profile.asset.id);
+    if (isPaperManagedIccProfile(profile)) add(profile.asset);
   }
 
-  return [...ids].sort();
+  return [...refs.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
 export async function migrateLegacyPaperBinaryFields(
