@@ -31,7 +31,9 @@ describe('i18n message catalog', () => {
     expect(english).toContain('version 1.0');
     expect(japanese).toContain('バージョン0.9.x');
     expect(japanese).toContain('バージョン1.0');
-    expect(`${english}${japanese}`).not.toMatch(/first\s+100|先着100|August\s+1|8月1日/iu);
+    expect(`${english}${japanese}`).not.toMatch(
+      /first\s+(?:the\s+)?100|first\s+hundred|先着100|最初の100|August\s+1|8月1日/iu,
+    );
   });
 
   it('translateBoth() renders both languages regardless of locale', () => {

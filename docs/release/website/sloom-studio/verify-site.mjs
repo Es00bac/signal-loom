@@ -76,7 +76,7 @@ for (const p of allPages) {
 }
 for (const p of siteHtmlPages) {
   const h = read(p);
-  if (/first\s+100|先着100|ends?\s+August\s+1|8月1日まで/i.test(h)) {
+  if (/first\s+(?:the\s+)?100|first\s+hundred|先着100|最初の100|August\s+1|8月1日/i.test(h)) {
     errors.push(`${p} still carries the retired sales-count/date price trigger`);
   }
 }
