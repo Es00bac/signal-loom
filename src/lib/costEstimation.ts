@@ -35,6 +35,7 @@ import { resultValueAsMediaUrl } from './flowResultValues';
 import type {
   AppNode,
   AudioProvider,
+  DynamicValue,
   ExecutionConfig,
   FlowNodeType,
   ImageProvider,
@@ -46,6 +47,11 @@ import type {
   VideoResolution,
   VideoTargetHandle,
 } from '../types/flow';
+import {
+  getFunctionNodeOutput,
+  prepareFunctionSubgraph,
+  resolveFunctionInputBindings,
+} from './functionNodes';
 
 import { useSourceBinStore } from '../store/sourceBinStore';
 
@@ -62,6 +68,7 @@ interface TokenPricing {
 export interface ExecutionContextEstimate {
   prompt: string;
   config: ExecutionConfig;
+  functionInputs?: Record<string, DynamicValue>;
   editImageInput?: string;
   refImageInput?: string;
   audioSourceInput?: string;
@@ -85,6 +92,11 @@ export interface ExecutionPlanEstimate {
   nodeIds: string[];
   telemetries: Array<{ nodeId: string; telemetry: UsageTelemetry }>;
   rollup: UsageRollup;
+}
+
+export interface ExecutionPlanRuntime {
+  getDependencies: (node: AppNode, edges: Edge[], nodesById: Map<string, AppNode>) => string[];
+  shouldReuseExistingOutput: (node: AppNode, nodes: AppNode[], edges: Edge[]) => boolean;
 }
 
 /**
@@ -1268,6 +1280,7 @@ function estimateNodeOwnTelemetry(
   node: AppNode,
   context: ExecutionContextEstimate,
   settings: RuntimeSettingsSnapshot,
+  planningRuntime?: Pick<ExecutionPlanRuntime, 'getDependencies'>,
 ): UsageTelemetry | undefined {
   if (!canRunNode(node)) {
     return undefined;
@@ -1463,23 +1476,53 @@ function estimateNodeOwnTelemetry(
   }
 
   if (node.type === 'functionNode') {
-    const internalNodes = node.data.functionNode?.graph.nodes;
-    if (!Array.isArray(internalNodes)) {
+    const config = node.data.functionNode;
+    if (!config || !Array.isArray(config.graph.nodes)) {
       return buildUsageTelemetry('estimate', 'unknown', {
         notes: ['Function wiring is malformed; provider cost cannot be estimated.'],
       });
     }
-    const internal = internalNodes
-      .filter((entry) => canRunNode(entry as AppNode))
-      .map((entry) => estimateNodeOwnTelemetry(entry as AppNode, {
-        prompt: context.prompt,
-        editImageInput: context.editImageInput,
-        refImageInput: context.refImageInput,
-        audioSourceInput: context.audioSourceInput,
-        sourceVideoInput: context.sourceVideoInput,
-        extensionVideoInput: context.extensionVideoInput,
-        config: context.config,
-      }, settings))
+    const flowInputs = resolveFunctionInputBindings(config, {
+      ...(context.functionInputs ?? {}),
+      prompt: context.prompt,
+      'input-flow': context.prompt,
+      image: context.editImageInput ?? '',
+      video: context.sourceVideoInput ?? '',
+      audio: context.audioSourceInput ?? '',
+    });
+    const prepared = prepareFunctionSubgraph(config, flowInputs);
+    if (!prepared) {
+      return buildUsageTelemetry('estimate', 'fixed', {
+        costUsd: 0,
+        notes: ['Function has no reachable provider-backed internal node.'],
+      });
+    }
+
+    const internalNodesById = buildNodeMap(prepared.nodes);
+    const internalIncoming = buildIncomingMap(prepared.edges);
+    const internalNodeIds = planFunctionProviderCalls(
+      config.outputBindings.map((binding) => binding.sourceNodeId),
+      prepared.edges,
+      internalNodesById,
+      planningRuntime?.getDependencies,
+    );
+    const internal = internalNodeIds
+      .map((internalId) => {
+        const internalNode = internalNodesById.get(internalId);
+        if (!internalNode) return undefined;
+        return estimateNodeOwnTelemetry(internalNode, {
+          prompt: collectTextInputs(internalId, internalNodesById, internalIncoming, prepared.edges),
+          functionInputs: internalNode.type === 'functionNode'
+            ? collectFunctionInputsForEstimate(internalNode, internalNodesById, prepared.edges)
+            : undefined,
+          editImageInput: collectUpstreamImageInput(internalId, internalNodesById, prepared.edges),
+          refImageInput: collectUpstreamImageInputForHandles(internalId, ['refImage'], internalNodesById, prepared.edges),
+          audioSourceInput: collectUpstreamAudioInput(internalId, internalNodesById, prepared.edges),
+          sourceVideoInput: collectUpstreamVideoInput(internalId, internalNodesById, prepared.edges),
+          extensionVideoInput: collectVideoExtensionInput(internalId, internalNodesById, prepared.edges),
+          config: collectExecutionConfig(internalId, internalNode, internalNodesById, internalIncoming),
+        }, settings, planningRuntime);
+      })
       .filter((entry): entry is UsageTelemetry => Boolean(entry));
     if (internal.length === 0) {
       return buildUsageTelemetry('estimate', 'fixed', {
@@ -1493,7 +1536,7 @@ function estimateNodeOwnTelemetry(
       inputTokens: internal.reduce((sum, entry) => sum + (entry.inputTokens ?? 0), 0),
       outputTokens: internal.reduce((sum, entry) => sum + (entry.outputTokens ?? 0), 0),
       imageCount: internal.reduce((sum, entry) => sum + (entry.imageCount ?? 0), 0),
-      notes: [`Estimated ${internal.length} internal provider node${internal.length === 1 ? '' : 's'} before execution.`],
+      notes: [`Estimated ${internal.length} reachable internal provider call${internal.length === 1 ? '' : 's'} after resolving Function inputs and output bindings.`],
     });
   }
 
@@ -1659,6 +1702,7 @@ export function estimateExecutionPlan(
   nodes: AppNode[],
   edges: Edge[],
   settings: RuntimeSettingsSnapshot,
+  runtime?: ExecutionPlanRuntime,
 ): ExecutionPlanEstimate {
   const nodesById = buildNodeMap(nodes);
   const incoming = buildIncomingMap(edges);
@@ -1677,11 +1721,16 @@ export function estimateExecutionPlan(
       return;
     }
 
-    if (currentId !== nodeId && shouldReuseExistingNodeOutput(currentNode)) {
+    if (currentId !== nodeId && (runtime
+      ? runtime.shouldReuseExistingOutput(currentNode, nodes, edges)
+      : shouldReuseExistingNodeOutput(currentNode))) {
       return;
     }
 
-    for (const dependencyId of getExecutionDependencies(currentNode, edges, nodesById)) {
+    const dependencyIds = runtime
+      ? runtime.getDependencies(currentNode, edges, nodesById)
+      : getExecutionDependencies(currentNode, edges, nodesById);
+    for (const dependencyId of dependencyIds) {
       visit(dependencyId);
     }
 
@@ -1701,6 +1750,9 @@ export function estimateExecutionPlan(
       currentNode,
       {
         prompt: collectTextInputs(currentId, nodesById, incoming, edges),
+        functionInputs: currentNode.type === 'functionNode'
+          ? collectFunctionInputsForEstimate(currentNode, nodesById, edges)
+          : undefined,
         editImageInput: collectUpstreamImageInput(currentId, nodesById, edges),
         refImageInput: collectUpstreamImageInputForHandles(currentId, ['refImage'], nodesById, edges),
         audioSourceInput: collectUpstreamAudioInput(currentId, nodesById, edges),
@@ -1709,6 +1761,7 @@ export function estimateExecutionPlan(
         config: collectExecutionConfig(currentId, currentNode, nodesById, incoming),
       },
       settings,
+      runtime,
     );
 
     return telemetry ? [{ nodeId: currentId, telemetry }] : [];
@@ -1719,6 +1772,62 @@ export function estimateExecutionPlan(
     telemetries,
     rollup: aggregateUsageTelemetries(telemetries.map((entry) => entry.telemetry)),
   };
+}
+
+function planFunctionProviderCalls(
+  outputSourceNodeIds: Array<string | undefined>,
+  edges: Edge[],
+  nodesById: Map<string, AppNode>,
+  dependencyPlanner: ExecutionPlanRuntime['getDependencies'] = getExecutionDependencies,
+): string[] {
+  const visited = new Set<string>();
+  const order: string[] = [];
+
+  const visit = (nodeId: string, stack: Set<string>) => {
+    if (visited.has(nodeId) || stack.has(nodeId)) return;
+    const node = nodesById.get(nodeId);
+    if (!node) return;
+    const nextStack = new Set(stack);
+    nextStack.add(nodeId);
+    for (const dependencyId of dependencyPlanner(node, edges, nodesById)) {
+      visit(dependencyId, nextStack);
+    }
+    visited.add(nodeId);
+    if (canRunNode(node)) order.push(nodeId);
+  };
+
+  for (const sourceNodeId of outputSourceNodeIds) {
+    if (sourceNodeId) visit(sourceNodeId, new Set());
+  }
+  return order;
+}
+
+function collectFunctionInputsForEstimate(
+  node: AppNode,
+  nodesById: Map<string, AppNode>,
+  edges: Edge[],
+): Record<string, DynamicValue> {
+  const config = node.data.functionNode;
+  if (!config) return {};
+  const portsById = new Map(config.contract.inputPorts.map((port) => [port.id, port]));
+  const inputs: Record<string, DynamicValue> = {};
+
+  for (const edge of edges) {
+    if (edge.target !== node.id || !edge.targetHandle) continue;
+    const port = portsById.get(edge.targetHandle);
+    const sourceNode = nodesById.get(edge.source);
+    if (!port || !sourceNode) continue;
+    const namedOutput = getFunctionNodeOutput(sourceNode, edge.sourceHandle);
+    const value = namedOutput?.result
+      ?? sourceNode.data.result
+      ?? sourceNode.data.value
+      ?? sourceNode.data.prompt
+      ?? sourceNode.data.sourceAssetUrl
+      ?? '';
+    inputs[port.id] = value as DynamicValue;
+    inputs[port.key] = value as DynamicValue;
+  }
+  return inputs;
 }
 
 export function estimateCanvasRunCosts(

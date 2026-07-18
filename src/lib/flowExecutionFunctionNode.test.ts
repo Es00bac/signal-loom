@@ -527,6 +527,161 @@ describe('executeNodeRequest collapsed reusable functions', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
   });
 
+  it('retries Atlas polling after acceptance without repeating the paid submission', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-after-poll-retry');
+    const calls = { submit: 0, poll: 0, download: 0 };
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const value = String(url);
+      if (value.endsWith('/model/generateImage')) {
+        calls.submit += 1;
+        return jsonResponse({ data: { id: 'accepted-job' } });
+      }
+      if (value.includes('/model/prediction/accepted-job')) {
+        calls.poll += 1;
+        return calls.poll === 1
+          ? new Response('temporary poll outage', { status: 500 })
+          : jsonResponse({ data: { status: 'completed', outputs: ['https://cdn.example/fresh.png'] } });
+      }
+      calls.download += 1;
+      return imageResponse('ATLAS-FRESH');
+    }));
+
+    const config = createDefaultFunctionNodeConfig('Accepted Atlas job');
+    config.graph = {
+      version: 1,
+      nodes: [
+        node('prompt', 'textNode', { mode: 'prompt', prompt: 'fox' }),
+        node('atlas', 'imageGen', { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell' }),
+      ],
+      edges: [{ id: 'prompt-atlas', source: 'prompt', target: 'atlas' }],
+    };
+    config.outputBindings[0].sourceNodeId = 'atlas';
+    const settings = {
+      ...baseSettings,
+      apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+      providerSettings: { ...baseSettings.providerSettings, batchMaxRetries: 1, batchRetryBaseDelayMs: 0 },
+    };
+
+    const execution = await executeNodeRequest(
+      functionNodeFor(config, 'fn-atlas-retry'),
+      { prompt: '', config: DEFAULT_EXECUTION_CONFIG },
+      settings,
+      undefined,
+      { functionRuntime: flowFunctionNodeExecutionRuntime },
+    );
+
+    expect(execution.result).toBe('blob:atlas-after-poll-retry');
+    expect(calls).toEqual({ submit: 1, poll: 2, download: 1 });
+  });
+
+  it('retries Atlas materialization after acceptance without repeating the paid submission', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:atlas-after-download-retry');
+    const calls = { submit: 0, download: 0 };
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/model/generateImage')) {
+        calls.submit += 1;
+        return jsonResponse({ data: { outputs: ['https://cdn.example/retry.png'] } });
+      }
+      calls.download += 1;
+      return calls.download === 1
+        ? new Response('temporary CDN outage', { status: 500 })
+        : imageResponse('ATLAS-FRESH');
+    }));
+    const config = createDefaultFunctionNodeConfig('Accepted Atlas materialization');
+    config.graph = {
+      version: 1,
+      nodes: [node('prompt', 'textNode', { mode: 'prompt', prompt: 'fox' }), node('atlas', 'imageGen', { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell' })],
+      edges: [{ id: 'prompt-atlas', source: 'prompt', target: 'atlas' }],
+    };
+    config.outputBindings[0].sourceNodeId = 'atlas';
+    const settings = {
+      ...baseSettings,
+      apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+      providerSettings: { ...baseSettings.providerSettings, batchMaxRetries: 1, batchRetryBaseDelayMs: 0 },
+    };
+
+    const execution = await executeNodeRequest(
+      functionNodeFor(config, 'fn-atlas-materialize-retry'),
+      { prompt: '', config: DEFAULT_EXECUTION_CONFIG },
+      settings,
+      undefined,
+      { functionRuntime: flowFunctionNodeExecutionRuntime },
+    );
+
+    expect(execution.result).toBe('blob:atlas-after-download-retry');
+    expect(calls).toEqual({ submit: 1, download: 2 });
+  });
+
+  it('cancels during accepted Atlas polling without resubmitting or materializing', async () => {
+    const controller = new AbortController();
+    const calls = { submit: 0, poll: 0, download: 0 };
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const value = String(url);
+      if (value.endsWith('/model/generateImage')) {
+        calls.submit += 1;
+        return jsonResponse({ data: { id: 'cancelled-job' } });
+      }
+      if (value.includes('/model/prediction/cancelled-job')) {
+        calls.poll += 1;
+        controller.abort(new DOMException('cancel polling', 'AbortError'));
+        throw init?.signal?.reason ?? new DOMException('cancel polling', 'AbortError');
+      }
+      calls.download += 1;
+      return imageResponse('UNEXPECTED');
+    }));
+
+    const config = createDefaultFunctionNodeConfig('Cancel Atlas polling');
+    config.graph = {
+      version: 1,
+      nodes: [node('prompt', 'textNode', { mode: 'prompt', prompt: 'fox' }), node('atlas', 'imageGen', { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell' })],
+      edges: [{ id: 'prompt-atlas', source: 'prompt', target: 'atlas' }],
+    };
+    config.outputBindings[0].sourceNodeId = 'atlas';
+    const settings = { ...baseSettings, apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' } };
+
+    await expect(executeNodeRequest(
+      functionNodeFor(config, 'fn-atlas-cancel-poll'),
+      { prompt: '', config: DEFAULT_EXECUTION_CONFIG },
+      settings,
+      undefined,
+      { functionRuntime: flowFunctionNodeExecutionRuntime, signal: controller.signal },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toEqual({ submit: 1, poll: 1, download: 0 });
+  });
+
+  it('cancels during materialization without repeating the accepted Atlas submission', async () => {
+    const controller = new AbortController();
+    const calls = { submit: 0, poll: 0, download: 0 };
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const value = String(url);
+      if (value.endsWith('/model/generateImage')) {
+        calls.submit += 1;
+        return jsonResponse({ data: { outputs: ['https://cdn.example/cancel.png'] } });
+      }
+      calls.download += 1;
+      controller.abort(new DOMException('cancel download', 'AbortError'));
+      throw init?.signal?.reason ?? new DOMException('cancel download', 'AbortError');
+    }));
+
+    const config = createDefaultFunctionNodeConfig('Cancel Atlas materialization');
+    config.graph = {
+      version: 1,
+      nodes: [node('prompt', 'textNode', { mode: 'prompt', prompt: 'fox' }), node('atlas', 'imageGen', { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell' })],
+      edges: [{ id: 'prompt-atlas', source: 'prompt', target: 'atlas' }],
+    };
+    config.outputBindings[0].sourceNodeId = 'atlas';
+    const settings = { ...baseSettings, apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' } };
+
+    await expect(executeNodeRequest(
+      functionNodeFor(config, 'fn-atlas-cancel-download'),
+      { prompt: '', config: DEFAULT_EXECUTION_CONFIG },
+      settings,
+      undefined,
+      { functionRuntime: flowFunctionNodeExecutionRuntime, signal: controller.signal },
+    )).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toEqual({ submit: 1, poll: 0, download: 1 });
+  });
+
   it('feeds fresh internal provider outputs downstream and aggregates usage across the chain', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:function-chain-image');
     const fetchMock = vi.fn().mockResolvedValue(imageResponse('CHAIN'));

@@ -534,7 +534,12 @@ async function executeFunctionNode(
   }
 
   const nodesById = new Map(prepared.nodes.map((entry) => [entry.id, entry]));
-  const plan = planInternalProviderExecution(prepared, outputBinding.sourceNodeId, options.functionRuntime, nodesById);
+  const plan = planInternalProviderExecution(
+    prepared,
+    config.outputBindings.map((binding) => binding.sourceNodeId),
+    options.functionRuntime,
+    nodesById,
+  );
 
   validateFunctionExecutionPreflight(config, prepared, plan, settings);
 
@@ -754,14 +759,10 @@ function withoutProviderSpend(outcome: FunctionExecutionOutcome): ExecutionResul
  */
 function planInternalProviderExecution(
   prepared: PreparedFunctionSubgraph,
-  outputSourceNodeId: string | undefined,
+  outputSourceNodeIds: Array<string | undefined>,
   runtime: FunctionNodeExecutionRuntime | undefined,
   nodesById: Map<string, AppNode>,
 ): string[] {
-  if (!outputSourceNodeId || !nodesById.has(outputSourceNodeId)) {
-    return [];
-  }
-
   const order: string[] = [];
   const visited = new Set<string>();
 
@@ -796,7 +797,11 @@ function planInternalProviderExecution(
     }
   };
 
-  visit(outputSourceNodeId, new Set());
+  for (const outputSourceNodeId of outputSourceNodeIds) {
+    if (outputSourceNodeId && nodesById.has(outputSourceNodeId)) {
+      visit(outputSourceNodeId, new Set());
+    }
+  }
   return order;
 }
 
@@ -2369,14 +2374,14 @@ async function executeAtlasNativeImageNode(input: {
     imageCount: outputUrls.length,
   });
 
-  const materialized = await retryExistingAsyncJobPhase({
+  const materialized = await Promise.all(outputUrls.map((url) => materializeAcceptedProviderResult({
+    resultUrl: normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat),
+    downloadErrorLabel: 'Atlas result download failed',
     phaseLabel: 'Atlas image result materialization failed',
-    operation: () => Promise.all(outputUrls.map((url) =>
-      materializeAtlasImageResult(normalizeAtlasResultUrl(url, input.context.config.imageOutputFormat), input.abortSignal))),
     settings: input.settings,
     onStatus: input.onStatus,
     abortSignal: input.abortSignal,
-  });
+  })));
 
   const countLabel = materialized.length > 1 ? ` (${materialized.length} images)` : '';
   return {
@@ -2644,8 +2649,68 @@ async function materializeRemoteMediaResult(
   }
 }
 
-function materializeAtlasImageResult(resultUrl: string, signal?: AbortSignal): Promise<{ result: string; mimeType?: string }> {
-  return materializeRemoteMediaResult(resultUrl, 'Atlas result download failed', undefined, signal);
+async function materializeRemoteMediaResultStrict(
+  resultUrl: string,
+  downloadErrorLabel: string,
+  fallbackMimeType?: string,
+  signal?: AbortSignal,
+): Promise<{ result: string; mimeType?: string }> {
+  throwIfAborted(signal);
+  if (!/^https?:\/\//i.test(resultUrl)) {
+    return { result: resultUrl, mimeType: resultUrl.match(/^data:([^;,]+)/)?.[1] ?? fallbackMimeType };
+  }
+
+  try {
+    const blob = await fetchImageResultBlob(resultUrl, downloadErrorLabel, signal);
+    return { result: await toResultUrl(blob), mimeType: blob.type || fallbackMimeType };
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      throw isAbortError(error) ? error : createAbortError();
+    }
+    const native = await fetchRemoteMediaAsDataUrl(resultUrl, undefined, signal);
+    throwIfAborted(signal);
+    if (native) {
+      return { result: native.dataUrl, mimeType: native.mimeType ?? fallbackMimeType };
+    }
+    throw error;
+  }
+}
+
+async function materializeAcceptedProviderResult(input: {
+  resultUrl: string;
+  downloadErrorLabel: string;
+  phaseLabel: string;
+  settings: RuntimeSettingsSnapshot;
+  fallbackMimeType?: string;
+  onStatus?: (statusMessage: string) => void;
+  abortSignal?: AbortSignal;
+}): Promise<{ result: string; mimeType?: string }> {
+  try {
+    return await retryExistingAsyncJobPhase({
+      phaseLabel: input.phaseLabel,
+      operation: () => materializeRemoteMediaResultStrict(
+        input.resultUrl,
+        input.downloadErrorLabel,
+        input.fallbackMimeType,
+        input.abortSignal,
+      ),
+      settings: input.settings,
+      onStatus: input.onStatus,
+      abortSignal: input.abortSignal,
+    });
+  } catch (error) {
+    if (isAbortError(error) || input.abortSignal?.aborted) {
+      throw isAbortError(error) ? error : createAbortError();
+    }
+    // Once the bounded download retries are exhausted, preserve the established
+    // URL/native fallback. The accepted provider submission is never repeated.
+    return materializeRemoteMediaResult(
+      input.resultUrl,
+      input.downloadErrorLabel,
+      input.fallbackMimeType,
+      input.abortSignal,
+    );
+  }
 }
 
 function parseAtlasLoraWeights(value: unknown): unknown {

@@ -1108,97 +1108,13 @@ export function buildNodeExecutionContext(
   node: AppNode,
   nodes: AppNode[],
   edges: Edge[],
-  promptSignal: FlowSignal = collectPromptSignalForNode(node.id, nodes, edges),
+  _promptSignal?: FlowSignal,
 ): ExecutionContext {
-  const currentId = node.id;
-  const nodesById = buildNodeMap(nodes);
-  const incoming = buildIncomingMap(edges);
-
-  return {
-    prompt: signalToTextAt(promptSignal, 0),
-    textMediaInputs: collectTextMediaInputs(node, nodesById, edges),
-    functionInputs: node.type === 'functionNode'
-      ? collectFunctionNodeInputs(node, nodesById, edges)
-      : undefined,
-    editImageInput: collectUpstreamImageInput(currentId, nodesById, edges),
-    refImageInput: collectUpstreamImageInputForHandles(
-      currentId,
-      ['refImage'],
-      nodesById,
-      edges,
-    ),
-    editMaskImageInput: collectImageMaskInput(currentId, nodesById, edges),
-    editReferenceImageInputs: collectImageReferenceInputs(
-      currentId,
-      nodesById,
-      edges,
-    ),
-    loraWeightsJson: collectUpstreamLoraJson(currentId, nodesById, edges),
-    audioSourceInput: collectUpstreamAudioInput(currentId, nodesById, edges),
-    sourceVideoInput: collectUpstreamVideoInput(currentId, nodesById, edges),
-    startImageInput: collectImageInputForHandle(
-      currentId,
-      ['video-start-frame'],
-      nodesById,
-      edges,
-    ),
-    endImageInput: collectImageInputForHandle(
-      currentId,
-      ['video-end-frame'],
-      nodesById,
-      edges,
-    ),
-    referenceImageInputs: collectReferenceImageInputs(node, nodesById, edges),
-    extensionVideoInput: collectVideoExtensionInput(currentId, nodesById, edges),
-    videoInput: collectResultInputForHandle(
-      currentId,
-      COMPOSITION_VIDEO_HANDLE,
-      nodesById,
-      edges,
-      ['videoGen', 'composition', 'functionNode'],
-    )?.result,
-    audioInputs: COMPOSITION_AUDIO_HANDLES.map((handle) => {
-      const track = collectResultInputForHandle(
-        currentId,
-        handle,
-        nodesById,
-        edges,
-        ['audioGen', 'functionNode'],
-      );
-
-      if (!track) {
-        return undefined;
-      }
-
-      const settingsForTrack = getCompositionTrackSettings(node.data, handle);
-
-      return {
-        url: track.result,
-        sourceNodeId: track.node.id,
-        delayMs: settingsForTrack.offsetMs,
-        volumePercent: settingsForTrack.volumePercent,
-        enabled: settingsForTrack.enabled,
-      };
-    }).filter(
-      (
-        value,
-      ): value is {
-        url: string;
-        sourceNodeId: string;
-        delayMs: number;
-        volumePercent: number;
-        enabled: boolean;
-      } => Boolean(value),
-    ),
-    useVideoAudio: Boolean(node.data.compositionUseVideoAudio),
-    videoAudioVolumePercent: coerceNumber(node.data.compositionVideoAudioVolume, 100),
-    visualSequenceClips: collectEditorVisualSequence(node, nodesById),
-    stageObjects: collectEditorStageObjects(node),
-    sequenceAudioInputs: collectEditorAudioSequence(node, nodesById),
-    nativeAssemblyManifest: node.data.editorRenderCacheAssemblyManifest,
-    exportPresetId: node.data.editorExportPresetPlan?.presetId,
-    config: collectExecutionConfig(currentId, node, nodesById, incoming),
-  };
+  // AUD-011 established buildNodeExecutionResolution as the canonical context
+  // boundary for direct runs and planning. Functions deliberately use the same
+  // resolver instead of reviving the older partial collector copied by their
+  // source branch.
+  return buildNodeExecutionResolution(node, nodes, edges).context;
 }
 
 /**

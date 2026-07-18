@@ -7,6 +7,7 @@ import {
   estimateGenerativeFillCostUsd,
 } from './costEstimation';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
+import { createDefaultFunctionNodeConfig } from './functionNodes';
 
 function createNode(id: string, type: AppNode['type'], data: AppNode['data'] = {}): AppNode {
   return {
@@ -141,6 +142,44 @@ describe('estimateElevenLabsTtsCostUsd', () => {
 });
 
 describe('estimateExecutionPlan', () => {
+  it('estimates the union of resolved Function output subgraphs and excludes unreachable providers', () => {
+    const config = createDefaultFunctionNodeConfig('Costed output union');
+    config.contract.outputPorts = [
+      { id: 'image-output', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0 },
+      { id: 'text-output', key: 'text', label: 'Text', resultType: 'text', required: true, order: 1 },
+    ];
+    config.graph = {
+      version: 1,
+      nodes: [
+        createNode('image-prompt', 'textNode', { mode: 'prompt', prompt: 'image prompt' }),
+        createNode('image-provider', 'imageGen', { provider: 'stability', modelId: 'stable-image-core' }),
+        createNode('text-prompt', 'textNode', { mode: 'prompt', prompt: 'text prompt' }),
+        createNode('text-provider', 'textNode', { mode: 'generate', provider: 'gemini', modelId: 'gemini-2.5-flash' }),
+        createNode('unreachable-provider', 'imageGen', { provider: 'bfl', modelId: 'flux-2-pro' }),
+      ],
+      edges: [
+        { id: 'image-edge', source: 'image-prompt', target: 'image-provider' },
+        { id: 'text-edge', source: 'text-prompt', target: 'text-provider' },
+      ],
+    };
+    config.outputBindings = [
+      { ...config.outputBindings[0], targetOutputPortId: 'image-output', sourceNodeId: 'image-provider', resultType: 'image' },
+      { ...config.outputBindings[0], id: 'text-binding', targetOutputPortId: 'text-output', sourceNodeId: 'text-provider', resultType: 'text' },
+    ];
+
+    const estimate = estimateExecutionPlan(
+      'function',
+      [createNode('function', 'functionNode', { functionNode: config })],
+      [],
+      settings,
+    );
+    const telemetry = estimate.telemetries[0]?.telemetry;
+
+    expect(telemetry?.costUsd).toBeGreaterThanOrEqual(0.03);
+    expect(telemetry?.notes?.join(' ')).toContain('2 reachable internal provider calls');
+    expect(telemetry?.notes?.join(' ')).not.toContain('3 reachable');
+  });
+
   it('treats virtual nodes as aliases of their linked source when estimating downstream runs', () => {
     const nodes = [
       createNode('text-1', 'textNode', {
