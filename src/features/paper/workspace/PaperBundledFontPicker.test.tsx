@@ -214,4 +214,29 @@ describe('PaperBundledFontPicker selection authority (FBL-025)', () => {
     expect(host.textContent).toContain('Liberation Sans Regular pinned to this document');
     await act(async () => root.unmount());
   });
+
+  it('allows a second current Paper selection after clearing its prior notice', async () => {
+    window.signalLoomNative = bridge() as never;
+    mocks.installBundledPaperFontFace
+      .mockResolvedValueOnce({ id: 'installed-first-face' })
+      .mockResolvedValueOnce({ id: 'installed-second-face' });
+    const onChange = vi.fn();
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(<PaperBundledFontPicker onChange={onChange} typography={DEFAULT_PAPER_TYPOGRAPHY} />));
+    await selectPaperFace(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    });
+    expect(host.textContent).toContain('Liberation Sans Regular pinned to this document');
+
+    await selectPaperFace(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    });
+    expect(mocks.addImportedFont).toHaveBeenNthCalledWith(1, { id: 'installed-first-face' });
+    expect(mocks.addImportedFont).toHaveBeenNthCalledWith(2, { id: 'installed-second-face' });
+    await act(async () => root.unmount());
+  });
 });

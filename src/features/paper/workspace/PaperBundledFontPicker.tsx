@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { BundledFontBrowser, type BundledFontSelectionAuthority } from '../../../components/Common/BundledFontBrowser';
 import { installBundledPaperFontFace, type BundledFontFace, type BundledFontFamily } from '../../../lib/bundledFontLibrary';
 import { usePaperStore } from '../../../store/paperStore';
@@ -52,24 +52,29 @@ export function PaperBundledFontFaceBrowser({
 }) {
   const addImportedFont = usePaperStore((state) => state.addImportedFont);
   const [notice, setNotice] = useState<string | null>(null);
+  const selectBundledPaperFace = useCallback(async (
+    family: BundledFontFamily,
+    face: BundledFontFace,
+    authority: BundledFontSelectionAuthority,
+  ) => {
+    if (!authority.isCurrent()) return;
+    setNotice(null);
+    const installed = await installBundledPaperFontFace({ family, face, repository: paperAssetRepository });
+    // Pinning bytes has its own async boundary. The browser could have moved to another
+    // renderer bridge while it was in flight, so no document or notice state may publish.
+    if (!authority.isCurrent()) return;
+    addImportedFont(installed);
+    if (!authority.isCurrent()) return;
+    await onSelect(family, face, authority);
+    if (!authority.isCurrent()) return;
+    setNotice(`${face.fullName} pinned to this document for exact print output.`);
+  }, [addImportedFont, onSelect]);
 
   return (
     <div className="space-y-1.5">
       <BundledFontBrowser
         initiallyOpen={initiallyOpen}
-        onSelect={async (family, face, authority) => {
-          if (!authority.isCurrent()) return;
-          setNotice(null);
-          const installed = await installBundledPaperFontFace({ family, face, repository: paperAssetRepository });
-          // Pinning bytes has its own async boundary. The browser could have moved to another
-          // renderer bridge while it was in flight, so no document or notice state may publish.
-          if (!authority.isCurrent()) return;
-          addImportedFont(installed);
-          if (!authority.isCurrent()) return;
-          await onSelect(family, face, authority);
-          if (!authority.isCurrent()) return;
-          setNotice(`${face.fullName} pinned to this document for exact print output.`);
-        }}
+        onSelect={selectBundledPaperFace}
         style={fontStyle}
         value={fontFamily}
         weight={fontWeight}
