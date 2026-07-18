@@ -184,6 +184,7 @@ import {
   type FlowReferenceGroup,
 } from './referenceGroups';
 import { abortableSleep, createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abortSignals';
+import { materializeElevenLabsAudioResult } from './elevenLabsAudioResult';
 
 export interface ExecutionContext {
   prompt: string;
@@ -4816,7 +4817,7 @@ async function executeAudioNode(
         }
 
         return {
-          result: await toResultUrl(await response.blob()),
+          ...await materializeElevenLabsExecutionAudio(response, context.config.audioOutputFormat, abortSignal),
           resultType: 'audio',
           statusMessage: `Generated with ${modelId}`,
           usage: createElevenLabsTtsUsage(modelId, prompt, 'actual'),
@@ -4849,7 +4850,7 @@ async function executeAudioNode(
         }
 
         return {
-          result: await toResultUrl(await response.blob()),
+          ...await materializeElevenLabsExecutionAudio(response, context.config.audioOutputFormat, abortSignal),
           resultType: 'audio',
           statusMessage: `Generated sound effect with ${modelId}`,
           usage: buildAudioUsage('elevenlabs', modelId, {
@@ -4891,7 +4892,7 @@ async function executeAudioNode(
         }
 
         return {
-          result: await toResultUrl(await response.blob()),
+          ...await materializeElevenLabsExecutionAudio(response, outputFormat, abortSignal),
           resultType: 'audio',
           statusMessage: `Generated music with ${modelId}`,
           usage: buildAudioUsage('elevenlabs', modelId, {
@@ -4944,7 +4945,7 @@ async function executeAudioNode(
       }
 
       return {
-        result: await toResultUrl(await response.blob()),
+        ...await materializeElevenLabsExecutionAudio(response, context.config.audioOutputFormat, abortSignal),
         resultType: 'audio',
         statusMessage: `Changed voice with ${modelId}`,
         usage: buildAudioUsage('elevenlabs', modelId, {
@@ -4977,6 +4978,22 @@ async function executeAudioNode(
       };
     }
   }
+}
+
+async function materializeElevenLabsExecutionAudio(
+  response: Response,
+  providerOutputFormat: string,
+  signal?: AbortSignal,
+): Promise<Pick<ExecutionResult, 'result' | 'blob' | 'mimeType' | 'extension' | 'outputMetadata'>> {
+  const audio = await materializeElevenLabsAudioResult(response, providerOutputFormat, signal);
+  throwIfAborted(signal);
+  return {
+    result: await toResultUrl(audio.blob),
+    blob: audio.blob,
+    mimeType: audio.mimeType,
+    extension: audio.extension,
+    outputMetadata: audio.outputMetadata,
+  };
 }
 
 async function executeCompositionNode(

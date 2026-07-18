@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeNodeRequest } from './flowExecution';
+import { NonRetryableError } from './exponentialBackoff';
 import { DEFAULT_EXECUTION_CONFIG } from './providerCatalog';
-import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
+import type { AppNode, AudioGenerationMode, AudioOutputFormat, RuntimeSettingsSnapshot } from '../types/flow';
 
 const settings: RuntimeSettingsSnapshot = {
   apiKeys: {
@@ -81,6 +82,91 @@ function audioResponse(): Response {
     status: 200,
     headers: { 'content-type': 'audio/mpeg' },
   });
+}
+
+const rawPcmSamples = new Uint8Array([0x00, 0x80, 0xff, 0x7f]);
+
+const elevenLabsModes: Array<{
+  mode: AudioGenerationMode;
+  modelId: string;
+  prompt: string;
+  path: string;
+}> = [
+  { mode: 'speech', modelId: 'eleven_multilingual_v2', prompt: 'Hello there', path: '/v1/text-to-speech/' },
+  { mode: 'soundEffect', modelId: 'eleven_text_to_sound_v2', prompt: 'A metal door impact', path: '/v1/sound-generation' },
+  { mode: 'music', modelId: 'music_v2', prompt: 'A restrained string pulse', path: '/v1/music' },
+  { mode: 'voiceChange', modelId: 'eleven_multilingual_sts_v2', prompt: '', path: '/v1/speech-to-speech/' },
+];
+
+function byteResponse(bytes: Uint8Array, type: string): Response {
+  return new Response(new Blob([Uint8Array.from(bytes).buffer], { type }), {
+    status: 200,
+    headers: { 'content-type': type },
+  });
+}
+
+function stubModeFetch(mode: AudioGenerationMode, providerResponse: Response): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    if (mode === 'voiceChange' && String(input).startsWith('data:')) {
+      return byteResponse(new Uint8Array([0x52, 0x49, 0x46, 0x46]), 'audio/wav');
+    }
+    return providerResponse;
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+function nodeForMode(mode: AudioGenerationMode, modelId: string): AppNode {
+  return createAudioNode({
+    modelId,
+    audioGenerationMode: mode,
+  });
+}
+
+function contextForMode(mode: AudioGenerationMode, prompt: string, outputFormat: AudioOutputFormat | string) {
+  return {
+    prompt,
+    config: { ...DEFAULT_EXECUTION_CONFIG, audioOutputFormat: outputFormat as AudioOutputFormat },
+    ...(mode === 'voiceChange' ? { audioSourceInput: 'data:audio/wav;base64,UklGRg==' } : {}),
+  };
+}
+
+async function captureCreatedBlob<T>(operation: () => Promise<T>): Promise<{ result: T; blob: Blob }> {
+  const blobs: Blob[] = [];
+  vi.spyOn(URL, 'createObjectURL').mockImplementation((blob: Blob | MediaSource) => {
+    if (blob instanceof Blob) blobs.push(blob);
+    return `blob:elevenlabs-${blobs.length}`;
+  });
+  const result = await operation();
+  expect(blobs).toHaveLength(1);
+  return { result, blob: blobs[0] };
+}
+
+async function blobBytes(blob: Blob): Promise<Uint8Array> {
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+function ascii(bytes: Uint8Array, start: number, length: number): string {
+  return String.fromCharCode(...bytes.slice(start, start + length));
+}
+
+function expectPcm44100Wave(bytes: Uint8Array, payload: Uint8Array): void {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  expect(bytes).toHaveLength(44 + payload.length);
+  expect(ascii(bytes, 0, 4)).toBe('RIFF');
+  expect(view.getUint32(4, true)).toBe(36 + payload.length);
+  expect(ascii(bytes, 8, 4)).toBe('WAVE');
+  expect(ascii(bytes, 12, 4)).toBe('fmt ');
+  expect(view.getUint32(16, true)).toBe(16);
+  expect(view.getUint16(20, true)).toBe(1);
+  expect(view.getUint16(22, true)).toBe(1);
+  expect(view.getUint32(24, true)).toBe(44_100);
+  expect(view.getUint32(28, true)).toBe(88_200);
+  expect(view.getUint16(32, true)).toBe(2);
+  expect(view.getUint16(34, true)).toBe(16);
+  expect(ascii(bytes, 36, 4)).toBe('data');
+  expect(view.getUint32(40, true)).toBe(payload.length);
+  expect(bytes.slice(44)).toEqual(payload);
 }
 
 describe('executeNodeRequest ElevenLabs speech', () => {
@@ -189,5 +275,180 @@ describe('executeNodeRequest ElevenLabs speech', () => {
     )).rejects.toThrow('does not support text to sound effect');
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeNodeRequest ElevenLabs audio response materialization', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(elevenLabsModes)(
+    'wraps raw pcm_44100 as an exact mono signed-16 LE WAV for $mode',
+    async ({ mode, modelId, prompt, path }) => {
+      const fetchMock = stubModeFetch(mode, byteResponse(rawPcmSamples, 'application/octet-stream'));
+
+      const { result, blob } = await captureCreatedBlob(() => executeNodeRequest(
+        nodeForMode(mode, modelId),
+        contextForMode(mode, prompt, 'pcm_44100'),
+        settings,
+      ));
+
+      const providerCall = fetchMock.mock.calls.find(([url]) => String(url).includes('api.elevenlabs.io'));
+      expect(String(providerCall?.[0])).toContain(path);
+      expect(String(providerCall?.[0])).toContain('output_format=pcm_44100');
+      expect(blob.type).toBe('audio/wav');
+      expectPcm44100Wave(await blobBytes(blob), rawPcmSamples);
+      expect(result.blob).toBe(blob);
+      expect(result).toMatchObject({
+        resultType: 'audio',
+        mimeType: 'audio/wav',
+        extension: 'wav',
+        outputMetadata: {
+          providerOutputFormat: 'pcm_44100',
+          container: 'wav',
+          codec: 'pcm_s16le',
+          sampleRateHz: 44_100,
+          channels: 1,
+          bitsPerSample: 16,
+          endianness: 'little',
+        },
+      });
+    },
+  );
+
+  it.each(elevenLabsModes)(
+    'preserves encoded MP3 payload bytes and reports truthful media identity for $mode',
+    async ({ mode, modelId, prompt }) => {
+      const mp3Bytes = new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0xaa, 0x55]);
+      stubModeFetch(mode, byteResponse(mp3Bytes, 'application/octet-stream'));
+
+      const { result, blob } = await captureCreatedBlob(() => executeNodeRequest(
+        nodeForMode(mode, modelId),
+        contextForMode(mode, prompt, 'mp3_44100_128'),
+        settings,
+      ));
+
+      expect(await blobBytes(blob)).toEqual(mp3Bytes);
+      expect(blob.type).toBe('audio/mpeg');
+      expect(result.blob).toBe(blob);
+      expect(result).toMatchObject({
+        resultType: 'audio',
+        mimeType: 'audio/mpeg',
+        extension: 'mp3',
+        outputMetadata: {
+          providerOutputFormat: 'mp3_44100_128',
+          container: 'mp3',
+          codec: 'mp3',
+          sampleRateHz: 44_100,
+          bitRateKbps: 128,
+        },
+      });
+    },
+  );
+
+  it('preserves an unknown encoded format and its provider MIME without inventing a WAV container', async () => {
+    const encodedBytes = new Uint8Array([0x66, 0x4c, 0x61, 0x43, 0x00, 0x00, 0x00, 0x22]);
+    stubModeFetch('speech', byteResponse(encodedBytes, 'audio/flac'));
+
+    const { result, blob } = await captureCreatedBlob(() => executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'future_lossless'),
+      settings,
+    ));
+
+    expect(await blobBytes(blob)).toEqual(encodedBytes);
+    expect(blob.type).toBe('audio/flac');
+    expect(result).toMatchObject({
+      mimeType: 'audio/flac',
+      extension: 'flac',
+      outputMetadata: {
+        providerOutputFormat: 'future_lossless',
+        container: 'provider',
+        codec: 'unknown',
+      },
+    });
+  });
+
+  it.each([
+    ['empty', new Uint8Array()],
+    ['truncated 16-bit sample', new Uint8Array([0x7f])],
+  ])('fails closed without retrying a successful-but-%s PCM response', async (_case, bytes) => {
+    const fetchMock = stubModeFetch('speech', byteResponse(bytes, 'application/octet-stream'));
+    const retryingSettings = {
+      ...settings,
+      providerSettings: {
+        ...settings.providerSettings,
+        batchMaxRetries: 3,
+        batchRetryBaseDelayMs: 1,
+      },
+    } as RuntimeSettingsSnapshot;
+
+    const run = executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'pcm_44100'),
+      retryingSettings,
+    );
+
+    await expect(run).rejects.toBeInstanceOf(NonRetryableError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient transport failure, then materializes the one successful PCM response', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('temporary connection reset'))
+      .mockResolvedValueOnce(byteResponse(rawPcmSamples, 'application/octet-stream'));
+    vi.stubGlobal('fetch', fetchMock);
+    const retryingSettings = {
+      ...settings,
+      providerSettings: {
+        ...settings.providerSettings,
+        batchMaxRetries: 1,
+        batchRetryBaseDelayMs: 1,
+      },
+    } as RuntimeSettingsSnapshot;
+
+    const { blob } = await captureCreatedBlob(() => executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'pcm_44100'),
+      retryingSettings,
+    ));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expectPcm44100Wave(await blobBytes(blob), rawPcmSamples);
+  });
+
+  it('cancels while response bytes are materializing and never publishes a stale object URL', async () => {
+    const controller = new AbortController();
+    let resolveBlob!: (blob: Blob) => void;
+    const pendingBlob = new Promise<Blob>((resolve) => {
+      resolveBlob = resolve;
+    });
+    const response = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      blob: vi.fn(() => pendingBlob),
+    } as unknown as Response;
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal('fetch', fetchMock);
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL');
+
+    const run = executeNodeRequest(
+      nodeForMode('speech', 'eleven_multilingual_v2'),
+      contextForMode('speech', 'Hello there', 'pcm_44100'),
+      settings,
+      undefined,
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(response.blob).toHaveBeenCalledOnce(), { timeout: 4_000 });
+    controller.abort();
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+    resolveBlob(new Blob([Uint8Array.from(rawPcmSamples).buffer], { type: 'application/octet-stream' }));
+    await Promise.resolve();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(createObjectUrl).not.toHaveBeenCalled();
   });
 });
