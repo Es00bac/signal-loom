@@ -295,7 +295,7 @@ describe('fetchDownstreamMediaBlob (AUD-029)', () => {
     )));
     const electronDownload = vi.fn().mockResolvedValue({
       error: `Native HTTP 403; authorization=  BeArEr ${bearerCredential};\n` +
-        `detached BASIC ${basicCredential}, detached bEaReR ${bearerCredential}.`,
+        `detached: BASIC ${basicCredential}, detached: bEaReR ${bearerCredential}.`,
     });
 
     let message = '';
@@ -315,6 +315,37 @@ describe('fetchDownstreamMediaBlob (AUD-029)', () => {
     expect(message).not.toContain(bearerCredential);
     expect(message).not.toMatch(/authorization\s*[:=]\s*(?:basic|bearer)/i);
     expect(message.match(/\[redacted\]/g)).toHaveLength(4);
+  });
+
+  it('redacts alphabetic-only detached Bearer values at diagnostic boundaries without broad prose loss', async () => {
+    const alphabeticBearer = 'abcdefghijklmnop';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError(
+      `Renderer HTTP 401;\nBearer ${alphabeticBearer}; ` +
+      'basic renderer remains readable; bearer of news remains readable; Bearer short.',
+    )));
+    const electronDownload = vi.fn().mockResolvedValue({
+      error: `Native HTTP 403, bEaReR ${alphabeticBearer}\n` +
+        `Authorization: BeArEr ${alphabeticBearer}; short ordinary words stay readable.`,
+    });
+
+    let message = '';
+    try {
+      await fetchDownstreamMediaBlob(ATLAS_URL, {
+        kind: 'image', errorLabel: 'Image reference failed', runtime: { electronDownload },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain('Renderer HTTP 401');
+    expect(message).toContain('Native HTTP 403');
+    expect(message).toContain('basic renderer remains readable');
+    expect(message).toContain('bearer of news remains readable');
+    expect(message).toContain('Bearer short');
+    expect(message).toContain('short ordinary words stay readable');
+    expect(message).not.toContain(alphabeticBearer);
+    expect(message).not.toMatch(/authorization\s*:\s*bearer/i);
+    expect(message.match(/\[redacted\]/g)).toHaveLength(3);
   });
 
   it('rejects a native response with the wrong media MIME family', async () => {

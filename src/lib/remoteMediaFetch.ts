@@ -184,7 +184,10 @@ function looksLikeDetachedCredential(scheme: string, payload: string): boolean {
       && candidate.length % 4 === 0
       && /^[A-Za-z0-9+/]+={0,2}$/.test(candidate);
   }
-  return candidate.length >= 8 && /[0-9._~+/-]/.test(candidate);
+  return candidate.length >= 8 && (
+    /[0-9._~+/-]/.test(candidate)
+    || (candidate.length >= 12 && /^[A-Za-z]+$/.test(candidate))
+  );
 }
 
 function redactAuthorizationCredentials(value: string): string {
@@ -193,9 +196,10 @@ function redactAuthorizationCredentials(value: string): string {
     '$1[redacted]',
   );
   return labeled.replace(
-    /\b(basic|bearer)\b[ \t]+([^\s,;]+)/gi,
-    (match, scheme: string, payload: string) => looksLikeDetachedCredential(scheme, payload)
-      ? '[redacted]'
+    /(^|[\r\n,;:.!?([={])([ \t]*)(basic|bearer)\b[ \t]+([^\s,;]+)/gim,
+    (match, boundary: string, spacing: string, scheme: string, payload: string) =>
+      looksLikeDetachedCredential(scheme, payload)
+      ? `${boundary}${spacing}[redacted]`
       : match,
   );
 }
