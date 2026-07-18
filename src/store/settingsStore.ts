@@ -55,6 +55,8 @@ export interface DefaultImageNodeModel {
   modelId: string;
 }
 
+export const SETTINGS_BACKUP_DATA_SCHEMA_VERSION = 1 as const;
+
 const API_KEY_PROVIDERS = ['openai', 'gemini', 'huggingface', 'elevenlabs', 'bfl', 'stability', 'atlas', 'byteplus'] as const;
 type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 type ApiKeyValueMap = Record<ApiKeyProvider, string>;
@@ -185,6 +187,61 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function hasOwnField(value: object, field: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, field);
+}
+
+function sanitizeDefaultImageNodeModel(value: unknown): DefaultImageNodeModel | null {
+  if (!isRecord(value) || typeof value.provider !== 'string' || typeof value.modelId !== 'string') {
+    return null;
+  }
+  if (!hasOwnField(DEFAULT_MODELS.image, value.provider) || !value.modelId.trim()) {
+    return null;
+  }
+  return {
+    provider: value.provider as ImageProvider,
+    modelId: value.modelId.trim(),
+  };
+}
+
+function sanitizeAppMenuStyle(value: unknown): AppMenuStyle {
+  return value === 'menubar' ? 'menubar' : 'compact';
+}
+
+function sanitizeInterfaceDensity(value: unknown): InterfaceDensity {
+  return value === 'comfortable' ? 'comfortable' : 'compact';
+}
+
+function sanitizeLocaleChosen(value: unknown): boolean {
+  return value === true;
+}
+
+function sanitizeOpenFontLibrary(value: unknown): OpenFontLibraryFace[] {
+  return Array.isArray(value) ? value.filter(isOpenFontLibraryFace) : [];
+}
+
+interface SanitizedPortableEditorPreferences {
+  defaultImageNodeModel: DefaultImageNodeModel | null;
+  appMenuStyle: AppMenuStyle;
+  interfaceDensity: InterfaceDensity;
+  locale: AppLocale;
+  localeChosen: boolean;
+  openFontLibrary: OpenFontLibraryFace[];
+}
+
+/** Shared by persisted-profile hydration and portable backup import. */
+function sanitizePortableEditorPreferences(input: unknown): SanitizedPortableEditorPreferences {
+  const source = isRecord(input) ? input : {};
+  return {
+    defaultImageNodeModel: sanitizeDefaultImageNodeModel(source.defaultImageNodeModel),
+    appMenuStyle: sanitizeAppMenuStyle(source.appMenuStyle),
+    interfaceDensity: sanitizeInterfaceDensity(source.interfaceDensity),
+    locale: normalizeLocale(source.locale),
+    localeChosen: sanitizeLocaleChosen(source.localeChosen),
+    openFontLibrary: sanitizeOpenFontLibrary(source.openFontLibrary),
+  };
+}
+
 function buildRedactedApiKeys(apiKeys: ApiKeys): ApiKeyValueMap {
   const output: Partial<ApiKeyValueMap> = {};
 
@@ -201,17 +258,24 @@ function buildRedactedApiKeys(apiKeys: ApiKeys): ApiKeyValueMap {
 /**
  * The user-meaningful slice of settings carried in an encrypted backup — everything worth restoring
  * after a reinstall/profile loss, including the bring-your-own-key API tokens and provider credentials.
- * The ephemeral UI flags (isSettingsOpen / settingsPanel) are intentionally excluded.
+ * Runtime-only UI flags, hydration state, actions, and the derived license verdict are excluded.
  */
 export interface SettingsBackupData {
+  schemaVersion: typeof SETTINGS_BACKUP_DATA_SCHEMA_VERSION;
   apiKeys: ApiKeys;
   defaultModels: DefaultModelSettings;
+  defaultImageNodeModel: DefaultImageNodeModel | null;
   providerSettings: ProviderSettings;
   interfaceThemeId: string;
+  appMenuStyle: AppMenuStyle;
+  interfaceDensity: InterfaceDensity;
+  locale: AppLocale;
+  localeChosen: boolean;
   keyboardShortcuts: KeyboardShortcutMap;
   gamepadBindings: GamepadBindingProfile;
   customBrushPresets: ImageBrushPreset[];
   customCropPresets: CropCustomPreset[];
+  openFontLibrary: OpenFontLibraryFace[];
   /** Commercial-license key; optional for backups created before licensing shipped. */
   licenseKey?: string;
 }
@@ -250,7 +314,7 @@ interface SettingsState {
   customCropPresets: CropCustomPreset[];
   /** Metadata-only records for locally downloaded open fonts; binary bytes remain in the Paper repository. */
   openFontLibrary: OpenFontLibraryFace[];
-  /** Encrypt the current settings (keys + credentials) into a portable, passphrase-locked backup blob. */
+  /** Encrypt the declared portable preferences and credentials into a passphrase-locked backup blob. */
   exportSettingsBackup: (passphrase: string) => Promise<string>;
   /** Decrypt + restore a settings backup blob produced by exportSettingsBackup. */
   importSettingsBackup: (envelopeText: string, passphrase: string) => Promise<LicenseOperationOutcome>;
@@ -311,6 +375,46 @@ interface SettingsState {
    * not by this flag; add separate state if a future caller needs in-progress visibility.
    */
   settingsHydrated: boolean;
+}
+
+type PortableSettingsBackupField = keyof Omit<SettingsBackupData, 'schemaVersion'>;
+
+/**
+ * The complete declared portable-settings schema. Export is generated from this inventory, so adding
+ * a user-meaningful backup field to SettingsBackupData cannot silently leave it out of the encrypted
+ * payload. Runtime-only panels, dialogs, hydration state, and the derived license verdict are absent
+ * by construction.
+ */
+const PORTABLE_SETTINGS_BACKUP_SCHEMA = {
+  apiKeys: true,
+  defaultModels: true,
+  defaultImageNodeModel: true,
+  providerSettings: true,
+  interfaceThemeId: true,
+  appMenuStyle: true,
+  interfaceDensity: true,
+  locale: true,
+  localeChosen: true,
+  keyboardShortcuts: true,
+  gamepadBindings: true,
+  customBrushPresets: true,
+  customCropPresets: true,
+  openFontLibrary: true,
+  licenseKey: true,
+} as const satisfies Record<PortableSettingsBackupField, true>;
+
+export const PORTABLE_SETTINGS_BACKUP_FIELDS = Object.freeze(
+  Object.keys(PORTABLE_SETTINGS_BACKUP_SCHEMA) as PortableSettingsBackupField[],
+);
+
+function createSettingsBackupData(state: SettingsState): SettingsBackupData {
+  const fields = Object.fromEntries(
+    PORTABLE_SETTINGS_BACKUP_FIELDS.map((field) => [field, state[field]]),
+  ) as Pick<SettingsBackupData, PortableSettingsBackupField>;
+  return {
+    schemaVersion: SETTINGS_BACKUP_DATA_SCHEMA_VERSION,
+    ...fields,
+  };
 }
 
 const INITIAL_API_KEYS: ApiKeys = {
@@ -981,18 +1085,7 @@ export const useSettingsStore = create<SettingsState>()(
           ],
         })),
       exportSettingsBackup: async (passphrase) => {
-        const state = get();
-        const data: SettingsBackupData = {
-          apiKeys: { ...state.apiKeys },
-          defaultModels: state.defaultModels,
-          providerSettings: state.providerSettings,
-          interfaceThemeId: state.interfaceThemeId,
-          keyboardShortcuts: state.keyboardShortcuts,
-          gamepadBindings: state.gamepadBindings,
-          customBrushPresets: state.customBrushPresets,
-          customCropPresets: state.customCropPresets,
-          licenseKey: state.licenseKey,
-        };
+        const data = createSettingsBackupData(get());
         return encryptSettingsBackup(JSON.stringify(data), passphrase);
       },
       importSettingsBackup: async (envelopeText, passphrase) => {
@@ -1016,6 +1109,16 @@ export const useSettingsStore = create<SettingsState>()(
         // The sanitizers below defend every field, so the structural cast is safe even on a
         // hand-edited or corrupt payload (same trust model as the persist `merge` above).
         const data = (isRecord(parsed) ? parsed : {}) as Partial<SettingsBackupData>;
+        if (
+          data.schemaVersion !== undefined
+          && data.schemaVersion !== SETTINGS_BACKUP_DATA_SCHEMA_VERSION
+        ) {
+          return {
+            licensed: false,
+            status: 'failed',
+            reason: 'This backup uses a newer portable settings schema. Update Sloom Studio, then import again.',
+          };
+        }
         // The imported payload owns the license identity now: invalidate in-flight verification,
         // apply fail-closed, then settle entitlement through the one canonical verification.
         // Callers get a deterministic postcondition — when this resolves, `license` reflects the
@@ -1185,6 +1288,7 @@ export const useSettingsStore = create<SettingsState>()(
         activeHydrationRead = null;
         const typedPersistedState = persistedState as Partial<SettingsState> | undefined;
         const persistedApiKeys = sanitizePersistedApiKeys(typedPersistedState?.apiKeys);
+        const portablePreferences = sanitizePortableEditorPreferences(typedPersistedState);
 
         let genericImageEndpointUrl = typedPersistedState?.providerSettings?.genericImageEndpointUrl;
         let genericImageAuthHeader = typedPersistedState?.providerSettings?.genericImageAuthHeader;
@@ -1256,18 +1360,17 @@ export const useSettingsStore = create<SettingsState>()(
             ...(localOpenImageEndpointUrl ? { localOpenImageEndpointUrl } : {}),
             ...(localOpenImageAuthHeader ? { localOpenImageAuthHeader } : {}),
           },
+          defaultImageNodeModel: portablePreferences.defaultImageNodeModel,
           interfaceThemeId: resolveInterfaceTheme(typedPersistedState?.interfaceThemeId).id,
-          appMenuStyle: typedPersistedState?.appMenuStyle === 'menubar' ? 'menubar' : 'compact',
-          interfaceDensity: typedPersistedState?.interfaceDensity === 'comfortable' ? 'comfortable' : 'compact',
-          locale: normalizeLocale(typedPersistedState?.locale),
-          localeChosen: Boolean(typedPersistedState?.localeChosen),
+          appMenuStyle: portablePreferences.appMenuStyle,
+          interfaceDensity: portablePreferences.interfaceDensity,
+          locale: portablePreferences.locale,
+          localeChosen: portablePreferences.localeChosen,
           keyboardShortcuts: sanitizeKeyboardShortcutMap(typedPersistedState?.keyboardShortcuts ?? {}),
           gamepadBindings: normalizeGamepadBindings(typedPersistedState?.gamepadBindings),
           customBrushPresets: sanitizeUserBrushPresets(typedPersistedState?.customBrushPresets),
           customCropPresets: sanitizeCropPresets(typedPersistedState?.customCropPresets),
-          openFontLibrary: Array.isArray(typedPersistedState?.openFontLibrary)
-            ? typedPersistedState.openFontLibrary.filter(isOpenFontLibraryFace)
-            : [],
+          openFontLibrary: portablePreferences.openFontLibrary,
           settingsPanel: typedPersistedState?.settingsPanel === 'keyboard'
             || typedPersistedState?.settingsPanel === 'gamepad'
             || typedPersistedState?.settingsPanel === 'fonts'
@@ -1331,6 +1434,7 @@ function mergeSettingsBackupData(
   current: SettingsState,
   data: Partial<SettingsBackupData>,
 ): Partial<SettingsState> {
+  const portablePreferences = sanitizePortableEditorPreferences(data);
   return {
     apiKeys: {
       ...current.apiKeys,
@@ -1349,12 +1453,30 @@ function mergeSettingsBackupData(
     interfaceThemeId: resolveInterfaceTheme(
       typeof data.interfaceThemeId === 'string' ? data.interfaceThemeId : undefined,
     ).id,
+    ...(hasOwnField(data, 'defaultImageNodeModel')
+      ? { defaultImageNodeModel: portablePreferences.defaultImageNodeModel }
+      : {}),
+    ...(hasOwnField(data, 'appMenuStyle')
+      ? { appMenuStyle: portablePreferences.appMenuStyle }
+      : {}),
+    ...(hasOwnField(data, 'interfaceDensity')
+      ? { interfaceDensity: portablePreferences.interfaceDensity }
+      : {}),
+    ...(hasOwnField(data, 'locale')
+      ? { locale: portablePreferences.locale }
+      : {}),
+    ...(hasOwnField(data, 'localeChosen')
+      ? { localeChosen: portablePreferences.localeChosen }
+      : {}),
     keyboardShortcuts: sanitizeKeyboardShortcutMap(
       isRecord(data.keyboardShortcuts) ? data.keyboardShortcuts : {},
     ),
     gamepadBindings: normalizeGamepadBindings(data.gamepadBindings),
     customBrushPresets: sanitizeUserBrushPresets(data.customBrushPresets),
     customCropPresets: sanitizeCropPresets(data.customCropPresets),
+    ...(hasOwnField(data, 'openFontLibrary')
+      ? { openFontLibrary: portablePreferences.openFontLibrary }
+      : {}),
     // The license key travels with a settings backup; it is re-verified fail-closed on import.
     ...(typeof data.licenseKey === 'string'
       ? { licenseKey: data.licenseKey, license: { licensed: false } as LicenseVerification }
