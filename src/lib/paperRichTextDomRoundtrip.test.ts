@@ -67,6 +67,39 @@ describe('rich editor paragraph round-trip (edit must not drop paragraph formatt
     expect(committed[0].runs[1].leadingPt).toBeCloseTo(11, 2);
   });
 
+  it('keeps paragraph leading inherited while preserving an explicit lower run override', () => {
+    const source: PaperRichParagraph[] = [{
+      leadingPt: 22,
+      runs: [
+        { text: 'Inherited ' },
+        { text: 'lower', leadingPt: 11 },
+        { text: ' inherited' },
+      ],
+    }];
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml(source, 1);
+    const spans = editor.querySelectorAll<HTMLSpanElement>('span');
+    // jsdom does not expose inherited line-height through getComputedStyle like a browser does. Mirror the
+    // browser's effective value onto the two unstyled spans so this regression exercises extraction rather
+    // than passing because of that environment difference. No authored-leading marker is added.
+    spans[0].style.lineHeight = `${22 * 1.333}px`;
+    spans[2].style.lineHeight = `${22 * 1.333}px`;
+
+    const committed = serializeRichEditor(editor, BASE);
+
+    expect(committed).toEqual(source);
+  });
+
+  it('keeps one styled blank paragraph between inherited-leading paragraphs', () => {
+    const source: PaperRichParagraph[] = [
+      { leadingPt: 22, runs: [{ text: 'Before' }] },
+      { leadingPt: 17, runs: [{ text: '' }] },
+      { leadingPt: 22, runs: [{ text: 'After' }] },
+    ];
+
+    expect(roundTrip(source)).toEqual(source);
+  });
+
   it('preserves advanced character and paragraph typesetting properties', () => {
     const out = roundTrip([{
       alignLast: 'center',

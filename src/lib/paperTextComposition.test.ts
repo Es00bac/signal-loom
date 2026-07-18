@@ -220,10 +220,19 @@ describe('composePaperTextFrame', () => {
       undefined,
       { leadingPt: 22 },
     );
+    const lowerRunLeading = await composeFixture(
+      [{ text: 'Base ' }, { text: 'lower', leadingPt: 11 }],
+      { leadingPt: 14 },
+      undefined,
+      undefined,
+      { leadingPt: 22 },
+    );
 
     expect(paragraphLeading.lines[0].layoutBounds?.heightPt).toBeCloseTo(22);
     expect(mixedRunLeading.lines[0].layoutBounds?.heightPt).toBeCloseTo(31);
     expect(mixedRunLeading.lines[0].originYPt).toBeGreaterThan(paragraphLeading.lines[0].originYPt);
+    // An explicit lower run survives as authored data, while FBL-006's shared paragraph strut remains the floor.
+    expect(lowerRunLeading.lines[0].layoutBounds?.heightPt).toBeCloseTo(22);
   });
 
   it('uses paragraph alignLast for the final line of justified managed text', async () => {

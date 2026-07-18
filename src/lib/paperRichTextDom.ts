@@ -232,6 +232,7 @@ export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: num
                 paintCss ? ` style="${escapeHtml(paintCss)}"` : '',
                 managed ? ` data-paper-font-family="${escapeHtml(managed.sourceFamily)}"` : '',
                 oblique ? ` data-paper-font-style="${escapeHtml(oblique)}"` : '',
+                run.leadingPt != null ? ` data-paper-leading="${run.leadingPt}"` : '',
               ].join('');
               const text = escapeHtml(run.text).replace(/ {2,}/g, (match) => '\u00a0'.repeat(match.length));
               const span = `<span${attrs}>${text}</span>`;
@@ -398,7 +399,14 @@ function runFromComputedStyle(
     run.fontSizePt = px / (PT_TO_PX * (base.zoom || 1));
   }
   const lineHeightPx = parseFloat(style.lineHeight);
-  if (Number.isFinite(lineHeightPx) && (base.leadingPx == null || Math.abs(lineHeightPx - base.leadingPx) > 0.5)) {
+  const authoredLeadingPt = parseFloat(readSpanData('data-paper-leading') ?? '');
+  const paragraphLeadingPt = parseFloat(readSpanData('data-lead') ?? '');
+  const inheritedLeadingPx = Number.isFinite(paragraphLeadingPt) && paragraphLeadingPt > 0
+    ? paragraphLeadingPt * PT_TO_PX * (base.zoom || 1)
+    : base.leadingPx;
+  if (Number.isFinite(authoredLeadingPt) && authoredLeadingPt > 0) {
+    run.leadingPt = authoredLeadingPt;
+  } else if (Number.isFinite(lineHeightPx) && (inheritedLeadingPx == null || Math.abs(lineHeightPx - inheritedLeadingPx) > 0.5)) {
     run.leadingPt = lineHeightPx / (PT_TO_PX * (base.zoom || 1));
   }
   const letterSpacing = style.letterSpacing.trim();
@@ -509,7 +517,10 @@ export function serializeRichEditor(root: HTMLElement, base: RichEditorBase): Pa
         const marker = el.querySelector(':scope > [data-paper-marker]')?.getAttribute('data-paper-marker') ?? undefined;
         if (marker) attrs.listMarker = marker;
         startParagraph(attrs);
-        walkInline(el);
+        const editableChildren = Array.from(el.childNodes).filter((node) =>
+          !(node instanceof HTMLElement && node.dataset.paperMarker != null));
+        const isBlankPlaceholder = editableChildren.length === 1 && editableChildren[0].nodeName === 'BR';
+        if (!isBlankPlaceholder) walkInline(el);
       } else if (child.nodeName === 'UL' || child.nodeName === 'OL') {
         (child as HTMLElement).querySelectorAll(':scope > li').forEach((li, index) => {
           startParagraph({ listMarker: child.nodeName === 'OL' ? `${index + 1}.` : '•' });

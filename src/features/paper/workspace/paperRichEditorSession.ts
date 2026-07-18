@@ -111,7 +111,7 @@ export function resolvePaperRichEditorTypographyUpdate(
 }
 
 const CHARACTER_KEYS = new Set<RichTypographyKey>([
-  'fontFamily', 'fontSizePt', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
+  'fontFamily', 'fontSizePt', 'leadingPt', 'fontWeight', 'fontStyle', 'fontStretch', 'fontVariationSettings',
   'fontKerning', 'color', 'tracking', 'smallCaps',
   'numericStyle', 'textOrientation', 'emphasis',
 ]);
@@ -223,6 +223,10 @@ function applyCharacterPatch(
       span.style.fontFamily = patch.fontFamily ?? '';
     }
     if ('fontSizePt' in patch) span.style.fontSize = `${((patch.fontSizePt ?? 0) * PT_TO_PX * zoom).toFixed(2)}px`;
+    if ('leadingPt' in patch) {
+      span.style.lineHeight = `${((patch.leadingPt ?? 0) * PT_TO_PX * zoom).toFixed(2)}px`;
+      setData(span, 'paperLeading', patch.leadingPt);
+    }
     if ('fontWeight' in patch) span.style.fontWeight = patch.fontWeight ?? '400';
     if ('fontStyle' in patch) {
       const value = patch.fontStyle ?? 'normal';
@@ -369,19 +373,22 @@ export function applyTypographyPatchToDomSelection(
   const changedKeys = Object.keys(patch) as RichTypographyKey[];
   if (!changedKeys.length) return null;
 
-  const hasCharacters = changedKeys.some((key) => CHARACTER_KEYS.has(key));
-  const hasParagraphs = changedKeys.some((key) => PARAGRAPH_KEYS.has(key));
+  const characterKeys = changedKeys.filter((key) => CHARACTER_KEYS.has(key));
+  // Leading is a paragraph property at a caret, but a highlighted range authors an explicit run override.
+  const paragraphKeys = changedKeys.filter((key) => PARAGRAPH_KEYS.has(key) && !(key === 'leadingPt' && !savedRange.collapsed));
+  const hasCharacters = characterKeys.length > 0;
+  const hasParagraphs = paragraphKeys.length > 0;
   if (savedRange.collapsed && hasCharacters && !hasParagraphs) return null;
 
   let range = savedRange.cloneRange();
   let applied = false;
   if (hasCharacters && !range.collapsed) {
-    const characterPatch = Object.fromEntries(changedKeys.filter((key) => CHARACTER_KEYS.has(key)).map((key) => [key, patch[key]]));
+    const characterPatch = Object.fromEntries(characterKeys.map((key) => [key, patch[key]]));
     const nextRange = applyCharacterPatch(editor, range, characterPatch, zoom, managedPaint);
     if (nextRange) { range = nextRange; applied = true; }
   }
   if (hasParagraphs) {
-    const paragraphPatch = Object.fromEntries(changedKeys.filter((key) => PARAGRAPH_KEYS.has(key)).map((key) => [key, patch[key]]));
+    const paragraphPatch = Object.fromEntries(paragraphKeys.map((key) => [key, patch[key]]));
     applied = applyParagraphPatch(editor, range, paragraphPatch, zoom) || applied;
   }
   return applied ? { range, applied } : null;

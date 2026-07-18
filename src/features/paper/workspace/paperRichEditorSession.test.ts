@@ -414,6 +414,49 @@ describe('active rich editor Inspector formatting', () => {
     expect(rich[0].runs[0]).toEqual({ text: 'Hello ' });
   });
 
+  it('authors lower leading on only the highlighted run without replacing paragraph leading', () => {
+    const editor = document.createElement('div');
+    editor.innerHTML = richTextToEditorHtml([{
+      leadingPt: 22,
+      runs: [{ text: 'Before selected after' }],
+    }], 1);
+    document.body.append(editor);
+    const text = textNodeContaining(editor, 'Before selected after');
+    const range = document.createRange();
+    range.setStart(text, 7);
+    range.setEnd(text, 15);
+
+    const applied = applyTypographyPatchToDomSelection(editor, range, { leadingPt: 11 }, 1);
+
+    expect(applied?.applied).toBe(true);
+    const rich = serializeRichEditor(editor, createRichEditorBase(TYPOGRAPHY, 1));
+    expect(rich).toEqual([{
+      leadingPt: 22,
+      runs: [
+        { text: 'Before ' },
+        { text: 'selected', leadingPt: 11 },
+        { text: ' after' },
+      ],
+    }]);
+
+    const trailing = textNodeContaining(editor, ' after');
+    const adjacentRange = document.createRange();
+    adjacentRange.selectNodeContents(trailing);
+    expect(applyTypographyPatchToDomSelection(editor, adjacentRange, { leadingPt: 11 }, 1)?.applied).toBe(true);
+    const merged = serializeRichEditor(editor, createRichEditorBase(TYPOGRAPHY, 1));
+    expect(merged).toEqual([{
+      leadingPt: 22,
+      runs: [
+        { text: 'Before ' },
+        { text: 'selected after', leadingPt: 11 },
+      ],
+    }]);
+
+    const reopened = document.createElement('div');
+    reopened.innerHTML = richTextToEditorHtml(merged, 1);
+    expect(serializeRichEditor(reopened, createRichEditorBase(TYPOGRAPHY, 1))).toEqual(merged);
+  });
+
   it('applies paragraph typesetting at a caret without rewriting character styles', () => {
     const editor = editorWith('Paragraph text');
     const text = textNodeContaining(editor, 'Paragraph text');
