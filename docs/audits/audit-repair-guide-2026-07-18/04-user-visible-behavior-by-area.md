@@ -30,6 +30,11 @@ This guide translates the repair program into product behavior. “Before” des
 
 **Practical effect:** The text and layout seen while authoring should be a closer predictor of PDF, PDF/X, KDP, image, soft-proof, and other flattened output. Unsupported exact typography is more likely to fail clearly than to substitute silently.
 
+**Post-audit installed-build correction:** Chromium exact-face readiness now uses canonical stretch
+keywords rather than the percentage shorthand Chromium rejects, and large font files receive a
+size-aware bounded load window. A valid legacy project with surviving local font records should no
+longer display the blanket managed-typography error or time out a roughly 9.6 MiB CJK variable face.
+
 **Audit coverage:** `AUD-020`, `AUD-026`, `FBL-004`, `FBL-006`, `FBL-007`, `FBL-008`, `FBL-010`, `FBL-022`, `FBL-023`, `FBL-024`.
 
 ## Paper printing, placed PDFs, and color-managed export
@@ -120,6 +125,11 @@ This guide translates the repair program into product behavior. “Before” des
 
 **Practical effect:** Startup and localization are more coherent, licensing should not change incorrectly because storage completed late, restored settings are closer to what the backup promises, and users on machines without Vulkan receive an honest capability result.
 
+**Post-audit installed-build correction:** Cross-window license synchronization is now scoped to
+license-key changes. Normal settings writes no longer repeatedly fail-close and revalidate a stable
+licensed verdict, so the application title and commercial gates should not alternate between
+licensed and Community state.
+
 **Audit coverage:** `AUD-014`, `AUD-015`, `AUD-039`, `AUD-042`, `AUD-043`, `AUD-044`, `FBL-032`, `FBL-033`.
 
 ## Desktop packaging and bundled fonts
@@ -131,4 +141,3 @@ This guide translates the repair program into product behavior. “Before” des
 **Practical effect:** An installer should either contain the exact audited 116-family/430-face library and its license payloads or fail packaging. It should not ship successfully with a missing font directory.
 
 **Audit coverage:** `FBL-009`, `FBL-035`.
-
