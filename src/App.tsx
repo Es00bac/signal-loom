@@ -232,9 +232,8 @@ import { getAcceptStringForAllImportableFormats } from './lib/mediaFormatRegistr
 import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
-import { deserializeSlppr } from './features/paper/SlpprFormat';
-import { paperAssetRepository } from './features/paper/assets/PaperAssetRuntime';
 import { usePaperStore } from './store/paperStore';
+import { openStandaloneSlpprDocument } from './lib/paperStandaloneDocumentOpen';
 import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
 import { useFlowWorkspaceStore } from './store/flowWorkspaceStore';
@@ -1364,6 +1363,48 @@ function FlowApp() {
     return true;
   }, [confirmStaleProjectReload, getProjectAuthorityClient]);
 
+  const openStandalonePaperDocument = useCallback(async (
+    bytes: Uint8Array,
+    path?: string,
+    options: { existingProjectTransition?: boolean } = {},
+  ): Promise<string> => {
+    const bridge = getSignalLoomNativeBridge();
+    let isProjectAuthorityCurrent: (() => boolean) | undefined;
+    if (bridge) {
+      const authorityClient = getProjectAuthorityClient();
+      const captured = authorityClient.getState();
+      if (captured.stale || !captured.claim) {
+        throw new Error(
+          captured.stale
+            ? `${describeProjectAuthorityBlock(captured)} Reload the current project before opening a Paper layout.`
+            : 'The desktop project is still starting. Wait for it to finish before opening a Paper layout.',
+        );
+      }
+      isProjectAuthorityCurrent = () => {
+        const current = authorityClient.getState();
+        return !current.stale
+          && current.claim?.authorityId === captured.claim?.authorityId
+          && current.claim?.version === captured.claim?.version;
+      };
+    }
+
+    const ownsTransition = !projectSwitchInProgressRef.current;
+    if (!ownsTransition && !options.existingProjectTransition) {
+      throw new Error('Another project or Paper open is still in progress. Retry when it finishes.');
+    }
+    if (ownsTransition) projectSwitchInProgressRef.current = true;
+    const endAuthorityTransition = ownsTransition ? beginProjectAuthorityTransition() : undefined;
+    try {
+      return await openStandaloneSlpprDocument(bytes, {
+        ...(path ? { path } : {}),
+        ...(isProjectAuthorityCurrent ? { isProjectAuthorityCurrent } : {}),
+      });
+    } finally {
+      endAuthorityTransition?.();
+      if (ownsTransition) projectSwitchInProgressRef.current = false;
+    }
+  }, [getProjectAuthorityClient]);
+
   // The Save option inside the Paper loss-prevention dialog must be a durable, authority-checked
   // project save: it uses the same claim-gated native write as File → Save, and acknowledges a
   // Paper tab as clean only when its exact submitted bytes reached disk.
@@ -1758,13 +1799,9 @@ function FlowApp() {
         try {
           const result = await bridge.openPaperDocumentFile();
           if (!result.canceled && result.bytes) {
-            const doc = await deserializeSlppr(new Uint8Array(result.bytes), paperAssetRepository);
             // A standalone .slppr opens as another Paper tab. The project's existing
             // layouts stay open and are saved together in the next .sloom snapshot.
-            await usePaperStore.getState().openDocumentJson(JSON.stringify(doc), {
-              source: 'standalone',
-              path: result.path,
-            });
+            await openStandalonePaperDocument(new Uint8Array(result.bytes), result.path);
           }
         } catch (error) {
           await showAlertDialog({
@@ -2185,6 +2222,7 @@ function FlowApp() {
     migrateAssetsToScratch,
     nativeScratchDirectoryPath,
     openSettings,
+    openStandalonePaperDocument,
     openWorkspaceView,
     pasteFlowClipboard,
     projectSaveBlockedByAuthority,
@@ -2267,8 +2305,7 @@ function FlowApp() {
       return;
     }
     if (kind === 'paper') {
-      const doc = await deserializeSlppr(bytes, paperAssetRepository);
-      await usePaperStore.getState().openDocumentJson(JSON.stringify(doc), { source: 'standalone' });
+      await openStandalonePaperDocument(bytes);
       setWorkspaceView('paper');
       return;
     }
@@ -2287,6 +2324,7 @@ function FlowApp() {
     setNativeProjectPath(undefined);
   }, [
     authorizeDirtyImageReplacement,
+    openStandalonePaperDocument,
     saveCurrentProjectForPaperLossPrevention,
     setWorkspaceView,
   ]);
@@ -2542,11 +2580,10 @@ function FlowApp() {
         });
         projectCommitPublished = false;
       },
-      applyPaper: async (bytes) => {
-        const doc = await deserializeSlppr(bytes, paperAssetRepository);
+      applyPaper: async (bytes, filePath) => {
         // A standalone .slppr opens as another Paper tab, exactly like paper:file-open; the
         // project's existing layouts stay open and save together in the next .sloom snapshot.
-        await usePaperStore.getState().openDocumentJson(JSON.stringify(doc));
+        await openStandalonePaperDocument(bytes, filePath, { existingProjectTransition: true });
         setWorkspaceView('paper');
       },
       onError: async ({ kind, message }) => {
@@ -2589,7 +2626,7 @@ function FlowApp() {
         }
       },
     });
-  }, [getProjectAuthorityClient, nativeStartupSettled, setNativeScratchDirectoryPath, setWorkspaceView]);
+  }, [getProjectAuthorityClient, nativeStartupSettled, openStandalonePaperDocument, setNativeScratchDirectoryPath, setWorkspaceView]);
 
   useEffect(() => {
     const bridge = getSignalLoomNativeBridge();

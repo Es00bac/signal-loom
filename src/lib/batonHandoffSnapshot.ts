@@ -255,13 +255,8 @@ export async function openPaperBatonHandoffItem(item: SourceBinLibraryItem): Pro
       if (response.ok) bytes = new Uint8Array(await response.arrayBuffer());
     }
     if (!bytes?.length) return false;
-    const [{ deserializeSlppr }, { paperAssetRepository }, { usePaperStore }] = await Promise.all([
-      import('../features/paper/SlpprFormat'),
-      import('../features/paper/assets/PaperAssetRuntime'),
-      import('../store/paperStore'),
-    ]);
-    const document = await deserializeSlppr(bytes, paperAssetRepository);
-    await usePaperStore.getState().openDocumentJson(JSON.stringify(document), { source: 'standalone' });
+    const { openStandaloneSlpprDocument } = await import('./paperStandaloneDocumentOpen');
+    await openStandaloneSlpprDocument(bytes);
     return true;
   } catch (error) {
     console.warn('[baton-handoff] Paper open failed:', error);

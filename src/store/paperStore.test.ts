@@ -812,7 +812,9 @@ describe('paperStore document tabs', () => {
     const imported = createDefaultPaperDocument({ title: 'Imported feature' });
     imported.id = first.id;
 
-    const openedId = await usePaperStore.getState().openDocumentJson(JSON.stringify(imported));
+    const openedId = usePaperStore.getState().openDocumentJson(JSON.stringify(imported), {
+      authorization: capturePaperWorkspaceAuthorization(),
+    });
 
     expect(usePaperStore.getState().documents).toHaveLength(2);
     expect(openedId).not.toBe(first.id);
@@ -940,9 +942,13 @@ describe('paperStore document tabs', () => {
     expect(paperDirtyActions().isDocumentDirty()).toBe(true);
 
     const imported = createDefaultPaperDocument({ title: 'Imported standalone' });
-    const importedId = await usePaperStore.getState().openDocumentJson(
+    const importedId = usePaperStore.getState().openDocumentJson(
       JSON.stringify(imported),
-      { source: 'standalone', path: '/layouts/imported.slppr' } as never,
+      {
+        authorization: capturePaperWorkspaceAuthorization(),
+        source: 'standalone',
+        path: '/layouts/imported.slppr',
+      },
     );
     expect(paperDirtyActions().isDocumentDirty(importedId)).toBe(false);
 
@@ -1122,7 +1128,9 @@ describe('paperStore per-document undo/redo ownership', () => {
 
     const imported = createDefaultPaperDocument({ title: 'Reused tab' });
     imported.id = 'reused-tab';
-    const openedId = await usePaperStore.getState().openDocumentJson(JSON.stringify(imported));
+    const openedId = usePaperStore.getState().openDocumentJson(JSON.stringify(imported), {
+      authorization: capturePaperWorkspaceAuthorization(),
+    });
     expect(openedId).toBe('reused-tab');
     usePaperStore.getState().addFrame('text', { id: 'reused-frame', text: 'Reused copy' });
 
@@ -1133,7 +1141,9 @@ describe('paperStore per-document undo/redo ownership', () => {
 
     const reopened = createDefaultPaperDocument({ title: 'Reused tab again' });
     reopened.id = 'reused-tab';
-    const reopenedId = await usePaperStore.getState().openDocumentJson(JSON.stringify(reopened));
+    const reopenedId = usePaperStore.getState().openDocumentJson(JSON.stringify(reopened), {
+      authorization: capturePaperWorkspaceAuthorization(),
+    });
     expect(reopenedId).toBe('reused-tab');
     expect(usePaperStore.getState().undoStack).toHaveLength(0);
     expect(storedHistoryIds()).not.toContain('reused-tab');

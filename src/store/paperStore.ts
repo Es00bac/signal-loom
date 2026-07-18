@@ -156,8 +156,12 @@ interface PaperActions {
   createNewDocument: (options?: { title?: string; preset?: PaperPagePreset; dpi?: number }) => void;
   openDocumentJson: (
     json: string,
-    options?: { source?: 'standalone' | 'project'; path?: string },
-  ) => Promise<string>;
+    options: {
+      authorization: PaperWorkspaceAuthorization;
+      source?: 'standalone' | 'project';
+      path?: string;
+    },
+  ) => string | undefined;
   importDocumentJson: (json: string) => Promise<void>;
   replaceDocument: (
     documentId: string,
@@ -499,12 +503,15 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         });
       },
 
-      openDocumentJson: async (json, options) => {
-        const rawDocument = JSON.parse(json) as PaperDocument;
-        const migratedDocument = await migrateLegacyPaperBinaryFields(rawDocument, paperAssetRepository);
-        const document = parsePaperDocument(JSON.stringify(migratedDocument));
+      openDocumentJson: (json, options) => {
+        // Standalone package decoding/migration is prepared outside this synchronous commit. The
+        // exact workspace authorization prevents a delayed open from appending to a newer project
+        // or tab catalog; no callback/await may be inserted between this check and set().
+        const document = parsePaperDocument(json);
         const state = get();
+        if (!isPaperWorkspaceAuthorizationCurrentForState(options.authorization, state)) return undefined;
         const documentId = makeUniquePaperDocumentTabId(document.id, state.documents);
+        const documentInstanceId = makePaperRuntimeId('paper-tab-instance');
         const source = options?.source ?? 'standalone';
         const workspaceDocument = createPaperWorkspaceDocumentSnapshot(documentId, document, {
           persistence: source === 'standalone'
@@ -518,16 +525,29 @@ export const usePaperStore = create<PaperState & PaperActions>()(
                 savedFingerprint: fingerprintPaperAuthoredContent(document),
               },
         });
-        set({
+        const nextState = {
           documents: [...syncActivePaperDocument(state), workspaceDocument],
           documentInstanceIds: {
             ...state.documentInstanceIds,
-            [documentId]: makePaperRuntimeId('paper-tab-instance'),
+            [documentId]: documentInstanceId,
           },
           activeDocumentId: documentId,
           ...paperStatePatchFromWorkspaceSnapshot(workspaceDocument),
           ...freshPaperDocumentHistoryPatch(stashActivePaperDocumentHistory(state), documentId),
-        });
+        };
+        try {
+          set(nextState);
+        } catch (error) {
+          // Zustand assigns state before notifying subscribers. A bad observer must not turn a
+          // committed tab into an apparent failure that makes the outer transaction remove its
+          // managed records. Re-throw only when the state assignment itself did not land.
+          const current = get();
+          if (current.activeDocumentId !== documentId
+            || current.documentInstanceIds[documentId] !== documentInstanceId
+            || !current.documents.some((candidate) => candidate.id === documentId)) {
+            throw error;
+          }
+        }
         return documentId;
       },
 

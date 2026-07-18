@@ -57,7 +57,7 @@ describe('desktop external-open wiring guards', () => {
     expect(appSource).toMatch(/onProjectCommitted[\s\S]{0,500}setNativeProjectPath\(result\.filePath\);[\s\S]{0,500}adoptSnapshot\(\{[\s\S]{0,200}authority: transition\.authority/);
     expect(appSource).toContain('beginProjectAuthorityTransition()');
     // Paper entries reuse the canonical .slppr import transaction and land in the Paper workspace.
-    expect(appSource).toMatch(/applyPaper[\s\S]{0,700}deserializeSlppr\(bytes, paperAssetRepository\)[\s\S]{0,300}openDocumentJson\(JSON\.stringify\(doc\)\)[\s\S]{0,200}setWorkspaceView\('paper'\);/);
+    expect(appSource).toMatch(/applyPaper[\s\S]{0,500}openStandalonePaperDocument\(bytes, filePath, \{ existingProjectTransition: true \}\)[\s\S]{0,200}setWorkspaceView\('paper'\);/);
     // The consumer must wait for the startup restore to settle so external opens win the race.
     expect(appSource).toMatch(/nativeStartupSettled/);
   });
