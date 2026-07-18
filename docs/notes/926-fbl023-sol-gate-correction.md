@@ -102,3 +102,76 @@ Verification at `cae987e7a4899eb2e2359094ea1d69fc96b7175c`:
 - `git diff --check` and `git diff --cached --check`: clean.
 
 All red reproductions were promoted directly into permanent tests; no disposable probe remains. A fresh different-model final gate is mandatory.
+
+## Inline-newline and kerning-fallback author correction — 2026-07-17
+
+Two independently reproduced blockers remained at exact clean evidence HEAD
+`d35c29f69091278a526d3910287d6ba82e84be8f`. This is bounded author work and does
+not supersede the required independent verdict.
+
+**Production + permanent regressions:** `f90bd44c4a8e30b41f8073a3155049ba84dbaec7`
+
+### Source/derived contract
+
+- Flatten coordinates remain half-open offsets into runs plus only the single
+  delimiters inserted between structural paragraphs.
+- `slicePaperRichTextRange` now selects the original paragraph spans. Newlines
+  authored inside a run stay inside that run with its id, typography, emphasis,
+  link, and paragraph ownership; only gaps between structural spans create
+  render fragments.
+- Exact `[1,5)` slicing of bold `A\nB` followed by italic `C` now flattens to
+  `\nB\nC`, not `\nC\nC`. Direct and threaded tests prove conservation,
+  rich/plain parity, style ownership, source identity, and no mutation.
+- Initial, terminal, consecutive blank paragraphs and list-prefix coordinates
+  remain exact. Three adversarial fixtures (inline edges, consecutive blanks,
+  and mixed list prefixes) exhaustively conserved every possible half-open
+  range.
+
+### Canvas fallback contract
+
+- Native `fontKerning`, `fontStretch`, and `fontVariationSettings` capabilities
+  are captured before any assignment. Unsupported requested properties use the
+  exact CSS probe path, so assigning to an extensible context cannot manufacture
+  false kerning support.
+- CSS widths use a per-measurer 128-entry LRU keyed by text, fallback mode,
+  family, size, weight, style, stretch, sorted variation settings, kerning,
+  tracking, and observable font state. Identical measurements reuse a result;
+  metric changes cannot collide; document or `FontFaceSet` lifecycle changes
+  invalidate the cache.
+- Each miss appends one hidden probe and removes it in `finally`; the cache has
+  no document listeners, cross-measurer global state, or persistent DOM node.
+
+### Exact red evidence before production edits
+
+At `d35c29f69091278a526d3910287d6ba82e84be8f`, after adding only the permanent
+tests:
+
+`npx vitest run src/lib/paperRichText.test.ts src/lib/paperThreadFlow.test.ts src/lib/paperCanvasMeasurer.test.ts`
+
+- **3 files failed; 4 failed / 53 passed (57 total).**
+- Direct rich slice returned `\nC\nC` instead of `\nB\nC`.
+- Threaded rich slice returned `A\nC\nC` instead of `A\nB\nC`.
+- The extensible no-kerning context returned Canvas width `249.75` instead of
+  CSS width `11` and created the false property.
+- The fallback cache regression observed zero CSS layouts because the expando
+  bypassed fallback.
+
+### Green verification
+
+- Focused FBL-023 plus canvas set: **6 files, 112 passed**.
+- Documented Paper-neighbor matrix: **17 files, 262 passed**.
+- `videoTextFlow` plus canvas compatibility: **2 files, 22 passed**.
+- `npx tsc -b --force --pretty false`: exit 0, no diagnostics.
+- ESLint over all five touched production/test files: exit 0, no warnings or
+  errors.
+- `git diff --check` and staged/cached diff checks: clean.
+- Production/test commit contains exactly five files; no disposable or untracked
+  artifact remains.
+
+### Residual risk and review status
+
+CSS fallback widths remain platform-dependent on the active browser text engine
+and loaded font bytes; the correction makes that live CSS path authoritative and
+bounded rather than approximating unsupported metrics in Canvas. A fresh Terra
+Context Cartographer gate against the final clean lineage remains mandatory. No
+approval, integration, or FBL-023 closure is claimed here.
