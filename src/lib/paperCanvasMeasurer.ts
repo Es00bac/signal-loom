@@ -1,69 +1,243 @@
-import { PAPER_SCREEN_PX_PER_MM } from './paperLayoutTools';
 import { formatFontFamily } from './formatFontFamily';
+import { PAPER_SCREEN_PX_PER_MM } from './paperLayoutTools';
 import type { PaperTextMeasurer } from './paperTextFlow';
 
 const PT_TO_PX = 96 / 72;
+const CSS_MEASUREMENT_CACHE_LIMIT = 128;
+const NAMED_STRETCH_VALUES = new Set([
+  'ultra-condensed',
+  'extra-condensed',
+  'condensed',
+  'semi-condensed',
+  'normal',
+  'semi-expanded',
+  'expanded',
+  'extra-expanded',
+  'ultra-expanded',
+]);
 
 type ExtendedCanvasTextContext = CanvasRenderingContext2D & {
   fontStretch?: string;
   fontVariationSettings?: string;
 };
 
+type CanvasTextProperty = 'fontKerning' | 'fontStretch' | 'fontVariationSettings';
+
 interface CanvasTextPropertySupport {
-  fontKerning: boolean;
-  fontStretch: boolean;
-  fontVariationSettings: boolean;
+  fontKerning: boolean | undefined;
+  fontStretch: boolean | undefined;
+  fontVariationSettings: boolean | undefined;
 }
 
-const CSS_MEASUREMENT_CACHE_LIMIT = 128;
+interface NormalizedRequestedValue {
+  css: string;
+  identity: string;
+  valid: boolean;
+}
 
-function variationSettingsCss(settings: Record<string, number> | undefined): string {
-  const entries = Object.entries(settings ?? {})
-    .filter(([tag, value]) => /^[ -~]{4}$/.test(tag) && Number.isFinite(value))
-    .sort(([left], [right]) => left.localeCompare(right));
-  return entries.length > 0
-    ? entries.map(([tag, value]) => `"${tag}" ${value}`).join(', ')
-    : 'normal';
+interface ObservedFontState {
+  available: boolean | undefined;
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function safePxPerMm(value: number): number {
+  const resolved = finiteNumber(value, PAPER_SCREEN_PX_PER_MM);
+  return resolved > 0 ? resolved : PAPER_SCREEN_PX_PER_MM > 0 ? PAPER_SCREEN_PX_PER_MM : 1;
+}
+
+function finiteWidth(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : Math.max(0, finiteNumber(fallback, 0));
+}
+
+function currentDocument(): Document | undefined {
+  try {
+    return typeof document === 'undefined' ? undefined : document;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeFontFamily(fontFamily: unknown): string {
+  try {
+    return formatFontFamily(typeof fontFamily === 'string' && fontFamily.trim() ? fontFamily : 'sans-serif');
+  } catch {
+    return 'sans-serif';
+  }
+}
+
+function safeString(value: unknown, fallback: string): string {
+  try {
+    return typeof value === 'string' && value ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeStretch(value: unknown): NormalizedRequestedValue {
+  if (value == null) return { css: 'normal', identity: 'default:normal', valid: true };
+  if (typeof value !== 'string') return { css: 'normal', identity: `invalid:${typeof value}`, valid: false };
+  const trimmed = value.trim().toLowerCase();
+  if (NAMED_STRETCH_VALUES.has(trimmed)) return { css: trimmed, identity: `named:${trimmed}`, valid: true };
+  const percentage = /^([+]?(?:\d+(?:\.\d*)?|\.\d+))%$/.exec(trimmed);
+  if (percentage && Number.isFinite(Number(percentage[1])) && Number(percentage[1]) > 0) {
+    return { css: trimmed, identity: `percentage:${trimmed}`, valid: true };
+  }
+  return { css: 'normal', identity: `invalid:${trimmed}`, valid: false };
+}
+
+function normalizeKerning(value: unknown): NormalizedRequestedValue {
+  if (value == null) return { css: 'auto', identity: 'default:auto', valid: true };
+  if (value === 'auto' || value === 'normal' || value === 'none') {
+    return { css: value, identity: `named:${value}`, valid: true };
+  }
+  return { css: 'auto', identity: `invalid:${safeString(value, typeof value)}`, valid: false };
+}
+
+function normalizeVariationSettings(value: unknown): NormalizedRequestedValue {
+  if (value == null) return { css: 'normal', identity: 'default:normal', valid: true };
+  let entries: Array<[string, unknown]>;
+  try {
+    if (typeof value !== 'object') {
+      return { css: 'normal', identity: `invalid:${typeof value}`, valid: false };
+    }
+    entries = Object.entries(value as Record<string, unknown>);
+  } catch {
+    return { css: 'normal', identity: 'invalid:unreadable', valid: false };
+  }
+
+  let valid = true;
+  const accepted: Array<[string, number]> = [];
+  const identity: string[] = [];
+  for (const [tag, coordinate] of entries) {
+    const coordinateIdentity = typeof coordinate === 'number'
+      ? Number.isNaN(coordinate) ? 'NaN' : String(coordinate)
+      : `${typeof coordinate}:${safeString(coordinate, '')}`;
+    identity.push(`${JSON.stringify(tag)}=${coordinateIdentity}`);
+    if (!/^[\x20-\x7e]{4}$/.test(tag) || typeof coordinate !== 'number' || !Number.isFinite(coordinate)) {
+      valid = false;
+      continue;
+    }
+    accepted.push([tag, coordinate]);
+  }
+  accepted.sort(([left], [right]) => left.localeCompare(right));
+  identity.sort();
+  return {
+    css: accepted.length > 0
+      ? accepted.map(([tag, coordinate]) => `${JSON.stringify(tag)} ${coordinate}`).join(', ')
+      : 'normal',
+    identity: `entries:${identity.join('|')}`,
+    valid,
+  };
+}
+
+function safePropertyPresence(target: object, property: CanvasTextProperty): boolean | undefined {
+  try {
+    return property in target;
+  } catch {
+    return undefined;
+  }
+}
+
+function verifyNativeProperty(
+  context: ExtendedCanvasTextContext,
+  property: CanvasTextProperty,
+  requestedValue: string,
+  alternateValue: string,
+): boolean {
+  try {
+    if (!Reflect.set(context, property, alternateValue)) return false;
+    if (Reflect.get(context, property) !== alternateValue) return false;
+    if (!Reflect.set(context, property, requestedValue)) return false;
+    return Reflect.get(context, property) === requestedValue;
+  } catch {
+    return false;
+  }
+}
+
+function safeRemoveProbe(probe: HTMLElement, body: HTMLElement): void {
+  try {
+    probe.remove();
+    return;
+  } catch {
+    // Some DOM adapters expose remove() but throw. Fall through to the owning body without masking failures.
+  }
+  try {
+    body.removeChild(probe);
+  } catch {
+    // Cleanup is best-effort because a platform cleanup failure must not replace the deterministic fallback.
+  }
 }
 
 function measureWithCssProbe(
   ownerDocument: Document,
   text: string,
-  spec: Parameters<PaperTextMeasurer>[1],
+  style: {
+    fontFamily: string;
+    fontSizePx: number;
+    fontWeight: string;
+    fontStyle: string;
+    fontStretch: string;
+    fontVariationSettings: string;
+    fontKerning: string;
+    tracking: number;
+  },
 ): number | undefined {
-  if (!ownerDocument.body) return undefined;
-  const probe = ownerDocument.createElement('span');
-  if (!probe.style || typeof probe.getBoundingClientRect !== 'function') return undefined;
-  probe.textContent = text;
-  Object.assign(probe.style, {
-    position: 'absolute',
-    visibility: 'hidden',
-    pointerEvents: 'none',
-    whiteSpace: 'pre',
-    left: '-100000px',
-    top: '0',
-    fontFamily: formatFontFamily(spec.fontFamily),
-    fontSize: `${spec.fontSizePt * PT_TO_PX}px`,
-    fontWeight: spec.fontWeight ?? '400',
-    fontStyle: spec.fontStyle ?? 'normal',
-    fontStretch: spec.fontStretch ?? 'normal',
-    fontVariationSettings: variationSettingsCss(spec.fontVariationSettings),
-    fontKerning: spec.fontKerning ?? 'auto',
-    letterSpacing: `${(spec.tracking ?? 0) / 1000}em`,
-  });
-  ownerDocument.body.appendChild(probe);
+  let body: HTMLElement;
+  let probe: HTMLElement | undefined;
+  try {
+    body = ownerDocument.body;
+    if (!body) return undefined;
+    probe = ownerDocument.createElement('span');
+    if (!probe.style || typeof probe.getBoundingClientRect !== 'function') return undefined;
+    probe.textContent = text;
+    Object.assign(probe.style, {
+      position: 'absolute',
+      visibility: 'hidden',
+      pointerEvents: 'none',
+      whiteSpace: 'pre',
+      left: '-100000px',
+      top: '0',
+      fontFamily: style.fontFamily,
+      fontSize: `${style.fontSizePx}px`,
+      fontWeight: style.fontWeight,
+      fontStyle: style.fontStyle,
+      fontStretch: style.fontStretch,
+      fontVariationSettings: style.fontVariationSettings,
+      fontKerning: style.fontKerning,
+      letterSpacing: `${style.tracking / 1000}em`,
+    });
+  } catch {
+    if (probe && body!) safeRemoveProbe(probe, body);
+    return undefined;
+  }
+
+  try {
+    body.appendChild(probe);
+  } catch {
+    // appendChild can throw after an adapter has linked the node. Always attempt cleanup in that case too.
+    safeRemoveProbe(probe, body);
+    return undefined;
+  }
+
   try {
     const width = probe.getBoundingClientRect().width;
     return Number.isFinite(width) && width >= 0 ? width : undefined;
+  } catch {
+    return undefined;
   } finally {
-    probe.remove();
+    safeRemoveProbe(probe, body);
   }
 }
 
 /**
  * A `PaperTextMeasurer` backed by a shared 2D canvas context, returning text widths in mm at the
  * unzoomed screen scale (matching the renderer's `fontSizePt * 96/72` px sizing). Falls back to a
- * rough average-character estimate where no canvas is available (headless / SSR).
+ * rough average-character estimate where no exact platform measurement is safely observable.
  */
 export function createPaperCanvasMeasurer(pxPerMm = PAPER_SCREEN_PX_PER_MM): PaperTextMeasurer {
   let context: CanvasRenderingContext2D | null | undefined;
@@ -75,68 +249,64 @@ export function createPaperCanvasMeasurer(pxPerMm = PAPER_SCREEN_PX_PER_MM): Pap
   let cachedFontsStatus: FontFaceSetLoadStatus | undefined;
   let cachedFontsSize: number | undefined;
   let fontStateEpoch = 0;
+  const unitsPerMm = safePxPerMm(pxPerMm);
 
-  const getContext = (): CanvasRenderingContext2D | null => {
-    const currentDocument = typeof document === 'undefined' ? undefined : document;
-    if (currentDocument !== contextDocument) {
-      contextDocument = currentDocument;
-      context = undefined;
-      propertySupport = undefined;
-      cssMeasurementCache.clear();
-      cachedFontSet = undefined;
-      cachedFontsReady = undefined;
-      cachedFontsStatus = undefined;
-      cachedFontsSize = undefined;
-      fontStateEpoch += 1;
-    }
-    if (context !== undefined) {
-      return context;
-    }
-    context = currentDocument ? currentDocument.createElement('canvas').getContext('2d') : null;
-    if (context) {
-      const extended = context as ExtendedCanvasTextContext;
-      // Capture capabilities before writing anything. Extensible mocks and older browser contexts accept
-      // arbitrary expandos, so assign-then-check would falsely manufacture support.
-      propertySupport = {
-        fontKerning: 'fontKerning' in extended,
-        fontStretch: 'fontStretch' in extended,
-        fontVariationSettings: 'fontVariationSettings' in extended,
-      };
-    }
-    return context;
+  const clearFontState = (): void => {
+    cssMeasurementCache.clear();
+    cachedFontSet = undefined;
+    cachedFontsReady = undefined;
+    cachedFontsStatus = undefined;
+    cachedFontsSize = undefined;
+    fontStateEpoch += 1;
   };
 
-  return (text, spec) => {
-    const fontSizePx = spec.fontSizePt * PT_TO_PX;
-    const trackingPx = Math.max(0, text.length - 1) * ((spec.tracking ?? 0) / 1000) * fontSizePx;
-    const ctx = getContext();
-    if (!ctx) {
-      return (text.length * fontSizePx * 0.5 + trackingPx) / pxPerMm;
+  const getContext = (): CanvasRenderingContext2D | null => {
+    const ownerDocument = currentDocument();
+    if (ownerDocument !== contextDocument) {
+      contextDocument = ownerDocument;
+      context = undefined;
+      propertySupport = undefined;
+      clearFontState();
     }
-    const extended = ctx as ExtendedCanvasTextContext;
-    const stylePrefix = spec.fontStyle && spec.fontStyle !== 'normal' ? `${spec.fontStyle} ` : '';
-    const stretch = spec.fontStretch ?? 'normal';
-    const stretchPrefix = spec.fontStretch ? `${spec.fontStretch} ` : '';
-    ctx.font = `${stylePrefix}${spec.fontWeight ?? 400} ${stretchPrefix}${fontSizePx}px ${formatFontFamily(spec.fontFamily)}`;
-    if (propertySupport?.fontKerning) extended.fontKerning = spec.fontKerning ?? 'auto';
-    if (propertySupport?.fontStretch) Reflect.set(extended, 'fontStretch', stretch);
-    if (propertySupport?.fontVariationSettings) {
-      extended.fontVariationSettings = variationSettingsCss(spec.fontVariationSettings);
+    if (context) return context;
+    if (!ownerDocument) {
+      context = null;
+      return null;
     }
+    try {
+      context = ownerDocument.createElement('canvas').getContext('2d');
+      if (context) {
+        const extended = context as ExtendedCanvasTextContext;
+        propertySupport = {
+          fontKerning: safePropertyPresence(extended, 'fontKerning'),
+          fontStretch: safePropertyPresence(extended, 'fontStretch'),
+          fontVariationSettings: safePropertyPresence(extended, 'fontVariationSettings'),
+        };
+      }
+      return context;
+    } catch {
+      // Do not cache transient platform exceptions; a later healthy call must get a fresh context attempt.
+      context = undefined;
+      propertySupport = undefined;
+      return null;
+    }
+  };
 
-    // Canvas exposes kerning/stretch in current Chromium, but arbitrary variable-font axes are not universal.
-    // When any requested property is unavailable, measure one detached CSS span with the exact live-paint
-    // properties rather than pretending the unsupported canvas state affected glyph advances.
-    const unsupportedProperties = [
-      spec.fontStretch != null && !propertySupport?.fontStretch ? 'stretch' : '',
-      spec.fontVariationSettings != null && !propertySupport?.fontVariationSettings ? 'variation' : '',
-      spec.fontKerning != null && !propertySupport?.fontKerning ? 'kerning' : '',
-    ].filter(Boolean);
-    if (unsupportedProperties.length > 0 && contextDocument) {
-      const fontSet = contextDocument.fonts;
+  const observeFontState = (
+    ownerDocument: Document,
+    fontQuery: string,
+    text: string,
+  ): ObservedFontState | undefined => {
+    try {
+      const fontSet = ownerDocument.fonts;
       const fontsReady = fontSet?.ready;
       const fontsStatus = fontSet?.status;
       const fontsSize = fontSet?.size;
+      let available: boolean | undefined;
+      if (fontSet) {
+        const check = fontSet.check;
+        available = typeof check === 'function' ? check.call(fontSet, fontQuery, text) : undefined;
+      }
       if (fontSet !== cachedFontSet || fontsReady !== cachedFontsReady
         || fontsStatus !== cachedFontsStatus || fontsSize !== cachedFontsSize) {
         cssMeasurementCache.clear();
@@ -146,45 +316,138 @@ export function createPaperCanvasMeasurer(pxPerMm = PAPER_SCREEN_PX_PER_MM): Pap
         cachedFontsSize = fontsSize;
         fontStateEpoch += 1;
       }
-      let fontAvailable: boolean | undefined;
-      try {
-        fontAvailable = fontSet?.check(
-          `${spec.fontStyle ?? 'normal'} ${spec.fontWeight ?? '400'} ${stretch} ${fontSizePx}px ${formatFontFamily(spec.fontFamily)}`,
-          text,
-        );
-      } catch {
-        fontAvailable = undefined;
+      return { available };
+    } catch {
+      // No cache entry is trustworthy while font lifecycle state cannot be observed.
+      clearFontState();
+      return undefined;
+    }
+  };
+
+  return (text, spec) => {
+    const safeText = typeof text === 'string' ? text : '';
+    const fontSizePt = Math.max(0, finiteNumber(spec.fontSizePt, 0));
+    const fontSizePx = fontSizePt * PT_TO_PX;
+    const tracking = finiteNumber(spec.tracking, 0);
+    const trackingPx = Math.max(0, safeText.length - 1) * (tracking / 1000) * fontSizePx;
+    const approximatePx = Math.max(0, safeText.length * fontSizePx * 0.5 + trackingPx);
+    const approximateMm = finiteWidth(approximatePx / unitsPerMm, 0);
+    const ctx = getContext();
+    if (!ctx) return approximateMm;
+
+    const fontFamily = safeFontFamily(spec.fontFamily);
+    const fontWeight = safeString(spec.fontWeight, '400');
+    const fontStyle = safeString(spec.fontStyle, 'normal');
+    const stretch = normalizeStretch(spec.fontStretch);
+    const variation = normalizeVariationSettings(spec.fontVariationSettings);
+    const kerning = normalizeKerning(spec.fontKerning);
+    const fallbackModes: string[] = [];
+    const extended = ctx as ExtendedCanvasTextContext;
+    const stylePrefix = fontStyle !== 'normal' ? `${fontStyle} ` : '';
+    const stretchPrefix = spec.fontStretch != null ? `${stretch.css} ` : '';
+    try {
+      ctx.font = `${stylePrefix}${fontWeight} ${stretchPrefix}${fontSizePx}px ${fontFamily}`;
+    } catch {
+      fallbackModes.push('font-shorthand-exception');
+    }
+
+    if (!stretch.valid) {
+      fallbackModes.push('stretch-invalid');
+    } else if (stretch.identity.startsWith('percentage:')) {
+      // Canvas exposes named stretch values on the shipping DOM surface. A reflected percentage assignment is
+      // not sufficient proof that it affected glyph advances, so percentage requests stay on exact CSS layout.
+      fallbackModes.push('stretch-percentage-css');
+    } else if (propertySupport?.fontStretch === true) {
+      if (!verifyNativeProperty(extended, 'fontStretch', stretch.css, stretch.css === 'normal' ? 'condensed' : 'normal')) {
+        fallbackModes.push('stretch-rejected');
       }
+    } else if (spec.fontStretch != null || propertySupport?.fontStretch === undefined) {
+      fallbackModes.push(propertySupport?.fontStretch === undefined ? 'stretch-unobservable' : 'stretch-missing');
+    }
+
+    if (!variation.valid) {
+      fallbackModes.push('variation-invalid');
+    } else if (propertySupport?.fontVariationSettings === true) {
+      if (!verifyNativeProperty(
+        extended,
+        'fontVariationSettings',
+        variation.css,
+        variation.css === 'normal' ? '"wght" 123' : 'normal',
+      )) {
+        fallbackModes.push('variation-rejected');
+      }
+    } else if (spec.fontVariationSettings != null || propertySupport?.fontVariationSettings === undefined) {
+      fallbackModes.push(propertySupport?.fontVariationSettings === undefined ? 'variation-unobservable' : 'variation-missing');
+    }
+
+    if (!kerning.valid) {
+      fallbackModes.push('kerning-invalid');
+    } else if (propertySupport?.fontKerning === true) {
+      if (!verifyNativeProperty(
+        extended,
+        'fontKerning',
+        kerning.css,
+        kerning.css === 'none' ? 'normal' : 'none',
+      )) {
+        fallbackModes.push('kerning-rejected');
+      }
+    } else if (spec.fontKerning != null || propertySupport?.fontKerning === undefined) {
+      fallbackModes.push(propertySupport?.fontKerning === undefined ? 'kerning-unobservable' : 'kerning-missing');
+    }
+
+    if (fallbackModes.length > 0 && contextDocument) {
+      const fontQuery = `${fontStyle} ${fontWeight} ${stretch.css} ${fontSizePx}px ${fontFamily}`;
+      const fontState = observeFontState(contextDocument, fontQuery, safeText);
+      if (!fontState) return approximateMm;
       const cssKey = JSON.stringify([
-        unsupportedProperties.join(','),
+        fallbackModes.join(','),
         fontStateEpoch,
-        fontAvailable,
-        text,
-        formatFontFamily(spec.fontFamily),
+        fontState.available,
+        safeText,
+        fontFamily,
         fontSizePx,
-        spec.fontWeight ?? '400',
-        spec.fontStyle ?? 'normal',
-        stretch,
-        variationSettingsCss(spec.fontVariationSettings),
-        spec.fontKerning ?? 'auto',
-        spec.tracking ?? 0,
+        fontWeight,
+        fontStyle,
+        stretch.identity,
+        stretch.css,
+        variation.identity,
+        variation.css,
+        kerning.identity,
+        kerning.css,
+        tracking,
       ]);
       const cachedWidth = cssMeasurementCache.get(cssKey);
       if (cachedWidth != null) {
         cssMeasurementCache.delete(cssKey);
         cssMeasurementCache.set(cssKey, cachedWidth);
-        return cachedWidth / pxPerMm;
+        return finiteWidth(cachedWidth / unitsPerMm, approximateMm);
       }
-      const cssWidth = measureWithCssProbe(contextDocument, text, spec);
+      const cssWidth = measureWithCssProbe(contextDocument, safeText, {
+        fontFamily,
+        fontSizePx,
+        fontWeight,
+        fontStyle,
+        fontStretch: stretch.css,
+        fontVariationSettings: variation.css,
+        fontKerning: kerning.css,
+        tracking,
+      });
       if (cssWidth != null) {
         if (cssMeasurementCache.size >= CSS_MEASUREMENT_CACHE_LIMIT) {
           const oldestKey = cssMeasurementCache.keys().next().value;
           if (oldestKey != null) cssMeasurementCache.delete(oldestKey);
         }
         cssMeasurementCache.set(cssKey, cssWidth);
+        return finiteWidth(cssWidth / unitsPerMm, approximateMm);
       }
-      if (cssWidth != null) return cssWidth / pxPerMm;
+      return approximateMm;
     }
-    return (ctx.measureText(text).width + trackingPx) / pxPerMm;
+
+    try {
+      const measured = ctx.measureText(safeText).width + trackingPx;
+      return finiteWidth(measured / unitsPerMm, approximateMm);
+    } catch {
+      return approximateMm;
+    }
   };
 }

@@ -24,14 +24,14 @@ describe('createPaperCanvasMeasurer rich width metrics', () => {
       align: 'left',
       fontWeight: '620',
       fontStyle: 'oblique 12deg',
-      fontStretch: '87.5%',
+      fontStretch: 'condensed',
       fontVariationSettings: { wght: 620, wdth: 87.5 },
       fontKerning: 'none',
     });
 
     expect(width).toBe(6);
-    expect(context.font).toContain('oblique 12deg 620 87.5% 16px "M PLUS 1", Inter, sans-serif');
-    expect(context.fontStretch).toBe('87.5%');
+    expect(context.font).toContain('oblique 12deg 620 condensed 16px "M PLUS 1", Inter, sans-serif');
+    expect(context.fontStretch).toBe('condensed');
     expect(context.fontVariationSettings).toBe('"wdth" 87.5, "wght" 620');
     expect(context.fontKerning).toBe('none');
   });
@@ -199,5 +199,244 @@ describe('createPaperCanvasMeasurer rich width metrics', () => {
     fonts.ready = Promise.resolve(undefined);
     expect(measureCss('same', spec)).toBe(20);
     expect(layouts).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses CSS when a present canvas stretch property rejects the requested percentage', () => {
+    let acceptedStretch = 'normal';
+    const context = {
+      font: '',
+      measureText: vi.fn(() => ({ width: 400 })),
+    };
+    Object.defineProperty(context, 'fontStretch', {
+      configurable: true,
+      get: () => acceptedStretch,
+      set: (value: string) => {
+        if (value === 'normal' || value === 'condensed') acceptedStretch = value;
+      },
+    });
+    const layouts = vi.fn(() => ({ width: 50 }));
+    const probe = {
+      style: {} as Record<string, string>,
+      textContent: '',
+      getBoundingClientRect: layouts,
+      remove: vi.fn(),
+    };
+    vi.stubGlobal('document', {
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn((tag: string) => tag === 'canvas' ? { getContext: () => context } : probe),
+    });
+
+    const width = createPaperCanvasMeasurer(5)('percentage', {
+      fontFamily: 'Stretch Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left',
+      fontStretch: '82.5%',
+    });
+
+    expect(width).toBe(10);
+    expect(context.measureText).not.toHaveBeenCalled();
+    expect(layouts).toHaveBeenCalledOnce();
+    expect(probe.style.fontStretch).toBe('82.5%');
+    expect(probe.remove).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a verifiably accepted named stretch on canvas while identical percentage requests hit CSS cache', () => {
+    let acceptedStretch = 'normal';
+    const context = {
+      font: '',
+      measureText: vi.fn(() => ({ width: 30 })),
+    };
+    Object.defineProperty(context, 'fontStretch', {
+      configurable: true,
+      get: () => acceptedStretch,
+      set: (value: string) => {
+        if (['normal', 'condensed', 'expanded'].includes(value)) acceptedStretch = value;
+      },
+    });
+    const layouts = vi.fn(() => ({ width: 45 }));
+    const appendChild = vi.fn();
+    vi.stubGlobal('document', {
+      body: { appendChild },
+      createElement: vi.fn((tag: string) => tag === 'canvas'
+        ? { getContext: () => context }
+        : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+    });
+    const measure = createPaperCanvasMeasurer(5);
+    const base = {
+      fontFamily: 'Stretch Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left' as const,
+    };
+
+    expect(measure('named', { ...base, fontStretch: 'condensed' })).toBe(6);
+    expect(context.measureText).toHaveBeenCalledOnce();
+    expect(appendChild).not.toHaveBeenCalled();
+
+    expect(measure('percentage', { ...base, fontStretch: '82.5%' })).toBe(9);
+    expect(measure('percentage', { ...base, fontStretch: '82.5%' })).toBe(9);
+    expect(layouts).toHaveBeenCalledOnce();
+    expect(appendChild).toHaveBeenCalledOnce();
+  });
+
+  it('falls back from rejected variation and kerning requests instead of measuring stale canvas state', () => {
+    let acceptedVariation = '"wght" 900';
+    let acceptedKerning = 'normal';
+    const context = {
+      font: '',
+      fontStretch: 'normal',
+      measureText: vi.fn(() => ({ width: 500 })),
+    };
+    Object.defineProperties(context, {
+      fontVariationSettings: {
+        configurable: true,
+        get: () => acceptedVariation,
+        set: (value: string) => {
+          if (value === 'normal') acceptedVariation = value;
+        },
+      },
+      fontKerning: {
+        configurable: true,
+        get: () => acceptedKerning,
+        set: (value: string) => {
+          if (value === 'auto' || value === 'normal') acceptedKerning = value;
+        },
+      },
+    });
+    const layouts = vi.fn(() => ({ width: 55 }));
+    vi.stubGlobal('document', {
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn((tag: string) => tag === 'canvas'
+        ? { getContext: () => context }
+        : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+    });
+
+    const width = createPaperCanvasMeasurer(5)('AV', {
+      fontFamily: 'Variable Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left',
+      fontVariationSettings: { wdth: 82.5 },
+      fontKerning: 'none',
+    });
+
+    expect(width).toBe(11);
+    expect(context.measureText).not.toHaveBeenCalled();
+    expect(layouts).toHaveBeenCalledOnce();
+  });
+
+  it('sanitizes malformed variation and kerning requests on the CSS path without reusing canvas state', () => {
+    const context = {
+      font: '',
+      fontStretch: 'normal',
+      fontVariationSettings: '"wght" 900',
+      fontKerning: 'none',
+      measureText: vi.fn(() => ({ width: 500 })),
+    };
+    const probe = {
+      style: {} as Record<string, string>,
+      textContent: '',
+      getBoundingClientRect: vi.fn(() => ({ width: 60 })),
+      remove: vi.fn(),
+    };
+    vi.stubGlobal('document', {
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn((tag: string) => tag === 'canvas' ? { getContext: () => context } : probe),
+    });
+
+    const width = createPaperCanvasMeasurer(5)('invalid', {
+      fontFamily: 'Variable Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left',
+      fontVariationSettings: { bad: Number.NaN } as unknown as Record<string, number>,
+      fontKerning: 'invalid' as unknown as 'auto',
+    });
+
+    expect(width).toBe(12);
+    expect(context.measureText).not.toHaveBeenCalled();
+    expect(probe.style.fontVariationSettings).toBe('normal');
+    expect(probe.style.fontKerning).toBe('auto');
+    expect(probe.remove).toHaveBeenCalledOnce();
+  });
+
+  it('contains append failures, removes possibly attached probes, and leaves later calls uncontaminated', () => {
+    const context = {
+      font: '',
+      measureText: vi.fn(() => ({ width: 999 })),
+    };
+    const attached = new Set<object>();
+    let appendFails = true;
+    let layoutWidth = 35;
+    const appendChild = vi.fn((probe: object) => {
+      attached.add(probe);
+      if (appendFails) throw new Error('append failed after attachment');
+    });
+    vi.stubGlobal('document', {
+      body: { appendChild },
+      createElement: vi.fn((tag: string) => {
+        if (tag === 'canvas') return { getContext: () => context };
+        const probe = {
+          style: {} as Record<string, string>,
+          textContent: '',
+          getBoundingClientRect: vi.fn(() => ({ width: layoutWidth })),
+          remove: vi.fn(() => attached.delete(probe)),
+        };
+        return probe;
+      }),
+    });
+    const measure = createPaperCanvasMeasurer(5);
+    const spec = {
+      fontFamily: 'Fallback Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left' as const,
+      fontStretch: '82.5%',
+    };
+
+    const failedFirst = measure('probe', spec);
+    const failedSecond = measure('probe', spec);
+    expect(failedFirst).toBe(failedSecond);
+    expect(Number.isFinite(failedFirst)).toBe(true);
+    expect(Number.isNaN(failedFirst)).toBe(false);
+    expect(attached.size).toBe(0);
+
+    appendFails = false;
+    layoutWidth = 40;
+    expect(measure('probe', spec)).toBe(8);
+    expect(attached.size).toBe(0);
+    expect(context.measureText).not.toHaveBeenCalled();
+  });
+
+  it('contains document.fonts getter failures and observes a later healthy font state without contamination', () => {
+    const context = {
+      font: '',
+      measureText: vi.fn(() => ({ width: 999 })),
+    };
+    const layouts = vi.fn(() => ({ width: 45 }));
+    let fontsThrow = true;
+    const fonts = {
+      status: 'loaded',
+      size: 1,
+      ready: Promise.resolve(undefined),
+      check: vi.fn(() => true),
+    };
+    const ownerDocument = {
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn((tag: string) => tag === 'canvas'
+        ? { getContext: () => context }
+        : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+    };
+    Object.defineProperty(ownerDocument, 'fonts', {
+      configurable: true,
+      get: () => {
+        if (fontsThrow) throw new Error('fonts unavailable');
+        return fonts;
+      },
+    });
+    vi.stubGlobal('document', ownerDocument);
+    const measure = createPaperCanvasMeasurer(5);
+    const spec = {
+      fontFamily: 'Fallback Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left' as const,
+      fontStretch: '82.5%',
+    };
+
+    const failedFirst = measure('fonts', spec);
+    const failedSecond = measure('fonts', spec);
+    expect(failedFirst).toBe(failedSecond);
+    expect(Number.isFinite(failedFirst)).toBe(true);
+    expect(Number.isNaN(failedFirst)).toBe(false);
+    expect(layouts).not.toHaveBeenCalled();
+
+    fontsThrow = false;
+    expect(measure('fonts', spec)).toBe(9);
+    expect(layouts).toHaveBeenCalledOnce();
+    expect(context.measureText).not.toHaveBeenCalled();
   });
 });
