@@ -14,7 +14,11 @@ import {
 import { resolveBubbleTailCurvePercent } from '../../lib/paperBubblePaths';
 import { getSignalLoomNativeBridge, type NativePaperPdfExportResult } from '../../lib/nativeApp';
 import { buildProvenanceLabel } from '../../lib/exportProvenance';
-import { downloadBlob as downloadSharedBlob, downloadTextFile } from '../../lib/downloadAsset';
+import {
+  downloadBlob as downloadSharedBlob,
+  downloadTextFile,
+  downloadTextFileWithOutcome,
+} from '../../lib/downloadAsset';
 import { exportPaperDocumentToPdfxInBrowser } from '../../lib/paperPdfxBrowser';
 import {
   createPaperPlacedDocumentRasterizationGuard,
@@ -828,27 +832,103 @@ export function getDraggedSourceItemId(dataTransfer: DataTransfer): string | und
   }
 }
 
-export async function openPrintPreview(document: ReturnType<typeof usePaperStore.getState>['document']): Promise<{ state: 'printed' | 'html-fallback'; message: string }> {
-  const exact = await buildPaperDocumentExactManagedFontOutput(document);
-  const html = exportPaperDocumentToPrintHtml(exact.document, { includeScreenGuides: true, fontFaceCss: exact.fontFaceCss });
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-  if (!printWindow) {
-    downloadText(`${safeFileName(document.title)}-print.html`, html, 'text/html');
-    return { state: 'html-fallback', message: 'Browser popup was blocked; downloaded print HTML instead.' };
-  }
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.focus();
+export interface PaperPrintPreviewOutcome {
+  state: 'printed' | 'html-fallback' | 'failed';
+  message: string;
+}
+
+function printPreviewFailure(error: unknown): PaperPrintPreviewOutcome {
+  const detail = error instanceof Error ? error.message : String(error);
+  return { state: 'failed', message: `Print preview failed: ${detail}` };
+}
+
+export async function openPrintPreview(
+  document: ReturnType<typeof usePaperStore.getState>['document'],
+): Promise<PaperPrintPreviewOutcome> {
+  // Chromium returns null for noopener/noreferrer feature strings even when it creates the tab. Get
+  // the usable about:blank handle first, while transient user activation is freshest, then isolate it.
+  let printWindow: Window | null = null;
   try {
-    await verifyExactPaperManagedFontReadiness(printWindow.document, exact.fontFaceCss);
+    printWindow = window.open('', '_blank');
+  } catch {
+    // A throwing popup implementation is equivalent to a blocked popup; use the HTML fallback.
+  }
+  if (printWindow) {
+    try {
+      printWindow.opener = null;
+    } catch (error) {
+      try { printWindow.close(); } catch { /* ignore close failure */ }
+      return printPreviewFailure(error);
+    }
+  }
+
+  let html: string;
+  let fontFaceCss: string | undefined;
+  try {
+    const exact = await buildPaperDocumentExactManagedFontOutput(document);
+    fontFaceCss = exact.fontFaceCss;
+    html = exportPaperDocumentToPrintHtml(exact.document, {
+      includeScreenGuides: true,
+      fontFaceCss,
+    });
+  } catch (error) {
+    try { printWindow?.close(); } catch { /* ignore close failure */ }
+    return printPreviewFailure(error);
+  }
+
+  if (!printWindow) {
+    let fallback: Awaited<ReturnType<typeof downloadTextFileWithOutcome>>;
+    try {
+      fallback = await downloadTextFileWithOutcome(
+        `${safeFileName(document.title)}-print.html`,
+        html,
+        'text/html',
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return {
+        state: 'failed',
+        message: `Browser popup was blocked, and the print HTML fallback failed: ${detail}`,
+      };
+    }
+    if (fallback.status === 'failed') {
+      return {
+        state: 'failed',
+        message: `Browser popup was blocked, and the print HTML fallback failed: ${fallback.error}`,
+      };
+    }
+    if (fallback.status === 'saved') {
+      return {
+        state: 'html-fallback',
+        message: `Browser popup was blocked; saved print HTML to ${fallback.location}.`,
+      };
+    }
+    return {
+      state: 'html-fallback',
+      message: 'Browser popup was blocked; started the print HTML download.',
+    };
+  }
+
+  try {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    await verifyExactPaperManagedFontReadiness(printWindow.document, fontFaceCss);
     printWindow.print();
     return { state: 'printed', message: 'Opened browser print dialog after exact managed-face verification.' };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Managed face readiness failed.';
-    const note = printWindow.document.createElement?.('p');
-    if (note) { note.textContent = `Print preview blocked: ${message}`; printWindow.document.body?.prepend(note); }
-    throw error;
+    try {
+      const note = printWindow.document.createElement?.('p');
+      if (note) {
+        note.textContent = `Print preview blocked: ${message}`;
+        printWindow.document.body?.prepend(note);
+      }
+    } catch {
+      // The typed failure below remains authoritative when the popup DOM itself is unavailable.
+    }
+    return printPreviewFailure(error);
   }
 }
 

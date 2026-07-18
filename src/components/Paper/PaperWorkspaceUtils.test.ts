@@ -158,6 +158,45 @@ function strictPdfDocument(title: string): {
   return { document, profile };
 }
 
+async function paperDocumentWithManagedFont(title: string) {
+  const record = await createBinaryAssetRecord(Uint8Array.from([1, 2, 3]), { mimeType: 'font/ttf' });
+  const fontAsset = await paperAssetRepository.put(record);
+  let document = createDefaultPaperDocument({ title });
+  const face: PaperManagedFontFace = {
+    id: 'browser-readiness-proof',
+    familyId: 'browser readiness proof',
+    familyName: 'Browser Readiness Proof',
+    postscriptName: 'BrowserReadinessProof-Regular',
+    weight: 400,
+    style: 'normal',
+    stretchPercent: 100,
+    collectionIndex: 0,
+    variableAxes: {},
+    unicodeRanges: [],
+    format: 'truetype',
+    fontAsset,
+    embeddability: 'installable',
+    canSubset: true,
+    source: { kind: 'user-import' },
+    license: {},
+  };
+  document = addFrameToPaperPage(document, document.pages[0].id, {
+    kind: 'text',
+    text: 'Exact readiness',
+    xMm: 10,
+    yMm: 10,
+    widthMm: 40,
+    heightMm: 20,
+    typography: {
+      ...document.pages[0].frames[0]?.typography,
+      fontFamily: face.familyName,
+      fontWeight: '400',
+      fontStyle: 'normal',
+    },
+  } as never).document;
+  return { ...document, importedFonts: [face] };
+}
+
 function passingPdfxDependencies() {
   return {
     exportPdfx: vi.fn(async () => ({
@@ -319,7 +358,7 @@ describe('PaperWorkspaceUtils eyedropper', () => {
 });
 
 describe('PaperWorkspaceUtils export', () => {
-  it('returns the successful print-dialog outcome only after invoking the popup print path', async () => {
+  it('uses a Chromium-compatible popup handle, severs its opener, and returns printed only after print()', async () => {
     const popupDocument = {
       open: vi.fn(),
       write: vi.fn(),
@@ -329,17 +368,24 @@ describe('PaperWorkspaceUtils export', () => {
       document: popupDocument,
       focus: vi.fn(),
       print: vi.fn(),
+      opener: { reachable: true },
     };
-    const open = vi.fn(() => popup as unknown as Window);
+    const open = vi.fn((_url: string, _target: string, features?: string) => (
+      features ? null : popup as unknown as Window
+    ));
     vi.stubGlobal('window', { open });
 
-    const outcome = await openPrintPreview(createDefaultPaperDocument({ title: 'Popup success' }));
+    const pendingOutcome = openPrintPreview(createDefaultPaperDocument({ title: 'Popup success' }));
+
+    // Acquisition and opener isolation happen synchronously, before managed-font assembly awaits.
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(popup.opener).toBeNull();
+    const outcome = await pendingOutcome;
 
     expect(outcome).toEqual({
       state: 'printed',
       message: 'Opened browser print dialog after exact managed-face verification.',
     });
-    expect(open).toHaveBeenCalledWith('', '_blank', 'noopener,noreferrer');
     expect(popupDocument.open).toHaveBeenCalledOnce();
     expect(popupDocument.write).toHaveBeenCalledOnce();
     expect(popupDocument.close).toHaveBeenCalledOnce();
@@ -361,7 +407,7 @@ describe('PaperWorkspaceUtils export', () => {
 
     expect(outcome).toEqual({
       state: 'html-fallback',
-      message: 'Browser popup was blocked; downloaded print HTML instead.',
+      message: 'Browser popup was blocked; started the print HTML download.',
     });
     expect(createObjectURL).toHaveBeenCalledOnce();
     expect(anchor.click).toHaveBeenCalledOnce();
@@ -384,18 +430,21 @@ describe('PaperWorkspaceUtils export', () => {
 
     expect(outcome).toEqual({
       state: 'error',
-      message: 'Browser popup was blocked; downloaded print HTML instead.',
+      message: 'Browser popup was blocked; started the print HTML download.',
       targetKind: 'file',
     });
-    expect(statuses).toEqual(['Browser popup was blocked; downloaded print HTML instead.']);
+    expect(statuses).toEqual(['Browser popup was blocked; started the print HTML download.']);
     expect([...statuses, outcome.message].join(' ')).not.toMatch(/opened browser print dialog/i);
     expect(anchor.click).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
   });
 
-  it('routes the same blocked-popup HTML fallback through Android native storage', async () => {
+  it('awaits Android fallback storage in Documents -> External -> Data order before reporting success', async () => {
     const nativePlatform = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
-    androidFileMocks.writeFile.mockResolvedValue({ uri: 'content://aud-037' });
+    androidFileMocks.writeFile.mockImplementation(async ({ directory }: { directory: string }) => {
+      if (directory !== 'DATA') throw new Error(`${directory} unavailable`);
+      return { uri: 'content://aud-037' };
+    });
     androidFileMocks.getUri.mockResolvedValue({ uri: 'content://aud-037/Android-Fallback-print.html' });
     const open = vi.fn(() => null);
     vi.stubGlobal('window', { open });
@@ -410,13 +459,132 @@ describe('PaperWorkspaceUtils export', () => {
 
     const outcome = await openPrintPreview(createDefaultPaperDocument({ title: 'Android Fallback' }));
 
-    expect(outcome.state).toBe('html-fallback');
-    await vi.waitFor(() => expect(androidFileMocks.writeFile).toHaveBeenCalledOnce());
-    expect(androidFileMocks.writeFile.mock.calls[0][0]).toMatchObject({ path: 'Android-Fallback-print.html' });
-    await vi.waitFor(() => expect(androidFileMocks.getUri).toHaveBeenCalledOnce());
+    expect(outcome).toEqual({
+      state: 'html-fallback',
+      message: 'Browser popup was blocked; saved print HTML to app private storage.',
+    });
+    expect(androidFileMocks.writeFile.mock.calls.map(([request]) => request.directory)).toEqual([
+      'DOCUMENTS',
+      'EXTERNAL',
+      'DATA',
+    ]);
+    expect(androidFileMocks.writeFile.mock.calls[2][0]).toMatchObject({ path: 'Android-Fallback-print.html' });
+    expect(androidFileMocks.getUri).toHaveBeenCalledOnce();
     nativePlatform.mockRestore();
     androidFileMocks.writeFile.mockReset();
     androidFileMocks.getUri.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns failed only after every ordered Android fallback destination fails', async () => {
+    const nativePlatform = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    androidFileMocks.writeFile.mockImplementation(async ({ directory }: { directory: string }) => {
+      throw new Error(`${directory} denied`);
+    });
+    const open = vi.fn(() => null);
+    vi.stubGlobal('window', { open });
+    vi.stubGlobal('FileReader', class {
+      result = 'data:text/html;base64,PGh0bWw+';
+      onloadend: (() => void) | null = null;
+
+      readAsDataURL() {
+        this.onloadend?.();
+      }
+    });
+
+    const outcome = await openPrintPreview(createDefaultPaperDocument({ title: 'Android Failure' }));
+
+    expect(outcome).toEqual({
+      state: 'failed',
+      message: 'Browser popup was blocked, and the print HTML fallback failed: DATA denied',
+    });
+    expect(androidFileMocks.writeFile.mock.calls.map(([request]) => request.directory)).toEqual([
+      'DOCUMENTS',
+      'EXTERNAL',
+      'DATA',
+    ]);
+    expect(androidFileMocks.getUri).not.toHaveBeenCalled();
+    nativePlatform.mockRestore();
+    androidFileMocks.writeFile.mockReset();
+    androidFileMocks.getUri.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it('returns failed when a blocked browser popup cannot start its HTML fallback', async () => {
+    const open = vi.fn(() => null);
+    vi.stubGlobal('window', { open, setTimeout });
+    vi.stubGlobal('document', { createElement: vi.fn(), body: { append: vi.fn() } });
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => { throw new Error('object URL unavailable'); }),
+      revokeObjectURL: vi.fn(),
+    });
+
+    await expect(openPrintPreview(createDefaultPaperDocument({ title: 'Fallback Failure' })))
+      .resolves.toEqual({
+        state: 'failed',
+        message: 'Browser popup was blocked, and the print HTML fallback failed: object URL unavailable',
+      });
+    vi.unstubAllGlobals();
+  });
+
+  it('settles managed-font readiness rejection as a failed caller outcome and status', async () => {
+    const popupDocument = {
+      open: vi.fn(),
+      write: vi.fn(),
+      close: vi.fn(),
+      createElement: vi.fn(() => ({ textContent: '' })),
+      body: { prepend: vi.fn() },
+    };
+    const popup = {
+      document: popupDocument,
+      focus: vi.fn(),
+      print: vi.fn(),
+      opener: {},
+      close: vi.fn(),
+    };
+    vi.stubGlobal('window', { open: vi.fn(() => popup as unknown as Window) });
+    const statuses: string[] = [];
+    const document = await paperDocumentWithManagedFont('Readiness Failure');
+
+    const outcome = await exportPaperPdfDocument(document, (status) => statuses.push(status));
+
+    expect(outcome).toEqual({
+      state: 'error',
+      message: 'Print preview failed: Browser does not expose requested-face verification.',
+      targetKind: 'file',
+    });
+    expect(statuses).toEqual(['Print preview failed: Browser does not expose requested-face verification.']);
+    expect(popup.print).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['write', 'popup write failed'],
+    ['print', 'browser print failed'],
+  ] as const)('settles popup %s exceptions as failed instead of rejecting', async (stage, detail) => {
+    const write = vi.fn(() => {
+      if (stage === 'write') throw new Error(detail);
+    });
+    const print = vi.fn(() => {
+      if (stage === 'print') throw new Error(detail);
+    });
+    const popup = {
+      document: {
+        open: vi.fn(),
+        write,
+        close: vi.fn(),
+        createElement: vi.fn(() => ({ textContent: '' })),
+        body: { prepend: vi.fn() },
+      },
+      focus: vi.fn(),
+      print,
+      opener: {},
+      close: vi.fn(),
+    };
+    vi.stubGlobal('window', { open: vi.fn(() => popup as unknown as Window) });
+
+    await expect(openPrintPreview(createDefaultPaperDocument({ title: `${stage} failure` })))
+      .resolves.toEqual({ state: 'failed', message: `Print preview failed: ${detail}` });
     vi.unstubAllGlobals();
   });
 

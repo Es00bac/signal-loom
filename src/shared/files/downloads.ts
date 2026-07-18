@@ -10,6 +10,11 @@ export interface DownloadRuntime {
   url?: Pick<typeof URL, 'createObjectURL' | 'revokeObjectURL'>;
 }
 
+export type DownloadFileOutcome =
+  | { status: 'started'; platform: 'browser' }
+  | { status: 'saved'; platform: 'native'; uri: string; location: string }
+  | { status: 'failed'; platform: 'browser' | 'native'; error: string };
+
 export function buildDownloadFilename(
   baseName: string,
   mimeType: string | undefined,
@@ -36,22 +41,57 @@ export function downloadBlob(
   runtime: DownloadRuntime = {},
 ): void {
   if (Capacitor.isNativePlatform()) {
-    // Fire-and-forget for callers, but NEVER silent: report where it saved, or the real error.
-    void saveBlobOnDevice(blob, fileName)
-      .then(({ location }) => showUserNotice(`Saved “${fileName}” to ${location}.`, 'success'))
-      .catch((error) =>
-        showUserNotice(
-          `Couldn’t save “${fileName}”: ${error instanceof Error ? error.message : String(error)}`,
-          'error',
-        ),
-      );
+    // Existing fire-and-forget callers still receive a durable success/failure notice. Callers that
+    // must not report completion early use downloadBlobWithOutcome and await the same operation.
+    void downloadBlobWithOutcome(blob, fileName, runtime);
     return;
   }
 
+  startBrowserBlobDownload(blob, fileName, runtime);
+}
+
+function startBrowserBlobDownload(blob: Blob, fileName: string, runtime: DownloadRuntime): void {
   const { document, setTimeout, url } = resolveRuntime(runtime);
   const objectUrl = url.createObjectURL(blob);
-  triggerHrefDownload(objectUrl, fileName, { document });
+  try {
+    triggerHrefDownload(objectUrl, fileName, { document });
+  } catch (error) {
+    url.revokeObjectURL(objectUrl);
+    throw error;
+  }
   setTimeout(() => url.revokeObjectURL(objectUrl), 1000);
+}
+
+/** Awaitable download contract for callers whose user-facing status must reflect the real operation. */
+export async function downloadBlobWithOutcome(
+  blob: Blob,
+  fileName: string,
+  runtime: DownloadRuntime = {},
+): Promise<DownloadFileOutcome> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const saved = await saveBlobOnDevice(blob, fileName);
+      showUserNotice(`Saved “${fileName}” to ${saved.location}.`, 'success');
+      return { status: 'saved', platform: 'native', ...saved };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showUserNotice(`Couldn’t save “${fileName}”: ${message}`, 'error');
+      return { status: 'failed', platform: 'native', error: message };
+    }
+  }
+
+  try {
+    startBrowserBlobDownload(blob, fileName, runtime);
+    // Browsers do not expose download completion. This means the user gesture was dispatched,
+    // deliberately reported as "started" rather than claiming the file reached disk.
+    return { status: 'started', platform: 'browser' };
+  } catch (error) {
+    return {
+      status: 'failed',
+      platform: 'browser',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 /**
@@ -121,6 +161,15 @@ export function downloadTextFile(
   runtime: DownloadRuntime = {},
 ): void {
   downloadBlob(new Blob([contents], { type: mimeType }), fileName, runtime);
+}
+
+export function downloadTextFileWithOutcome(
+  fileName: string,
+  contents: string,
+  mimeType = 'text/plain',
+  runtime: DownloadRuntime = {},
+): Promise<DownloadFileOutcome> {
+  return downloadBlobWithOutcome(new Blob([contents], { type: mimeType }), fileName, runtime);
 }
 
 export function downloadJsonFile(
