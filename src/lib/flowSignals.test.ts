@@ -26,6 +26,7 @@ describe('flow signal evaluation', () => {
         functionOutputs: {
           count: { result: '42', resultType: 'number' },
           approved: { result: 'true', resultType: 'boolean' },
+          rejected: { result: false, resultType: 'boolean' },
         },
       },
     });
@@ -34,6 +35,8 @@ describe('flow signal evaluation', () => {
       .toMatchObject({ kind: 'number', value: 42, diagnostics: [] });
     expect(evaluateNodeSignal('function', [functionNode], [], new Set(), new Map([[functionNode.id, functionNode]]), 'approved'))
       .toMatchObject({ kind: 'boolean', value: true, diagnostics: [] });
+    expect(evaluateNodeSignal('function', [functionNode], [], new Set(), new Map([[functionNode.id, functionNode]]), 'rejected'))
+      .toMatchObject({ kind: 'boolean', value: false, diagnostics: [] });
   });
 
   it('renders local string-template slots across casing without corrupting double braces or literal braces', () => {

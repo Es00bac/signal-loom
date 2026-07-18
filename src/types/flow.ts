@@ -737,7 +737,7 @@ export interface UsageTelemetry {
  * preserves the declared output-handle identity so two outputs cannot alias the
  * first completed value. */
 export interface FunctionNodeOutput {
-  result: string;
+  result: ResultValue;
   resultType: ResultType;
   /** Runtime-only media bytes used when the outer Function result enters Source Bin. */
   blob?: Blob;

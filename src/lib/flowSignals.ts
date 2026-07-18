@@ -1288,9 +1288,10 @@ function deserializeFunctionOutputValue(output: FunctionNodeOutput): unknown {
     return Number.isFinite(value) ? value : 0;
   }
   if (output.resultType === 'boolean') {
-    return output.result === 'true';
+    return typeof output.result === 'boolean' ? output.result : output.result === 'true';
   }
   if (output.resultType === 'json' || output.resultType === 'list' || output.resultType === 'envelope' || output.resultType === 'package') {
+    if (typeof output.result !== 'string') return output.result;
     try {
       return JSON.parse(output.result) as unknown;
     } catch {

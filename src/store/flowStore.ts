@@ -392,7 +392,7 @@ function createDebouncedLocalStorage(delayMs: number): StateStorage {
 
 export function resolveNodeOutputAsset(node: AppNode, sourceHandle?: string | null): string | undefined {
   if (node.type === 'functionNode') {
-    return getFunctionNodeOutput(node, sourceHandle)?.result;
+    return resultValueAsMediaUrl(getFunctionNodeOutput(node, sourceHandle)?.result);
   }
   if (
     (node.type === 'imageGen' || node.type === 'audioGen' || node.type === 'videoGen') &&

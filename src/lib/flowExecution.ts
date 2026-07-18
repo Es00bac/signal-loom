@@ -173,7 +173,7 @@ import {
 import {
   getBlockingFlowDiagnostics,
 } from './flowDiagnostics';
-import { deserializeResultValueFromContainer, resultValueAsMediaUrl } from './flowResultValues';
+import { resultValueAsMediaUrl } from './flowResultValues';
 import type { FlowGraphContractContext } from './flowConnectionContracts';
 import {
   appendReferenceGuidanceBlockToPrompt,
