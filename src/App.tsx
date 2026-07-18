@@ -15,8 +15,7 @@ import { describeLicenseEdition } from './lib/licenseKey';
 import { useConfirmationStore } from './store/confirmationStore';
 import { showAlertDialog } from './store/alertDialogStore';
 import { SettingsModal } from './components/Settings/SettingsModal';
-import { CommunityStartupNotice } from './components/Layout/CommunityStartupNotice';
-import { FirstRunLanguageGate } from './components/Layout/FirstRunLanguageGate';
+import { StartupInteractionSequence } from './components/Layout/StartupInteractionSequence';
 import { BrandWordmark } from './components/Layout/BrandWordmark';
 import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
@@ -3125,7 +3124,6 @@ function FlowApp() {
       </div>
 
       <SettingsModal />
-      <CommunityStartupNotice />
       <CommandPalette
         entries={commandPaletteEntries}
         onClose={() => setCommandPaletteOpen(false)}
@@ -3165,7 +3163,7 @@ function FlowApp() {
           onReload={() => void requestProjectAuthorityReload()}
         />
       ) : null}
-      <FirstRunLanguageGate />
+      <StartupInteractionSequence />
     </div>
   );
 }

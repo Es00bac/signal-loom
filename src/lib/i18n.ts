@@ -43,6 +43,25 @@ export const MESSAGES = {
   'firstRun.detected': { en: 'Detected system language', ja: '検出されたシステム言語' },
   'firstRun.changeLater': { en: 'You can change this anytime in Settings.', ja: '設定からいつでも変更できます。' },
 
+  // — Community startup notice (shown only after hydration + language choice) —
+  'communityNotice.title': { en: 'Sloom Studio Community', ja: 'Sloom Studio コミュニティ' },
+  'communityNotice.intro': {
+    en: 'Free for personal and noncommercial use. Learn it, make things, share them. If you start earning with what you make here, that’s when a license is due',
+    ja: '個人利用および非商用利用は無料です。学び、作品を作り、共有してください。ここで作ったもので収益を得始めた時点で、ライセンスが必要になります',
+  },
+  'communityNotice.price': {
+    en: '($17.99, one-time, first 100 copies — then $39).',
+    ja: '（17.99米ドル、買い切り、先着100本。その後は39米ドル）。',
+  },
+  'communityNotice.benefits': {
+    en: 'It unlocks the commercial print-production exports (real CMYK PDF/X-1a and PDF/X-4, a KDP-ready print PDF, and real Adobe IDML) and removes this notice.',
+    ja: '商用向けの印刷制作書き出し（実際のCMYK PDF/X-1aおよびPDF/X-4、KDP対応の印刷PDF、実際のAdobe IDML）が利用可能になり、このお知らせは表示されなくなります。',
+  },
+  'communityNotice.buyLicense': { en: 'Buy a license', ja: 'ライセンスを購入' },
+  'communityNotice.enterKey': { en: 'Enter key', ja: 'キーを入力' },
+  'communityNotice.continue': { en: 'Continue free', ja: '無料版を続ける' },
+  'communityNotice.continueCountdown': { en: 'Continue free ({seconds})', ja: '無料版を続ける（{seconds}）' },
+
   // — Shared audited bundled-font browser —
   'fonts.browser.browse': { en: 'Browse bundled fonts', ja: '同梱フォントを参照' },
   'fonts.browser.browseTooltip': { en: 'Open the audited bundled-font library', ja: '監査済みの同梱フォントライブラリを開く' },

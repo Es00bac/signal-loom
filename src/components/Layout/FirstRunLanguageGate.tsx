@@ -26,6 +26,7 @@ export function FirstRunLanguageGate() {
     <div
       aria-label="Choose your language / 言語を選択"
       className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-10 bg-[#020712] px-6 text-center"
+      data-first-run-language-gate="true"
       role="dialog"
       aria-modal="true"
     >

@@ -1,5 +1,6 @@
 import React from 'react';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useI18n } from '../../lib/useI18n';
 import {
   claimCommunityNoticeDay,
   releaseCommunityNoticeDayClaim,
@@ -19,6 +20,7 @@ export const CommunityStartupNotice: React.FC = () => {
   const settingsHydrated = useSettingsStore((state) => state.settingsHydrated);
   const revalidateLicense = useSettingsStore((state) => state.revalidateLicense);
   const openSettings = useSettingsStore((state) => state.openSettings);
+  const { locale, t, tf } = useI18n();
 
   const [visible, setVisible] = React.useState(false);
   const [secondsLeft, setSecondsLeft] = React.useState(DISMISS_ENABLE_DELAY_SECONDS);
@@ -87,17 +89,20 @@ export const CommunityStartupNotice: React.FC = () => {
   }
 
   const canDismiss = secondsLeft <= 0;
+  const copySeparator = locale === 'ja' ? '' : ' ';
 
   return (
-    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 backdrop-blur-[2px]" data-community-notice="true">
+    <div
+      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
+      data-community-notice="true"
+      data-community-notice-locale={locale}
+    >
       <div className="mx-4 w-full max-w-md rounded-2xl border border-gray-700/70 bg-[#10141d] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
-        <div className="text-lg font-semibold text-gray-100">Sloom Studio Community</div>
+        <div className="text-lg font-semibold text-gray-100">{t('communityNotice.title')}</div>
         <p className="mt-3 text-sm leading-6 text-gray-300">
-          Free for personal and noncommercial use. Learn it, make things, share them. If you start
-          earning with what you make here, that&apos;s when a license is due
-          <span className="text-gray-100 font-semibold"> ($17.99, one-time, first 100 copies — then $39)</span>.
-          It unlocks the commercial print-production exports (real CMYK PDF/X-1a and PDF/X-4, a KDP-ready
-          print PDF, and real Adobe IDML) and removes this notice.
+          {t('communityNotice.intro')}{copySeparator}
+          <span className="text-gray-100 font-semibold">{t('communityNotice.price')}</span>{copySeparator}
+          {t('communityNotice.benefits')}
         </p>
         <div className="mt-5 flex flex-col gap-2">
           <a
@@ -106,7 +111,7 @@ export const CommunityStartupNotice: React.FC = () => {
             rel="noreferrer"
             target="_blank"
           >
-            Buy a license
+            {t('communityNotice.buyLicense')}
           </a>
           <button
             className="w-full rounded-lg border border-gray-700/70 bg-[#151a24] px-4 py-2.5 text-sm font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
@@ -116,7 +121,7 @@ export const CommunityStartupNotice: React.FC = () => {
             }}
             type="button"
           >
-            Enter key
+            {t('communityNotice.enterKey')}
           </button>
           <button
             className="w-full rounded-lg border border-transparent px-4 py-2.5 text-sm font-semibold text-gray-400 transition-colors hover:text-gray-200 disabled:cursor-default disabled:opacity-50"
@@ -125,7 +130,9 @@ export const CommunityStartupNotice: React.FC = () => {
             onClick={() => setVisible(false)}
             type="button"
           >
-            {canDismiss ? 'Continue free' : `Continue free (${secondsLeft})`}
+            {canDismiss
+              ? t('communityNotice.continue')
+              : tf('communityNotice.continueCountdown', { seconds: secondsLeft })}
           </button>
         </div>
       </div>
