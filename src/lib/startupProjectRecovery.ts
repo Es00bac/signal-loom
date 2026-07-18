@@ -1,8 +1,10 @@
 import type {
   NativePreparedProjectSwitchResult,
   NativeProjectAuthorityDescriptor,
+  NativeStartupProjectRecovery,
   SignalLoomNativeBridge,
 } from './nativeApp';
+import type { ProjectAuthorityClientState } from './projectAuthorityClient';
 
 export type StartupProjectRecoveryAction = 'retry' | 'open-another' | 'recover-backup' | 'continue-blank';
 
@@ -14,6 +16,57 @@ type StartupRecoveryBridge = Pick<
   SignalLoomNativeBridge,
   'dismissStartupProjectRecovery' | 'openProjectFile' | 'recoverStartupProjectBackup' | 'retryStartupProject'
 >;
+
+export type StartupProjectRecoveryStateEvent =
+  | {
+    type: 'startup-authority-adopted';
+    recovery?: NativeStartupProjectRecovery;
+    expectedAuthority?: NativeProjectAuthorityDescriptor;
+    adoptedState: Pick<ProjectAuthorityClientState, 'claim' | 'stale'>;
+    windowEligible: boolean;
+  }
+  | {
+    type: 'prepared-switch-finished';
+    outcome: 'committed' | 'canceled' | 'rejected';
+  }
+  | { type: 'canonical-authority-committed' }
+  | { type: 'dismissed' };
+
+function authorityMatches(
+  expected: NativeProjectAuthorityDescriptor | undefined,
+  actual: NativeProjectAuthorityDescriptor | undefined,
+): boolean {
+  if (!expected || !actual) return expected === undefined && actual === undefined;
+  return expected.authorityId === actual.authorityId && expected.version === actual.version;
+}
+
+/**
+ * Renderer-local recovery state follows committed project authority, not the delayed startup
+ * request epoch. Confirming the expected blank startup authority legitimately advances that
+ * epoch; exact post-adoption authority identity distinguishes that expected transition from a
+ * newer project winning while startup was waiting.
+ */
+export function reduceStartupProjectRecovery(
+  current: NativeStartupProjectRecovery | undefined,
+  event: StartupProjectRecoveryStateEvent,
+): NativeStartupProjectRecovery | undefined {
+  if (event.type === 'startup-authority-adopted') {
+    return event.recovery
+      && event.windowEligible
+      && !event.adoptedState.stale
+      && authorityMatches(event.expectedAuthority, event.adoptedState.claim)
+      ? event.recovery
+      : current;
+  }
+
+  if (event.type === 'prepared-switch-finished') {
+    return event.outcome === 'committed' ? undefined : current;
+  }
+
+  // Authority notifications are emitted only after main has committed publication. This also
+  // covers another window replacing the failed startup project with a canonical blank project.
+  return undefined;
+}
 
 /**
  * Keeps the four recovery choices explicit and independently testable. Project-producing choices

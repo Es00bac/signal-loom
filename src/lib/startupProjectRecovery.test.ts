@@ -1,6 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { NativePreparedProjectSwitchResult, SignalLoomNativeBridge } from './nativeApp';
-import { requestStartupProjectRecoveryAction } from './startupProjectRecovery';
+import type {
+  NativePreparedProjectSwitchResult,
+  NativeProjectAuthorityDescriptor,
+  NativeStartupProjectRecovery,
+  SignalLoomNativeBridge,
+} from './nativeApp';
+import { ProjectAuthorityClient } from './projectAuthorityClient';
+import {
+  reduceStartupProjectRecovery,
+  requestStartupProjectRecoveryAction,
+} from './startupProjectRecovery';
+
+const blankAuthority: NativeProjectAuthorityDescriptor = {
+  authorityId: 'blank-startup-authority',
+  version: 1,
+};
+
+const recovery: NativeStartupProjectRecovery = {
+  filePath: '/projects/original.sloom',
+  failure: { code: 'unreadable', message: 'The drive is temporarily unavailable.' },
+  backups: [{ filePath: '/projects/original.sloom.bak-new', modifiedAtMs: 2 }],
+};
 
 function prepared(filePath: string): NativePreparedProjectSwitchResult {
   return { canceled: false, filePath, transactionId: 'switch-1' };
@@ -68,5 +88,68 @@ describe('startup project recovery actions', () => {
     expect(native.dismissStartupProjectRecovery).toHaveBeenCalledOnce();
     expect(native.openProjectFile).not.toHaveBeenCalled();
     expect(native.retryStartupProject).not.toHaveBeenCalled();
+  });
+});
+
+describe('startup project recovery authority ordering', () => {
+  it('presents typed recovery after adopting the exact blank authority even though adoption advances the request epoch', async () => {
+    let authorityEpoch = 0;
+    const capturedStartupEpoch = authorityEpoch;
+    const client = new ProjectAuthorityClient({
+      bridge: {
+        confirmProjectAdoption: async () => ({ ok: true }),
+      },
+      restoreSnapshot: async () => undefined,
+      resetSnapshot: async () => undefined,
+      onStateChanged: () => {
+        authorityEpoch += 1;
+      },
+    });
+
+    await client.adoptSnapshot({ authority: blankAuthority });
+
+    // The old startup-scope check is now false by design: adopting authority is a real epoch
+    // transition. Exact adopted identity, not that stale pre-adoption epoch, authorizes display.
+    expect(authorityEpoch).not.toBe(capturedStartupEpoch);
+    expect(reduceStartupProjectRecovery(undefined, {
+      type: 'startup-authority-adopted',
+      recovery,
+      expectedAuthority: blankAuthority,
+      adoptedState: client.getState(),
+      windowEligible: true,
+    })).toEqual(recovery);
+  });
+
+  it('does not present delayed recovery after a different authority wins', () => {
+    expect(reduceStartupProjectRecovery(undefined, {
+      type: 'startup-authority-adopted',
+      recovery,
+      expectedAuthority: blankAuthority,
+      adoptedState: {
+        claim: { authorityId: 'newer-project', version: 1 },
+        stale: false,
+      },
+      windowEligible: true,
+    })).toBeUndefined();
+  });
+
+  it.each(['canceled', 'rejected'] as const)('preserves recovery after a %s prepared switch', (outcome) => {
+    expect(reduceStartupProjectRecovery(recovery, {
+      type: 'prepared-switch-finished',
+      outcome,
+    })).toEqual(recovery);
+  });
+
+  it('clears recovery only after a prepared switch commits', () => {
+    expect(reduceStartupProjectRecovery(recovery, {
+      type: 'prepared-switch-finished',
+      outcome: 'committed',
+    })).toBeUndefined();
+  });
+
+  it('clears recovery when another window commits a canonical blank authority', () => {
+    expect(reduceStartupProjectRecovery(recovery, {
+      type: 'canonical-authority-committed',
+    })).toBeUndefined();
   });
 });

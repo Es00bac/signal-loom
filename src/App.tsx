@@ -165,6 +165,7 @@ import {
   type NativeStartupProjectRecovery,
 } from './lib/nativeApp';
 import {
+  reduceStartupProjectRecovery,
   requestStartupProjectRecoveryAction,
   type StartupProjectRecoveryAction,
 } from './lib/startupProjectRecovery';
@@ -493,6 +494,13 @@ function FlowApp() {
   const [nativeStartupSettled, setNativeStartupSettled] = useState(false);
   const [startupProjectRecovery, setStartupProjectRecovery] = useState<NativeStartupProjectRecovery | undefined>(undefined);
   const [startupRecoveryBusyAction, setStartupRecoveryBusyAction] = useState<StartupProjectRecoveryAction | undefined>(undefined);
+  const canonicalAuthorityCommitEpochRef = useRef(0);
+  const clearStartupRecoveryAfterCanonicalCommit = useCallback(() => {
+    canonicalAuthorityCommitEpochRef.current += 1;
+    setStartupProjectRecovery((current) => reduceStartupProjectRecovery(current, {
+      type: 'canonical-authority-committed',
+    }));
+  }, []);
   const [flowContextMenu, setFlowContextMenu] = useState<{
     x: number;
     y: number;
@@ -1320,9 +1328,6 @@ function FlowApp() {
           setCurrentProjectAuthorityClaim(state.claim);
           setProjectAuthorityUiState(state);
           setNativeProjectPath(state.filePath);
-          // A project opened through an external intent or another window supersedes any startup
-          // recovery prompt captured before that authority change.
-          if (state.filePath) setStartupProjectRecovery(undefined);
         },
       });
     }
@@ -1539,6 +1544,10 @@ function FlowApp() {
       });
       setNativeScratchDirectoryPath(commitResult.scratchDirectoryPath);
       rendererTransaction.finalize();
+      setStartupProjectRecovery((current) => reduceStartupProjectRecovery(current, {
+        type: 'prepared-switch-finished',
+        outcome: 'committed',
+      }));
       return true;
     } catch (error) {
       await rendererTransaction?.rollback();
@@ -1621,6 +1630,10 @@ function FlowApp() {
           await authorityClient.adoptSnapshot({ authority: commitResult.authority });
           setNativeScratchDirectoryPath(undefined);
           rendererTransaction.finalize();
+          setStartupProjectRecovery((current) => reduceStartupProjectRecovery(current, {
+            type: 'prepared-switch-finished',
+            outcome: 'committed',
+          }));
         } catch (error) {
           await rendererTransaction?.rollback();
           await bridge.cancelProjectSwitch({ transactionId: preparedNative.transactionId }).catch(() => undefined);
@@ -2280,7 +2293,7 @@ function FlowApp() {
         backupPath,
       });
       if (actionResult.status === 'dismissed') {
-        setStartupProjectRecovery(undefined);
+        setStartupProjectRecovery((current) => reduceStartupProjectRecovery(current, { type: 'dismissed' }));
         return;
       }
 
@@ -2294,7 +2307,12 @@ function FlowApp() {
       }
       if (prepared.canceled) return;
       const opened = await applyPreparedNativeProjectOpen(prepared, `startup-recovery:${action}`);
-      if (opened) setStartupProjectRecovery(undefined);
+      if (opened) {
+        setStartupProjectRecovery((current) => reduceStartupProjectRecovery(current, {
+          type: 'prepared-switch-finished',
+          outcome: 'committed',
+        }));
+      }
     } catch (error) {
       await showAlertDialog({
         title: 'Project Recovery Failed',
@@ -2468,6 +2486,7 @@ function FlowApp() {
 
     void Promise.race([nativeStatePromise, nativeStateTimeoutPromise])
       .then(async (state) => {
+        const startupRecoveryCommitEpoch = canonicalAuthorityCommitEpochRef.current;
         nativeWebContentsIdRef.current = state.webContentsId;
         if (isStartupRequestCurrent()) {
           setStartupSplash({
@@ -2560,9 +2579,15 @@ function FlowApp() {
             if (
               state.startupProjectRecovery
               && (!windowWorkspaceView || windowWorkspaceView === 'flow')
-              && isStartupRequestCurrent()
             ) {
-              setStartupProjectRecovery(state.startupProjectRecovery);
+              setStartupProjectRecovery((current) => reduceStartupProjectRecovery(current, {
+                type: 'startup-authority-adopted',
+                recovery: state.startupProjectRecovery,
+                expectedAuthority: state.projectAuthority,
+                adoptedState: authorityClient.getState(),
+                windowEligible: !cancelled
+                  && canonicalAuthorityCommitEpochRef.current === startupRecoveryCommitEpoch,
+              }));
             }
           }
           if (isStartupRequestCurrent() && !windowWorkspaceView && state.workspace) {
@@ -2598,9 +2623,11 @@ function FlowApp() {
     // the authority bridge, and never grants save rights (AUD-001).
     const removeProjectListener = bridge.onProjectAuthorityChanged
       ? bridge.onProjectAuthorityChanged((event) => {
+        clearStartupRecoveryAfterCanonicalCommit();
         void getProjectAuthorityClient().handleAuthorityChanged(event);
       })
       : bridge.onProjectPathChanged((filePath) => {
+        clearStartupRecoveryAfterCanonicalCommit();
         // Legacy display-only fallback with no adoption semantics attached.
         setNativeProjectPath(filePath);
       });
@@ -2609,7 +2636,7 @@ function FlowApp() {
       removeMenuListener();
       removeProjectListener();
     };
-  }, [getProjectAuthorityClient]);
+  }, [clearStartupRecoveryAfterCanonicalCommit, getProjectAuthorityClient]);
 
   // Externally opened documents (a double-clicked .sloom/.slppr, a second app launch with a
   // file argument, macOS open-file). Registration waits for the startup restore to settle so
