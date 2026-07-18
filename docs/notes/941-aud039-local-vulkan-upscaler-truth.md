@@ -39,6 +39,12 @@ key, not a product capability claim. Generic custom-endpoint errors use the neut
 upscaler`, because compatible user-supplied endpoints are not necessarily the managed Vulkan
 runtime.
 
+The fresh gate also found two generated values rendered directly to users despite looking internal:
+the Image layer source-format badge and Paper's usage-by-model identifier. New managed results now
+use `Real-ESRGAN Vulkan` for the source badge and `realesrgan-ncnn-vulkan` for telemetry. Their new
+Image layer identity uses `vulkan-upscale`; only the persisted provider/settings compatibility key
+retains the old `local-ai-cpu` spelling.
+
 ## No-Vulkan coverage
 
 Permanent tests simulate three representative failures:
