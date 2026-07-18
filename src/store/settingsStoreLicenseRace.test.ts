@@ -502,6 +502,102 @@ describe('license verification race hardening (AUD-015)', () => {
     });
   });
 
+  it('the later valid import wins when the earlier valid import decrypts first', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const earlierImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(1));
+    const laterImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(2));
+    const [earlierDecrypt, laterDecrypt] = backupControl.pending.splice(0, 2);
+
+    earlierDecrypt.resolve(JSON.stringify({
+      ...JSON.parse(legacyBackupWithLicense('')),
+      apiKeys: { openai: 'earlier-valid-import' },
+    }));
+    await expect(earlierImport).resolves.toMatchObject({ status: 'committed' });
+
+    laterDecrypt.resolve(JSON.stringify({
+      ...JSON.parse(legacyBackupWithLicense('')),
+      apiKeys: { openai: 'later-valid-import' },
+    }));
+    await expect(laterImport).resolves.toMatchObject({ status: 'committed' });
+    expect(useSettingsStore.getState().apiKeys.openai).toBe('later-valid-import');
+  });
+
+  it('a later activation still supersedes a later valid import after an earlier import commits', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const earlierImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    const laterImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(2));
+    const [earlierDecrypt, laterDecrypt] = backupControl.pending.splice(0, 2);
+
+    earlierDecrypt.resolve(JSON.stringify({
+      ...JSON.parse(legacyBackupWithLicense('')),
+      apiKeys: { openai: 'earlier-valid-import' },
+    }));
+    await expect(earlierImport).resolves.toMatchObject({ status: 'committed' });
+
+    const activation = useSettingsStore.getState().setLicenseKey(VALID_KEY);
+    (await takeVerification(VALID_KEY)).resolve(licensedVerdict());
+    await expect(activation).resolves.toMatchObject({ status: 'committed', licensed: true });
+
+    laterDecrypt.resolve(JSON.stringify({
+      ...JSON.parse(legacyBackupWithLicense('SLOOM-stale-imported-key')),
+      apiKeys: { openai: 'later-but-externally-superseded' },
+    }));
+    await expect(laterImport).resolves.toMatchObject({ status: 'superseded' });
+    expect(useSettingsStore.getState()).toMatchObject({
+      apiKeys: expect.objectContaining({ openai: 'earlier-valid-import' }),
+      licenseKey: VALID_KEY,
+      license: { licensed: true },
+    });
+  });
+
+  it('a later removal still supersedes a later valid import after an earlier import commits', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const earlierImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    const laterImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(2));
+    const [earlierDecrypt, laterDecrypt] = backupControl.pending.splice(0, 2);
+
+    earlierDecrypt.resolve(legacyBackupWithLicense(''));
+    await expect(earlierImport).resolves.toMatchObject({ status: 'committed' });
+    useSettingsStore.getState().removeLicenseKey();
+
+    laterDecrypt.resolve(legacyBackupWithLicense('SLOOM-stale-imported-key'));
+    await expect(laterImport).resolves.toMatchObject({ status: 'superseded' });
+    expect(useSettingsStore.getState()).toMatchObject({
+      licenseKey: '',
+      license: { licensed: false },
+    });
+  });
+
+  it('a later rehydrate supersedes a valid import still decrypting', async () => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const imported = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(1));
+
+    seedPersistedSettings({ licenseKey: '' });
+    const rehydration = useSettingsStore.persist.rehydrate();
+    await flushPendingDecrypts();
+    await rehydration;
+
+    backupControl.pending.shift()!.resolve(legacyBackupWithLicense('SLOOM-stale-imported-key'));
+    await expect(imported).resolves.toMatchObject({ status: 'superseded' });
+  });
+
   it.each([
     ['an unsupported envelope', 'unsupported-envelope'],
     ['malformed plaintext', 'not-json'],

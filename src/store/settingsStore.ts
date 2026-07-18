@@ -879,7 +879,7 @@ let licenseVerificationGeneration = 0;
 
 interface SettingsImportAttempt {
   attemptOrder: number;
-  observedLicenseGeneration: number;
+  observedExternalIdentityGeneration: number;
 }
 
 // Invocation order is captured separately from valid-operation order. Rejected files never enter
@@ -887,11 +887,12 @@ interface SettingsImportAttempt {
 // completes out of order.
 let settingsImportAttemptOrder = 0;
 let latestValidatedSettingsImportOrder = 0;
+let externalLicenseIdentityGeneration = 0;
 
 function beginSettingsImport(): SettingsImportAttempt {
   return {
     attemptOrder: ++settingsImportAttemptOrder,
-    observedLicenseGeneration: licenseVerificationGeneration,
+    observedExternalIdentityGeneration: externalLicenseIdentityGeneration,
   };
 }
 
@@ -901,7 +902,7 @@ function canClaimValidatedSettingsImport(attempt: SettingsImportAttempt): boolea
     attempt.attemptOrder,
   );
   return attempt.attemptOrder === latestValidatedSettingsImportOrder
-    && attempt.observedLicenseGeneration === licenseVerificationGeneration;
+    && attempt.observedExternalIdentityGeneration === externalLicenseIdentityGeneration;
 }
 
 /** The one in-flight canonical verification; concurrent triggers coalesce onto it instead of duplicating. */
@@ -915,6 +916,16 @@ function invalidatePendingLicenseVerification(): void {
 function claimLicenseIdentityGeneration(): number {
   invalidatePendingLicenseVerification();
   return licenseVerificationGeneration;
+}
+
+/**
+ * Activation, removal, and applied rehydration are authorities outside settings-import ordering.
+ * Track them separately so an earlier valid import's verifier generation cannot make a later-valid
+ * import appear externally superseded merely because decryption completed out of order.
+ */
+function claimExternalLicenseIdentityGeneration(): number {
+  externalLicenseIdentityGeneration += 1;
+  return claimLicenseIdentityGeneration();
 }
 
 function isCurrentLicenseIdentityGeneration(generation: number): boolean {
@@ -1228,7 +1239,7 @@ export const useSettingsStore = create<SettingsState>()(
       setLicenseKey: async (key) => {
         // Claim before verification starts. A later removal/import/rehydrate must be able to
         // invalidate this activation while its verifier is still pending.
-        const generation = claimLicenseIdentityGeneration();
+        const generation = claimExternalLicenseIdentityGeneration();
         const verification = await verifyLicenseKey(key);
         if (verification.licensed && isCurrentLicenseIdentityGeneration(generation)) {
           // This verifier-backed activation still owns the identity. Rejected activations and
@@ -1245,7 +1256,7 @@ export const useSettingsStore = create<SettingsState>()(
       removeLicenseKey: () => {
         // Removal fail-closes immediately and invalidates whatever verification is still in
         // flight — a stale positive verdict for the removed key must never resurrect the grant.
-        claimLicenseIdentityGeneration();
+        claimExternalLicenseIdentityGeneration();
         armLicenseSyncBroadcast();
         set({ licenseKey: '', license: { licensed: false } });
         return { licensed: false, status: 'committed' };
@@ -1362,7 +1373,7 @@ export const useSettingsStore = create<SettingsState>()(
         }
         // Every applied rehydrate replaces the license identity and fail-closes `license` below,
         // so whatever verification was in flight before it is stale by definition.
-        claimLicenseIdentityGeneration();
+        claimExternalLicenseIdentityGeneration();
         // Mutation-vs-hydration guard: this read may have started before local mutations landed,
         // making its blob stale for exactly the keys those mutations wrote. Everything else in
         // the snapshot is still the newest durable fact and applies normally.
