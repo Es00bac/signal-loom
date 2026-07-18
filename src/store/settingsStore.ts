@@ -452,6 +452,16 @@ function parseSettingsBackupData(parsed: unknown): ParsedSettingsBackupData {
     if (missingField) {
       return { ok: false, reason: `The legacy settings backup is incomplete (missing ${missingField}).` };
     }
+    // Project a schema-less payload onto exactly what the legacy exporter could produce. An
+    // untrusted or hand-edited payload must not smuggle schema-v1 preferences into the legacy
+    // compatibility path and overwrite settings that a genuine old backup could never carry.
+    const legacyData = Object.fromEntries(
+      LEGACY_SETTINGS_BACKUP_FIELDS.map((field) => [field, parsed[field]]),
+    ) as Partial<SettingsBackupData>;
+    if (typeof parsed.licenseKey === 'string') {
+      legacyData.licenseKey = parsed.licenseKey;
+    }
+    return { ok: true, data: legacyData };
   }
 
   return { ok: true, data: parsed as Partial<SettingsBackupData> };
@@ -867,26 +877,31 @@ function localMutationsAfterReadStart(read: HydrationRead | null): Array<keyof S
  */
 let licenseVerificationGeneration = 0;
 
-interface SettingsImportReservation {
-  importGeneration: number;
+interface SettingsImportAttempt {
+  attemptOrder: number;
   observedLicenseGeneration: number;
 }
 
-// Import ordering is reserved separately from license identity. A file that cannot decrypt or
-// validate may supersede an older import attempt, but it cannot invalidate a pending activation,
-// removal, rehydrate, or verifier. Only a fully validated payload may claim license identity.
-let settingsImportGeneration = 0;
+// Invocation order is captured separately from valid-operation order. Rejected files never enter
+// the latter, while two valid imports still resolve by invocation order even when decryption
+// completes out of order.
+let settingsImportAttemptOrder = 0;
+let latestValidatedSettingsImportOrder = 0;
 
-function reserveSettingsImport(): SettingsImportReservation {
+function beginSettingsImport(): SettingsImportAttempt {
   return {
-    importGeneration: ++settingsImportGeneration,
+    attemptOrder: ++settingsImportAttemptOrder,
     observedLicenseGeneration: licenseVerificationGeneration,
   };
 }
 
-function canClaimSettingsImport(reservation: SettingsImportReservation): boolean {
-  return reservation.importGeneration === settingsImportGeneration
-    && reservation.observedLicenseGeneration === licenseVerificationGeneration;
+function canClaimValidatedSettingsImport(attempt: SettingsImportAttempt): boolean {
+  latestValidatedSettingsImportOrder = Math.max(
+    latestValidatedSettingsImportOrder,
+    attempt.attemptOrder,
+  );
+  return attempt.attemptOrder === latestValidatedSettingsImportOrder
+    && attempt.observedLicenseGeneration === licenseVerificationGeneration;
 }
 
 /** The one in-flight canonical verification; concurrent triggers coalesce onto it instead of duplicating. */
@@ -1161,10 +1176,10 @@ export const useSettingsStore = create<SettingsState>()(
         return encryptSettingsBackup(JSON.stringify(data), passphrase);
       },
       importSettingsBackup: async (envelopeText, passphrase) => {
-        // Reserve import order without touching license identity. A later identity action or
-        // import can supersede this attempt while it decrypts, but an invalid file cannot cancel
-        // a valid activation/verifier merely by being selected.
-        const reservation = reserveSettingsImport();
+        // Capture invocation order without touching valid-operation order or license identity.
+        // A later valid identity action/import can supersede this attempt while it decrypts, but
+        // an invalid file cannot cancel a valid import, activation, or verifier merely by selection.
+        const attempt = beginSettingsImport();
         let plaintext: string;
         try {
           plaintext = await decryptSettingsBackup(envelopeText, passphrase);
@@ -1187,7 +1202,7 @@ export const useSettingsStore = create<SettingsState>()(
         // apply fail-closed, then settle entitlement through the one canonical verification.
         // Callers get a deterministic postcondition — when this resolves, `license` reflects the
         // verifier's verdict on the imported key. Other windows learn through the broadcast.
-        if (!canClaimSettingsImport(reservation)) {
+        if (!canClaimValidatedSettingsImport(attempt)) {
           return { licensed: false, status: 'superseded', reason: 'A newer settings operation superseded this import.' };
         }
         // This check and claim are synchronous, so no identity action can interleave between

@@ -502,6 +502,30 @@ describe('license verification race hardening (AUD-015)', () => {
     });
   });
 
+  it.each([
+    ['an unsupported envelope', 'unsupported-envelope'],
+    ['malformed plaintext', 'not-json'],
+    ['an incomplete current schema', JSON.stringify({ schemaVersion: 1, apiKeys: {} })],
+    ['an unsupported current schema', JSON.stringify({ schemaVersion: 2 })],
+  ])('rejected %s cannot supersede the latest valid import while it decrypts', async (_label, rejected) => {
+    const { settings } = await importFreshModules();
+    const { useSettingsStore } = settings;
+    await settings.waitForSettingsHydration();
+
+    const validImport = useSettingsStore.getState().importSettingsBackup('deferred-backup', 'passphrase');
+    await vi.waitFor(() => expect(backupControl.pending).toHaveLength(1));
+
+    await expect(useSettingsStore.getState().importSettingsBackup(rejected, 'passphrase'))
+      .resolves.toMatchObject({ status: 'failed' });
+
+    backupControl.pending.shift()!.resolve(JSON.stringify({
+      ...JSON.parse(legacyBackupWithLicense('')),
+      apiKeys: { openai: 'latest-valid-import-key' },
+    }));
+    await expect(validImport).resolves.toMatchObject({ status: 'committed' });
+    expect(useSettingsStore.getState().apiKeys.openai).toBe('latest-valid-import-key');
+  });
+
   it('a backup import that follows a pending activation owns the license identity', async () => {
     const { settings, gates } = await importFreshModules();
     const { useSettingsStore } = settings;

@@ -315,6 +315,40 @@ describe('portable encrypted settings backup schema (AUD-042)', () => {
     });
   });
 
+  it('projects schema-less backups onto the legacy exporter core instead of applying newer fields', async () => {
+    const font = openFontLibraryFace();
+    useSettingsStore.setState({
+      defaultImageNodeModel: { provider: 'bfl', modelId: 'flux-2-pro' },
+      appMenuStyle: 'menubar',
+      interfaceDensity: 'comfortable',
+      locale: 'ja',
+      localeChosen: true,
+      openFontLibrary: [font],
+    });
+    const encrypted = await encryptSettingsBackup(JSON.stringify({
+      ...legacyBackupData(),
+      defaultImageNodeModel: null,
+      appMenuStyle: 'compact',
+      interfaceDensity: 'compact',
+      locale: 'en',
+      localeChosen: false,
+      openFontLibrary: [],
+      arbitraryFutureField: 'must not enter the merge',
+    }), PASSPHRASE);
+
+    await expect(useSettingsStore.getState().importSettingsBackup(encrypted, PASSPHRASE))
+      .resolves.toMatchObject({ status: 'committed' });
+    expect(useSettingsStore.getState()).toMatchObject({
+      apiKeys: expect.objectContaining({ openai: 'legacy-openai-key' }),
+      defaultImageNodeModel: { provider: 'bfl', modelId: 'flux-2-pro' },
+      appMenuStyle: 'menubar',
+      interfaceDensity: 'comfortable',
+      locale: 'ja',
+      localeChosen: true,
+      openFontLibrary: [font],
+    });
+  });
+
   it.each([
     ['null', 'null'],
     ['an array', '[]'],
