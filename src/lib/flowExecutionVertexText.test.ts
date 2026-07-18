@@ -134,6 +134,13 @@ describe('executeNodeRequest Vertex text routing', () => {
     );
 
     expect(result.result).toBe('Vertex text response');
+    expect(result.usage).toEqual({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'gemini',
+      modelId: 'gemini-3.5-flash',
+      notes: [expect.stringContaining('did not report numeric usage')],
+    });
     expect(generateVertexText).toHaveBeenCalledWith(expect.objectContaining({
       projectId: 'project-38890c01-de5b-44c9-be4',
       location: 'us-central1',

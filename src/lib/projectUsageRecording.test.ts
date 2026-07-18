@@ -3,7 +3,7 @@ import { recordProjectUsageFromExecution } from './projectUsageRecording';
 import type { AppNode } from '../types/flow';
 
 describe('projectUsageRecording', () => {
-  it('records only executions with usage telemetry', () => {
+  it('records known and unknown successful model execution usage with exact ownership and time', () => {
     const recordUsage = vi.fn();
     const node = {
       id: 'image-1',
@@ -46,7 +46,34 @@ describe('projectUsageRecording', () => {
       flowWorkspaceId: 'workspace-a',
       flowWorkspaceName: 'Issue 1',
       recordUsage,
+      createdAt: 101,
     });
-    expect(recordUsage).toHaveBeenCalledTimes(1);
+    expect(recordUsage).toHaveBeenCalledTimes(2);
+    expect(recordUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+      nodeId: 'image-1',
+      nodeType: 'imageGen',
+      nodeData: node.data,
+      workspace: 'flow',
+      flowWorkspaceId: 'workspace-a',
+      flowWorkspaceName: 'Issue 1',
+      createdAt: 101,
+      usage: {
+        source: 'actual',
+        confidence: 'unknown',
+        provider: 'gemini',
+        notes: [expect.stringContaining('did not report numeric usage')],
+      },
+    }));
+    expect(recordUsage.mock.calls[1][0].usage).not.toHaveProperty('costUsd');
+    expect(recordUsage.mock.calls[1][0].usage).not.toHaveProperty('inputTokens');
+    expect(recordUsage.mock.calls[1][0].usage).not.toHaveProperty('outputTokens');
+
+    recordProjectUsageFromExecution({
+      node: { ...node, type: 'textNode', data: { mode: 'prompt', prompt: 'local text' } } as AppNode,
+      usage: undefined,
+      workspace: 'flow',
+      recordUsage,
+    });
+    expect(recordUsage).toHaveBeenCalledTimes(2);
   });
 });

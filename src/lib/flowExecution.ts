@@ -58,6 +58,7 @@ import {
 import { applyAtlasImageInputs, atlasModelSupportsMask, resolveAtlasDimensionBody, applyAtlasModelParams, filterAtlasBodyToAcceptedFields, getAtlasModelParams } from './imageEditorAi/atlasNativeImage';
 import { extractStabilityGenerationId, fetchStabilityAsyncResultBlob } from './imageEditorAi/stabilityAsyncResult';
 import { normalizeBytePlusBaseUrl, bytePlusGenerateImage } from './imageEditorAi/bytePlusImage';
+import { createUnknownActualUsageForExecution } from './projectUsageRecording';
 import { buildGeminiImagePrompt } from './geminiImagePrompt';
 import { buildGeminiTtsPrompt } from './geminiTtsPrompt';
 import { validateGeminiVideoRequest } from './geminiVideoValidation';
@@ -366,32 +367,39 @@ export async function executeNodeRequest(
   const operation = () => limiter.acquire(async () => {
     throwIfAborted(options.signal);
 
-    if (shouldProxyNodeExecution(node, settings)) {
-      const proxied = await executeNodeViaBackendProxy(node, context, settings, onStatus, options.signal);
-      // Auto-upscale is client-side post-processing: the plan and every credential it can use
-      // (Android accelerator token, local endpoints, Stability key, Vertex auth) stay on this
-      // device, so a proxied image result takes exactly the same upscale path as a direct
-      // provider result instead of silently skipping the node's requested upscale.
-      return applyConfiguredAutoUpscaleIfRequested({ node, context, settings, result: proxied, onStatus, abortSignal: options.signal });
-    }
+    const execution = await (async (): Promise<ExecutionResult> => {
+      if (shouldProxyNodeExecution(node, settings)) {
+        const proxied = await executeNodeViaBackendProxy(node, context, settings, onStatus, options.signal);
+        // Auto-upscale is client-side post-processing: the plan and every credential it can use
+        // (Android accelerator token, local endpoints, Stability key, Vertex auth) stay on this
+        // device, so a proxied image result takes exactly the same upscale path as a direct
+        // provider result instead of silently skipping the node's requested upscale.
+        return applyConfiguredAutoUpscaleIfRequested({ node, context, settings, result: proxied, onStatus, abortSignal: options.signal });
+      }
 
-    switch (node.type) {
-      case 'textNode':
-        return executeTextNode(node, context, settings, onStatus, options.signal);
-      case 'imageGen':
-        return executeImageNode(node, context, settings, onStatus, options.signal);
-      case 'cropImageNode':
-        return executeCropImageNode(node, context, onStatus, options.signal);
-      case 'videoGen':
-        return executeVideoNode(node, context, settings, onStatus, options.signal);
-      case 'audioGen':
-        return executeAudioNode(node, context, settings, onStatus, options.signal);
-      // 'composition' is handled above, before the retry wrapper — see that comment.
-      case 'visionVerifyNode':
-        return executeVisionVerifyNode(node, context, settings, onStatus, options.signal);
-      default:
-        throw new NonRetryableError(`Unsupported node type: ${node.type}`);
-    }
+      switch (node.type) {
+        case 'textNode':
+          return executeTextNode(node, context, settings, onStatus, options.signal);
+        case 'imageGen':
+          return executeImageNode(node, context, settings, onStatus, options.signal);
+        case 'cropImageNode':
+          return executeCropImageNode(node, context, onStatus, options.signal);
+        case 'videoGen':
+          return executeVideoNode(node, context, settings, onStatus, options.signal);
+        case 'audioGen':
+          return executeAudioNode(node, context, settings, onStatus, options.signal);
+        // 'composition' is handled above, before the retry wrapper — see that comment.
+        case 'visionVerifyNode':
+          return executeVisionVerifyNode(node, context, settings, onStatus, options.signal);
+        default:
+          throw new NonRetryableError(`Unsupported node type: ${node.type}`);
+      }
+    })();
+
+    if (execution.usage) return execution;
+    const identity = resolveSuccessfulUsageIdentity(node, settings, execution);
+    const usage = createUnknownActualUsageForExecution(node, identity);
+    return usage ? { ...execution, usage } : execution;
   }, options.signal);
 
   // These direct-provider routes submit paid, non-idempotent asynchronous jobs.
@@ -420,6 +428,38 @@ export async function executeNodeRequest(
     },
     operation,
   });
+}
+
+function resolveSuccessfulUsageIdentity(
+  node: AppNode,
+  settings: RuntimeSettingsSnapshot,
+  execution: ExecutionResult,
+): { provider?: string; modelId?: string; imageCount?: number } {
+  if (node.type === 'textNode') {
+    const provider = (node.data.provider as TextProvider | undefined) ?? 'gemini';
+    return { provider, modelId: getModelId(settings, 'text', provider, node.data.modelId) };
+  }
+  if (node.type === 'imageGen') {
+    const provider = (node.data.provider as ImageProvider | undefined) ?? 'gemini';
+    return {
+      provider,
+      modelId: getModelId(settings, 'image', provider, node.data.modelId),
+      imageCount: execution.resultType === 'image' ? 1 + (execution.additionalResults?.length ?? 0) : undefined,
+    };
+  }
+  if (node.type === 'videoGen') {
+    const provider = (node.data.provider as VideoProvider | undefined) ?? 'gemini';
+    const modelId = getModelId(settings, 'video', provider, node.data.modelId);
+    return { provider, modelId: provider === 'gemini' ? normalizeGeminiVideoModelId(modelId) : modelId };
+  }
+  if (node.type === 'audioGen') {
+    const provider = (node.data.provider as AudioProvider | undefined) ?? 'elevenlabs';
+    return { provider, modelId: getModelId(settings, 'audio', provider, node.data.modelId) };
+  }
+  if (node.type === 'visionVerifyNode') {
+    return { provider: 'gemini', modelId: node.data.modelId ?? 'gemini-3.5-flash' };
+  }
+  return {};
 }
 
 function isDirectPaidAsyncRequest(node: AppNode, settings: RuntimeSettingsSnapshot): boolean {
@@ -1459,7 +1499,7 @@ async function executeVisionVerifyNode(
       statusMessage: `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
       usage: {
         source: 'actual',
-        confidence: 'measured',
+        confidence: 'unknown',
         provider: 'gemini',
         modelId,
         notes: [verification.explanation, 'Generated through Vertex AI desktop auth.'],
@@ -1489,11 +1529,18 @@ async function executeVisionVerifyNode(
     statusMessage: `Verified: ${verification.value ? 'TRUE' : 'FALSE'}`,
     usage: {
       source: 'actual',
-      confidence: 'measured',
+      confidence: finiteUsageNumber(response.usageMetadata?.promptTokenCount) !== undefined
+        || finiteUsageNumber(response.usageMetadata?.totalTokenCount) !== undefined
+        ? 'measured'
+        : 'unknown',
       provider: 'gemini',
       modelId,
-      inputTokens: response.usageMetadata?.promptTokenCount ?? 100,
-      totalTokens: response.usageMetadata?.totalTokenCount ?? 100,
+      ...(finiteUsageNumber(response.usageMetadata?.promptTokenCount) !== undefined
+        ? { inputTokens: response.usageMetadata?.promptTokenCount }
+        : {}),
+      ...(finiteUsageNumber(response.usageMetadata?.totalTokenCount) !== undefined
+        ? { totalTokens: response.usageMetadata?.totalTokenCount }
+        : {}),
       notes: [verification.explanation],
     },
   };
@@ -1567,6 +1614,38 @@ async function executeCropImageNode(
       width: cropResult.width,
     },
   };
+}
+
+function createReportedTextUsage(
+  provider: TextProvider,
+  modelId: string,
+  reported: { inputTokens?: number; outputTokens?: number; totalTokens?: number },
+): UsageTelemetry {
+  const inputTokens = finiteUsageNumber(reported.inputTokens);
+  const outputTokens = finiteUsageNumber(reported.outputTokens);
+  const totalTokens = finiteUsageNumber(reported.totalTokens);
+  if (inputTokens !== undefined && outputTokens !== undefined) {
+    return {
+      ...createMeasuredTextUsage(provider, modelId, { inputTokens, outputTokens }),
+      ...(totalTokens !== undefined ? { totalTokens } : {}),
+    };
+  }
+
+  const hasMeasuredCount = inputTokens !== undefined || outputTokens !== undefined || totalTokens !== undefined;
+  return {
+    source: 'actual',
+    confidence: hasMeasuredCount ? 'measured' : 'unknown',
+    provider,
+    modelId,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    notes: ['The provider omitted one or more token counts, so missing counts and pricing remain unknown.'],
+  };
+}
+
+function finiteUsageNumber(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 async function executeTextNode(
@@ -1703,9 +1782,10 @@ async function executeTextNode(
         statusMessage: `Generated with ${modelId}`,
         usage:
           usage
-            ? createMeasuredTextUsage('gemini', modelId, {
-                inputTokens: usage.promptTokenCount ?? 0,
-                outputTokens: usage.candidatesTokenCount ?? 0,
+            ? createReportedTextUsage('gemini', modelId, {
+                inputTokens: usage.promptTokenCount,
+                outputTokens: usage.candidatesTokenCount,
+                totalTokens: usage.totalTokenCount,
               })
             : undefined,
       };

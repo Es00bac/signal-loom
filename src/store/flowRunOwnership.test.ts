@@ -726,6 +726,23 @@ describe('Flow run ownership (AUD-002)', () => {
     await run;
     expect(findNodeInHydratedCanvas(dependencyId)?.data.isRunning).toBe(false);
     expect(findNodeInHydratedCanvas(rootId)?.data.isRunning).toBe(false);
+    expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(0);
+  });
+
+  it('does not invent an actual usage record when provider execution fails before reporting usage', async () => {
+    const runControl = createControllableRunPromise<ReturnType<typeof makeTextResult>>();
+    mockExecuteNodeRequest.mockImplementation(() => runControl.getPromise());
+    const nodeId = useFlowStore.getState().addNode('textNode', { x: 0, y: 0 }, {
+      mode: 'generate', provider: 'gemini', modelId: 'gemini-1.5-flash', prompt: 'fail before success',
+    });
+
+    const run = useFlowStore.getState().runNode(nodeId);
+    await runControl.waitForCall();
+    runControl.reject(new Error('Provider rejected before completion'));
+    await run;
+
+    expect(findNodeInHydratedCanvas(nodeId)?.data.error).toBe('Provider rejected before completion');
+    expect(useProjectUsageStore.getState().ledger.entries).toHaveLength(0);
   });
 
   it('invalidates a reset run graph so a recycled default workspace cannot accept a zombie result', async () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { executeNodeRequest } from './flowExecution';
+import { recordProjectUsageFromExecution } from './projectUsageRecording';
 import { buildEmptyModelCatalog, DEFAULT_EXECUTION_CONFIG, DEFAULT_MODELS, DEFAULT_PROVIDER_SETTINGS, getModelOptions } from './providerCatalog';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 
@@ -36,12 +37,18 @@ describe('Atlas Cloud video generation', () => {
   });
 
   it('submits a generateVideo request, polls the prediction, and returns the video URL', async () => {
+    let pollCalls = 0;
     // URL-branching mock (order-independent): dataUrlToFile/result-download also call fetch.
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.includes('/model/generateVideo')) return jsonResponse({ data: { id: 'pred-vid-1' } });
       // poll — nested { outputs: { outputs: [url] } } shape (exercises the extractor)
-      if (url.includes('/model/prediction/')) return jsonResponse({ data: { outputs: { outputs: ['https://static.atlascloud.ai/media/videos/out.mp4'] } } });
+      if (url.includes('/model/prediction/')) {
+        pollCalls += 1;
+        return pollCalls === 1
+          ? new Response(JSON.stringify({ message: 'try the accepted job again' }), { status: 429, headers: { 'content-type': 'application/json' } })
+          : jsonResponse({ data: { outputs: { outputs: ['https://static.atlascloud.ai/media/videos/out.mp4'] } } });
+      }
       throw new TypeError('Failed to fetch'); // result download is CORS-blocked -> URL fallback
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -52,11 +59,38 @@ describe('Atlas Cloud video generation', () => {
         prompt: 'a fox in a raincoat, cinematic',
         config: { ...DEFAULT_EXECUTION_CONFIG, durationSeconds: 8, videoResolution: '720p', aspectRatio: '16:9' },
       },
-      settings,
+      {
+        ...settings,
+        providerSettings: { ...settings.providerSettings, batchRetryBaseDelayMs: 0 },
+      },
     );
 
     expect(result.resultType).toBe('video');
     expect(result.result).toBe('https://static.atlascloud.ai/media/videos/out.mp4');
+    expect(result.usage).toEqual({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'atlas',
+      modelId: 'google/veo3.1/text-to-video',
+      notes: [expect.stringContaining('did not report numeric usage')],
+    });
+    const recordUsage = vi.fn();
+    recordProjectUsageFromExecution({
+      node: videoNode('google/veo3.1/text-to-video'),
+      usage: result.usage,
+      workspace: 'flow',
+      flowWorkspaceId: 'workspace-owner',
+      flowWorkspaceName: 'Owner Flow',
+      createdAt: 1234,
+      recordUsage,
+    });
+    expect(recordUsage).toHaveBeenCalledTimes(1);
+    expect(recordUsage).toHaveBeenCalledWith(expect.objectContaining({
+      flowWorkspaceId: 'workspace-owner',
+      flowWorkspaceName: 'Owner Flow',
+      createdAt: 1234,
+      usage: result.usage,
+    }));
 
     const createCall = fetchMock.mock.calls.find((call) => String(call[0]).includes('/model/generateVideo'))!;
     const body = JSON.parse((createCall[1] as RequestInit).body as string);
@@ -67,6 +101,8 @@ describe('Atlas Cloud video generation', () => {
       resolution: '720p',
       aspect_ratio: '16:9',
     });
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes('/model/generateVideo'))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes('/model/prediction/'))).toHaveLength(2);
   });
 
   it('uploads a start frame for image-to-video models', async () => {
@@ -91,6 +127,12 @@ describe('Atlas Cloud video generation', () => {
 
     expect(result.resultType).toBe('video');
     expect(result.result).toBe('https://static.atlascloud.ai/media/videos/i2v.mp4');
+    expect(result.usage).toMatchObject({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'atlas',
+      modelId: 'google/veo3.1/image-to-video',
+    });
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/model/uploadMedia'))).toBe(true);
     const createCall = fetchMock.mock.calls.find((call) => String(call[0]).includes('/model/generateVideo'))!;
     const createBody = JSON.parse((createCall[1] as RequestInit).body as string);

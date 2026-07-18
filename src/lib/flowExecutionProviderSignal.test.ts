@@ -136,7 +136,7 @@ describe('direct provider SDK AbortSignal propagation', () => {
 
   it('passes the exact signal to Gemini direct text and Vision Verify configs', async () => {
     const controller = new AbortController();
-    await executeNodeRequest(
+    const directText = await executeNodeRequest(
       node('textNode', 'gemini', 'gemini-3.5-flash', { mode: 'generate' }),
       { prompt: 'summarize', config: DEFAULT_EXECUTION_CONFIG },
       settings,
@@ -155,6 +155,15 @@ describe('direct provider SDK AbortSignal propagation', () => {
     for (const { request } of sdkCapture.googleRequests) {
       expect((request.config as { abortSignal?: AbortSignal }).abortSignal).toBe(controller.signal);
     }
+    expect(directText.usage).toMatchObject({
+      source: 'actual',
+      confidence: 'measured',
+      provider: 'gemini',
+      modelId: 'gemini-3.5-flash',
+      inputTokens: 1,
+      totalTokens: 2,
+    });
+    expect(directText.usage).not.toHaveProperty('outputTokens');
   });
 
   it('passes the exact signal to Gemini image and audio generation configs', async () => {
@@ -182,7 +191,7 @@ describe('direct provider SDK AbortSignal propagation', () => {
 
   it('passes the exact signal to OpenAI text and image requests on the configured custom endpoint', async () => {
     const controller = new AbortController();
-    await executeNodeRequest(
+    const directText = await executeNodeRequest(
       node('textNode', 'openai', 'gpt-4.1-mini', { mode: 'generate' }),
       { prompt: 'write', config: DEFAULT_EXECUTION_CONFIG },
       settings,
@@ -202,6 +211,13 @@ describe('direct provider SDK AbortSignal propagation', () => {
       { signal: controller.signal },
       { signal: controller.signal },
     ]);
+    expect(directText.usage).toEqual({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'openai',
+      modelId: 'gpt-4.1-mini',
+      notes: [expect.stringContaining('did not report numeric usage')],
+    });
   });
 
   it.each([
@@ -211,7 +227,7 @@ describe('direct provider SDK AbortSignal propagation', () => {
     ['audioGen', 'hexgrad/Kokoro-82M'],
   ] as const)('passes the exact signal to Hugging Face %s', async (type, modelId) => {
     const controller = new AbortController();
-    await executeNodeRequest(
+    const result = await executeNodeRequest(
       node(type, 'huggingface', modelId, type === 'textNode' ? { mode: 'generate' } : {}),
       {
         prompt: 'generate',
@@ -223,5 +239,16 @@ describe('direct provider SDK AbortSignal propagation', () => {
     );
 
     expect(sdkCapture.hfOptions.at(-1)).toEqual({ signal: controller.signal });
+    expect(result.usage).toEqual({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'huggingface',
+      modelId,
+      ...(type === 'imageGen' ? { imageCount: 1 } : {}),
+      notes: [expect.stringContaining('did not report numeric usage')],
+    });
+    expect(result.usage).not.toHaveProperty('costUsd');
+    expect(result.usage).not.toHaveProperty('inputTokens');
+    expect(result.usage).not.toHaveProperty('outputTokens');
   });
 });

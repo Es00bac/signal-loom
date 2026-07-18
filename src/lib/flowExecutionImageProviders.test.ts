@@ -149,6 +149,15 @@ describe('executeNodeRequest advanced image providers', () => {
     );
 
     expect(result.result).toBe('data:image/png;base64,QllURVBMVVM=');
+    expect(result.usage).toEqual({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'byteplus',
+      modelId: 'seedream-5-0-260128',
+      imageCount: 1,
+      notes: [expect.stringContaining('did not report numeric usage')],
+    });
+    expect(result.usage).not.toHaveProperty('costUsd');
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
     expect(body).toMatchObject({
       model: 'seedream-5-0-260128',

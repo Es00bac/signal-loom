@@ -65,6 +65,14 @@ describe('Vision Verify execution contract', () => {
     expect(execution).toMatchObject({ result: expected, resultType: 'boolean' });
     expect(typeof execution.result).toBe('boolean');
     expect(execution.usage?.notes).toContain(explanation);
+    expect(execution.usage).toMatchObject({
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'gemini',
+      modelId: 'gemini-3.5-flash',
+    });
+    expect(execution.usage).not.toHaveProperty('inputTokens');
+    expect(execution.usage).not.toHaveProperty('totalTokens');
   });
 
   it.each([

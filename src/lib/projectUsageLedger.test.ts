@@ -155,4 +155,39 @@ describe('projectUsageLedger', () => {
       })],
     });
   });
+
+  it('keeps unknown actual usage explicit without fabricating zero-valued fields', () => {
+    const entry = createProjectUsageEntryFromTelemetry({
+      nodeId: 'hf-audio',
+      nodeType: 'audioGen',
+      nodeData: { audioGenerationMode: 'speech' },
+      workspace: 'flow',
+      usage: {
+        source: 'actual',
+        confidence: 'unknown',
+        provider: 'huggingface',
+        modelId: 'hexgrad/Kokoro-82M',
+      },
+      createdAt: 700,
+    });
+    const restored = sanitizeProjectUsageLedgerSnapshot({ version: 1, entries: [entry] });
+
+    expect(restored.entries).toEqual([expect.objectContaining({
+      operation: 'audio-speech',
+      source: 'actual',
+      confidence: 'unknown',
+      provider: 'huggingface',
+      modelId: 'hexgrad/Kokoro-82M',
+      createdAt: 700,
+    })]);
+    expect(restored.entries[0]?.costUsd).toBeUndefined();
+    expect(restored.entries[0]?.inputTokens).toBeUndefined();
+    expect(restored.entries[0]?.outputTokens).toBeUndefined();
+    expect(summarizeProjectUsageLedger(restored)).toMatchObject({
+      totalKnownCostUsd: 0,
+      knownCostEntryCount: 0,
+      unknownCostEntryCount: 1,
+      entryCount: 1,
+    });
+  });
 });
