@@ -136,6 +136,7 @@ describe('Paper Inspector bundled-font selection authority (FBL-025)', () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    document.querySelectorAll('[data-fbl025-live-editor]').forEach((editor) => editor.remove());
     vi.unstubAllGlobals();
   });
 
@@ -241,6 +242,48 @@ describe('Paper Inspector bundled-font selection authority (FBL-025)', () => {
     expect(usePaperStore.getState().document.importedFonts).toBeUndefined();
     expect(usePaperStore.getState().undoStack).toEqual(historyBefore);
     expect(mocks.sessionCommit).not.toHaveBeenCalled();
+    expect(mocks.showAlertDialog).not.toHaveBeenCalled();
+    unregister();
+  });
+
+  it('revokes a live-editor commit when the same-ID store target is replaced without an Inspector rerender', async () => {
+    let releaseAuthentication: (() => void) | undefined;
+    mocks.install.mockResolvedValue(installedFace);
+    mocks.authenticate.mockImplementation(() => new Promise<void>((resolve) => { releaseAuthentication = resolve; }));
+    const a = makeDocument('A', 'A rich text');
+    const replacement = makeDocument('A replacement', 'Replacement with the same IDs');
+    const liveEditor = document.createElement('div');
+    liveEditor.dataset.fbl025LiveEditor = 'true';
+    liveEditor.textContent = 'A uncontrolled rich DOM';
+    document.body.append(liveEditor);
+    setStore(a);
+    const unregister = registerPaperRichEditorSession(a.pages[0].frames[0].id, {
+      applyTypography: async (_previous, _next, context) => {
+        await mocks.authenticate(context?.managedFonts?.at(-1));
+        if (!context?.authority?.isCurrent()) return null;
+        mocks.sessionCommit('stale A rich text');
+        liveEditor.textContent = 'stale A rich DOM mutation';
+        return { text: 'stale A rich text', richText: [{ runs: [{ text: 'stale A rich text' }] }] };
+      },
+    });
+    render(a);
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Choose inspector authority font')?.click());
+    await act(async () => { await vi.waitFor(() => expect(mocks.authenticate).toHaveBeenCalledWith(installedFace)); });
+    const historyBefore = structuredClone(usePaperStore.getState().undoStack);
+
+    // Do not rerender the mounted Inspector. Its React props and selection generation still describe A,
+    // while the live Paper store has been replaced by different same-ID document/page/frame objects.
+    setStore(replacement);
+    await act(async () => releaseAuthentication?.());
+
+    expect(liveEditor.textContent).toBe('A uncontrolled rich DOM');
+    expect(mocks.sessionCommit).not.toHaveBeenCalled();
+    expect(usePaperStore.getState().document).toBe(replacement);
+    expect(usePaperStore.getState().document.importedFonts).toBeUndefined();
+    expect(usePaperStore.getState().document.pages[0].frames[0].typography.fontFamily).not.toBe(bundledFamily.family);
+    expect(usePaperStore.getState().undoStack).toEqual(historyBefore);
+    expect(host.textContent).not.toContain('pinned to this document');
     expect(mocks.showAlertDialog).not.toHaveBeenCalled();
     unregister();
   });

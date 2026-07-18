@@ -11226,15 +11226,25 @@ export function PaperInspector({
     const target = inspectorAuthority.current;
     const operationAuthority: PaperRichEditorCommitAuthority | undefined = bundledAuthority && installedFont
       ? {
-          isCurrent: () => Boolean(
-            bundledAuthority.isCurrent()
-            && target
-            && inspectorAuthority.current === target
-            && inspectorGeneration.current === target.generation
-            && target.document === document
-            && target.page === currentPage
-            && target.frame === frame,
-          ),
+          isCurrent: () => {
+            if (
+              !bundledAuthority.isCurrent()
+              || !target
+              || inspectorAuthority.current !== target
+              || inspectorGeneration.current !== target.generation
+              || target.document !== document
+              || target.page !== currentPage
+              || target.frame !== frame
+            ) return false;
+            const state = usePaperStore.getState();
+            const selectedPage = state.document.pages.find((candidate) => candidate.id === state.selectedPageId);
+            const selectedFrame = selectedPage?.frames.find((candidate) => candidate.id === state.selectedFrameId);
+            return state.document === target.document
+              && state.selectedPageId === target.page.id
+              && state.selectedFrameId === target.frame.id
+              && selectedPage === target.page
+              && selectedFrame === target.frame;
+          },
         }
       : undefined;
     if (operationAuthority && !operationAuthority.isCurrent()) return false;
