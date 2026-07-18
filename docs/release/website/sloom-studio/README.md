@@ -114,10 +114,11 @@ Stable name → what it points to:
 `SHA256SUMS.txt` stays versioned on purpose (it's a checksum manifest). The
 `repoint-downloads.sh` helper is source-only and excluded from deploy.
 
-### Price change (launch $17.99 → $39 after 100 sales) — one command
+### Price change ($17.99 beta price → $39 at version 1.0)
 
 The display price is hardcoded in the HTML on purpose (static price = good for
-SEO and AI answer engines). When it changes, do it in one pass:
+SEO and AI answer engines). The beta price remains in effect for every 0.9.x build;
+change it only when version 1.0 ships:
 
 ```sh
 # from this directory:

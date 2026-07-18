@@ -23,6 +23,17 @@ describe('i18n message catalog', () => {
     expect(translate('settings.language', 'ja')).toBe('言語');
   });
 
+  it('ties the Community beta price to version 1.0 rather than a sales count or date', () => {
+    const english = translate('communityNotice.price', 'en');
+    const japanese = translate('communityNotice.price', 'ja');
+
+    expect(english).toContain('version 0.9.x');
+    expect(english).toContain('version 1.0');
+    expect(japanese).toContain('バージョン0.9.x');
+    expect(japanese).toContain('バージョン1.0');
+    expect(`${english}${japanese}`).not.toMatch(/first\s+100|先着100|August\s+1|8月1日/iu);
+  });
+
   it('translateBoth() renders both languages regardless of locale', () => {
     // Uses the explicit `both` form when present…
     expect(translateBoth('paper.jp.rtlBinding')).toBe('RTL 右綴じ');

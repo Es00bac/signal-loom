@@ -98,8 +98,8 @@ workspaces, every export except the professional print pipeline, no watermarks, 
 forever for personal and noncommercial use. No account, no time limit; the only nag is a
 once-a-day reminder that the paid tier exists.
 
-**Commercial license.** A one-time **$17.99** (first 100 buyers; the launch price rises to
-**$39 on August 1, 2026**) unlocks the professional print-production exports: PDF/X-4,
+**Commercial license.** A one-time **$17.99 beta price through version 0.9.x**, rising to
+**$39 starting with version 1.0**, unlocks the professional print-production exports: PDF/X-4,
 PDF/X-1a, KDP-ready PDF, Adobe IDML, and CMYK/spot-color separations, and removes the
 Community notice. One license key covers desktop and Android. Buy it from
 [sloom.studio](https://sloom.studio/#license).

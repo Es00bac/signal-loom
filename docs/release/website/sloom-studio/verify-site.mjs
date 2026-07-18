@@ -7,7 +7,7 @@
    hreflang alternates are present on both sides, and each JA page actually
    contains Japanese text (not a stray untranslated copy).
    Run: `node verify-site.mjs` (exit 0 = safe to rsync). */
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = new URL('.', import.meta.url).pathname;
@@ -17,6 +17,15 @@ const allPages = [...pages, ...jaPages];
 const homePages = new Set(['index.html', 'ja/index.html']); // use the standalone "bar" header, not the shared site-header shell
 const errors = [];
 const read = (f) => readFileSync(join(root, f), 'utf8');
+const siteHtmlPages = [];
+const collectHtmlPages = (directory = '') => {
+  for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
+    const relative = join(directory, entry.name);
+    if (entry.isDirectory()) collectHtmlPages(relative);
+    else if (entry.isFile() && entry.name.endsWith('.html')) siteHtmlPages.push(relative);
+  }
+};
+collectHtmlPages();
 
 // 1. all pages exist (EN + JA)
 for (const p of allPages) {
@@ -40,8 +49,8 @@ const indexMarkers = [
   ['LAN host port', ':8723'],
   ['Samsung DeX mention', 'Samsung DeX'],
   ['license section', 'id="license"'],
-  ['launch price', '17.99'],
-  ['regular price strike', '39'],
+  ['beta price', '$17.99 beta price through version 0.9.x'],
+  ['version-based full price', '$39 starting with version 1.0'],
   // Two-path funnel (licensing spec Part 3): free Community download + commercial license.
   ['free download CTA', 'Download free'],
   ['Community column', 'Community — free'],
@@ -64,6 +73,20 @@ for (const p of allPages.filter((x) => !homePages.has(x))) {
 for (const p of allPages) {
   const h = read(p);
   if (h.includes('#pricing')) errors.push(`${p} still links the removed #pricing anchor (use #license)`);
+}
+for (const p of siteHtmlPages) {
+  const h = read(p);
+  if (/first\s+100|先着100|ends?\s+August\s+1|8月1日まで/i.test(h)) {
+    errors.push(`${p} still carries the retired sales-count/date price trigger`);
+  }
+}
+
+const jaIndex = read('ja/index.html');
+if (!jaIndex.includes('バージョン0.9.xまではベータ価格¥3,000')) {
+  errors.push('ja/index.html missing the 0.9.x beta-price rule');
+}
+if (!jaIndex.includes('バージョン1.0から¥6,500')) {
+  errors.push('ja/index.html missing the version 1.0 full-price rule');
 }
 
 // 5. every referenced asset resolves to a real, non-trivial file
