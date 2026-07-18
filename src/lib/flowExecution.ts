@@ -354,16 +354,15 @@ export async function executeNodeRequest(
   // the internal subgraph, where each provider node acquires its own limiter slot and retry
   // budget through this same function. Running the orchestrator itself inside the retry
   // wrapper would re-run the WHOLE internal subgraph (duplicate provider spend) whenever one
-  // internal call exhausted its retries — and holding a limiter slot here would deadlock
-  // outright the moment an internal node shares the outer node's provider, because
-  // ProviderRateLimiter.acquire is a strict serial queue.
+  // internal call exhausted its retries. The orchestrator also has no provider request start
+  // of its own, so it must not consume an admission interval before those internal calls.
   if (node.type === 'functionNode') {
     throwIfAborted(options.signal);
     return executeFunctionNode(node, context, settings, onStatus, options);
   }
 
-  const providerId = typeof node.data.provider === 'string' ? node.data.provider : 'default';
-  const limiter = getProviderLimiter(providerId);
+  const providerPolicyKey = resolveProviderStartPolicyKey(node, settings);
+  const limiter = getProviderLimiter(providerPolicyKey);
 
   const operation = () => limiter.acquire(async () => {
     throwIfAborted(options.signal);
@@ -1287,6 +1286,49 @@ function redactApiRequesterMessage(message: string): string {
   return message
     .replace(/(bearer\s+)[^\s,;]+/gi, '$1[redacted]')
     .replace(/((?:api[_-]?key|access[_-]?token|token|password|secret)=)[^\s&]+/gi, '$1[redacted]');
+}
+
+/**
+ * Name the transport and upstream quota that own this operation start. Saved
+ * nodes may omit their provider, so use the same per-node defaults as the
+ * executors instead of collapsing those valid routes into one `default` queue.
+ * Local transforms/endpoints get explicit zero-delay policies; Function/API
+ * Requester/Composition nodes stay outside this scheduler before reaching here.
+ */
+export function resolveProviderStartPolicyKey(
+  node: AppNode,
+  settings: RuntimeSettingsSnapshot,
+): string {
+  let provider: string;
+  switch (node.type) {
+    case 'textNode':
+      provider = node.data.mode === 'prompt'
+        ? 'local'
+        : ((node.data.provider as TextProvider | undefined) ?? 'gemini');
+      break;
+    case 'imageGen':
+      provider = (node.data.provider as ImageProvider | undefined) ?? 'gemini';
+      break;
+    case 'videoGen':
+      provider = (node.data.provider as VideoProvider | undefined) ?? 'gemini';
+      break;
+    case 'audioGen':
+      provider = (node.data.provider as AudioProvider | undefined) ?? 'elevenlabs';
+      break;
+    case 'visionVerifyNode':
+      provider = 'gemini';
+      break;
+    case 'cropImageNode':
+      provider = 'local';
+      break;
+    default:
+      provider = 'local';
+      break;
+  }
+
+  return shouldProxyNodeExecution(node, settings)
+    ? `backend-proxy:${provider}`
+    : provider;
 }
 
 function shouldProxyNodeExecution(node: AppNode, settings: RuntimeSettingsSnapshot): boolean {
