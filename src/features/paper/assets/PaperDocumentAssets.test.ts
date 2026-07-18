@@ -3,6 +3,7 @@ import { createBinaryAssetRecord } from '../../../shared/assets/contentAddressed
 import type { PaperDocument } from '../../../types/paper';
 import { classifyPaperFontPackaging } from '../../../lib/paperManagedFonts';
 import { MemoryPaperAssetRepository } from './PaperAssetRepository';
+import { installTestBundledPaperFontFace } from './testBundledPaperFontFixture';
 import {
   collectReachablePaperAssetIds,
   storePaperDataUrlAsset,
@@ -136,46 +137,9 @@ describe('Paper document assets', () => {
 
   it('preserves exact bundled font provenance, license evidence, and catalog face metadata without aliases', async () => {
     const repository = new MemoryPaperAssetRepository();
-    const font = await createBinaryAssetRecord(new Uint8Array([0, 1, 0, 0, 26]), {
-      mimeType: 'font/ttf',
-      fileName: 'fable-serif-variable.ttf',
-    });
-    const license = await createBinaryAssetRecord(new TextEncoder().encode('OFL fixture'), {
-      mimeType: 'text/plain',
-      fileName: 'OFL.txt',
-    });
-    await repository.put(font);
-    await repository.put(license);
-    const source = {
-      kind: 'bundled' as const,
-      url: 'signal-loom-font://library/families/fable-serif/fable-serif-variable.ttf',
-      version: 'catalog-2026.07.18',
-    };
-    const licenseEvidence = {
-      id: 'OFL-1.1',
-      textAsset: license.ref,
-      attribution: 'https://example.test/fable-serif',
-    };
-    const face = {
-      id: 'bundled-fable-serif-variable',
-      familyId: 'fable serif',
-      familyName: 'Fable Serif',
-      postscriptName: 'FableSerif-Variable',
-      weight: 425,
-      style: 'oblique' as const,
-      obliqueAngleDeg: 11.5,
-      stretchPercent: 87.5,
-      collectionIndex: 0,
-      variableAxes: { wght: { min: 200, default: 400, max: 900 } },
-      variationSettings: { wght: 425 },
-      unicodeRanges: [{ start: 0x20, end: 0x2ff }],
-      format: 'truetype' as const,
-      fontAsset: font.ref,
-      embeddability: 'unknown' as const,
-      canSubset: true,
-      source,
-      license: licenseEvidence,
-    };
+    const face = await installTestBundledPaperFontFace(repository);
+    const source = face.source;
+    const licenseEvidence = face.license;
     const document = { id: 'bundled-provenance', pages: [], importedFonts: [face] } as unknown as PaperDocument;
     const before = JSON.parse(JSON.stringify(document));
 
@@ -189,8 +153,72 @@ describe('Paper document assets', () => {
     expect(restored).not.toBe(face);
     expect(restored?.source).not.toBe(source);
     expect(restored?.license).not.toBe(licenseEvidence);
-    expect(restored?.fontAsset).not.toBe(font.ref);
-    expect(restored?.license.textAsset).not.toBe(license.ref);
+    expect(restored?.fontAsset).not.toBe(face.fontAsset);
+    expect(restored?.license.textAsset).not.toBe(face.license.textAsset);
+  });
+
+  it('does not grant bundled trust to arbitrary bytes with a real installed source tuple', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const installed = await installTestBundledPaperFontFace(repository);
+    const arbitrary = await createBinaryAssetRecord(new Uint8Array([7, 7, 7, 7]), {
+      mimeType: 'font/ttf',
+      fileName: 'arbitrary-user-font.ttf',
+    });
+    await repository.put(arbitrary);
+    const forged = { ...installed, fontAsset: arbitrary.ref, embeddability: 'unknown' as const };
+    const migrated = await migrateLegacyPaperBinaryFields(
+      { id: 'forged-bundled', pages: [], importedFonts: [forged] } as unknown as PaperDocument,
+      repository,
+    );
+    const restored = migrated.importedFonts?.[0];
+
+    expect(restored?.source).toEqual({ kind: 'user-import' });
+    expect(restored && classifyPaperFontPackaging(restored)).toMatchObject({ allowed: false });
+  });
+
+  it('fails closed when bundled license bytes are absent or managed metadata differs', async () => {
+    const missingRepository = new MemoryPaperAssetRepository();
+    const missingLicenseFace = await installTestBundledPaperFontFace(missingRepository);
+    await missingRepository.delete(missingLicenseFace.license.textAsset!.id);
+    const missing = await migrateLegacyPaperBinaryFields(
+      { id: 'missing-license', pages: [], importedFonts: [missingLicenseFace] } as unknown as PaperDocument,
+      missingRepository,
+    );
+    expect(missing.importedFonts?.[0]?.source).toEqual({ kind: 'user-import' });
+
+    const mismatchedRepository = new MemoryPaperAssetRepository();
+    const installed = await installTestBundledPaperFontFace(mismatchedRepository);
+    const mismatched = await migrateLegacyPaperBinaryFields({
+      id: 'mismatched-font-ref',
+      pages: [],
+      importedFonts: [{
+        ...installed,
+        fontAsset: { ...installed.fontAsset, mimeType: 'application/octet-stream' },
+      }],
+    } as unknown as PaperDocument, mismatchedRepository);
+    expect(mismatched.importedFonts?.[0]?.source).toEqual({ kind: 'user-import' });
+  });
+
+  it('retains trust only for the valid installed face in a mixed managed-font document', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const installed = await installTestBundledPaperFontFace(repository);
+    const arbitrary = await createBinaryAssetRecord(new Uint8Array([9, 9, 9]), { mimeType: 'font/ttf' });
+    await repository.put(arbitrary);
+    const migrated = await migrateLegacyPaperBinaryFields({
+      id: 'mixed-font-provenance',
+      pages: [],
+      importedFonts: [installed, {
+        ...installed,
+        id: 'forged-face',
+        familyId: 'forged face',
+        familyName: 'Forged Face',
+        postscriptName: 'ForgedFace-Regular',
+        fontAsset: arbitrary.ref,
+        embeddability: 'unknown' as const,
+      }],
+    } as unknown as PaperDocument, repository);
+
+    expect(migrated.importedFonts?.map((face) => face.source.kind)).toEqual(['bundled', 'user-import']);
   });
 
   it('does not retain bundled trust for a malformed non-library source record', async () => {

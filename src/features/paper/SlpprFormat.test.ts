@@ -10,6 +10,7 @@ import {
   type PaperDocumentWithManagedAssets,
 } from './assets/PaperDocumentAssets';
 import { MemoryPaperAssetRepository } from './assets/PaperAssetRepository';
+import { installTestBundledPaperFontFace } from './assets/testBundledPaperFontFixture';
 import {
   deserializeSlppr,
   serializeSlppr,
@@ -144,42 +145,7 @@ describe('SlpprFormat', () => {
 
   it('round-trips bundled font identity and license evidence through an actual version-2 package', async () => {
     const repository = new MemoryPaperAssetRepository();
-    const font = await createBinaryAssetRecord(new Uint8Array([0, 1, 0, 0, 26]), {
-      mimeType: 'font/ttf',
-      fileName: 'fable-serif.ttf',
-    });
-    const license = await createBinaryAssetRecord(new TextEncoder().encode('OFL fixture'), {
-      mimeType: 'text/plain',
-      fileName: 'OFL.txt',
-    });
-    await repository.put(font);
-    await repository.put(license);
-    const face = {
-      id: 'bundled-fable-serif',
-      familyId: 'fable serif',
-      familyName: 'Fable Serif',
-      postscriptName: 'FableSerif-Regular',
-      weight: 400,
-      style: 'normal' as const,
-      stretchPercent: 100,
-      collectionIndex: 0,
-      variableAxes: {},
-      unicodeRanges: [{ start: 0x20, end: 0x2ff }],
-      format: 'truetype' as const,
-      fontAsset: font.ref,
-      embeddability: 'unknown' as const,
-      canSubset: true,
-      source: {
-        kind: 'bundled' as const,
-        url: 'signal-loom-font://library/families/fable-serif/fable-serif.ttf',
-        version: 'catalog-2026.07.18',
-      },
-      license: {
-        id: 'OFL-1.1',
-        textAsset: license.ref,
-        attribution: 'https://example.test/fable-serif',
-      },
-    };
+    const face = await installTestBundledPaperFontFace(repository);
     const document = { id: 'bundled-paper', title: 'Bundled type', pages: [], importedFonts: [face] } as unknown as PaperDocument;
 
     const bytes = await serializeSlppr(document, repository);
@@ -189,8 +155,38 @@ describe('SlpprFormat', () => {
 
     expect(restoredFace).toEqual(face);
     expect(restoredFace && classifyPaperFontPackaging(restoredFace)).toEqual(classifyPaperFontPackaging(face));
-    expect(await restoredRepository.get(font.ref.id)).toEqual(font);
-    expect(await restoredRepository.get(license.ref.id)).toEqual(license);
+    expect(await restoredRepository.get(face.fontAsset.id)).toBeDefined();
+    expect(await restoredRepository.get(face.license.textAsset!.id)).toBeDefined();
+  });
+
+  it('downgrades canonical-looking arbitrary font bytes across version-2 package save/open', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const installed = await installTestBundledPaperFontFace(repository);
+    const arbitrary = await createBinaryAssetRecord(new Uint8Array([8, 8, 8, 8]), { mimeType: 'font/ttf' });
+    await repository.put(arbitrary);
+    const document = {
+      id: 'spoofed-bundled-package',
+      pages: [],
+      importedFonts: [{ ...installed, fontAsset: arbitrary.ref, embeddability: 'unknown' }],
+    } as unknown as PaperDocument;
+
+    const bytes = await serializeSlppr(document, repository);
+    const restored = await deserializeSlppr(bytes, new MemoryPaperAssetRepository());
+
+    expect(restored.importedFonts?.[0]?.source).toEqual({ kind: 'user-import' });
+    expect(restored.importedFonts?.[0] && classifyPaperFontPackaging(restored.importedFonts[0]))
+      .toMatchObject({ allowed: false });
+  });
+
+  it('rejects a package save when bundled license bytes are absent', async () => {
+    const repository = new MemoryPaperAssetRepository();
+    const face = await installTestBundledPaperFontFace(repository);
+    await repository.delete(face.license.textAsset!.id);
+
+    await expect(serializeSlppr(
+      { id: 'missing-license-package', pages: [], importedFonts: [face] } as unknown as PaperDocument,
+      repository,
+    )).rejects.toThrow(/missing required asset/i);
   });
 
   it('migrates version-1 asset references, data URLs, and imported-font Base64 once', async () => {

@@ -22,6 +22,7 @@ import {
   normalizePaperFontWeight,
 } from '../../../lib/paperManagedFonts';
 import { isPaperManagedIccProfile } from '../../../lib/paperManagedIccProfiles';
+import { verifyBundledPaperFontProvenance } from '../../../lib/bundledPaperFontProvenance';
 
 export type ManagedPaperAssetLocator = PaperManagedAssetLocator;
 export type PaperAssetLocator = PaperManagedAssetLocator;
@@ -254,7 +255,11 @@ function normalizeFontAttestation(value: unknown): PaperFontAttestation | undefi
 }
 
 /** Normalizes historical imported-font shapes into one explicit production-managed face. */
-function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset: BinaryAssetRef): PaperManagedFontFace {
+async function normalizeManagedFontFace(
+  candidate: LegacyPaperImportedFont,
+  fontAsset: BinaryAssetRef,
+  repository: PaperAssetRepository,
+): Promise<PaperManagedFontFace> {
   const familyName = typeof candidate.familyName === 'string' && candidate.familyName.trim()
     ? candidate.familyName.trim()
     : 'Imported Font';
@@ -282,7 +287,7 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
     : undefined;
   const license = normalizeFontLicense(candidate.license);
   const attestation = normalizeFontAttestation(candidate.attestation);
-  return {
+  const normalized: PaperManagedFontFace = {
     id: typeof candidate.id === 'string' && candidate.id ? candidate.id : `imported-font-${fontAsset.sha256.slice(0, 12)}`,
     familyId: typeof candidate.familyId === 'string' && candidate.familyId.trim()
       ? normalizePaperFontFamilyId(candidate.familyId)
@@ -311,6 +316,13 @@ function normalizeManagedFontFace(candidate: LegacyPaperImportedFont, fontAsset:
     license,
     ...(attestation ? { attestation } : {}),
   };
+  if (
+    normalized.source.kind === 'bundled'
+    && !await verifyBundledPaperFontProvenance(normalized, repository)
+  ) {
+    normalized.source = { kind: 'user-import' };
+  }
+  return normalized;
 }
 
 async function storePayload(
@@ -445,10 +457,10 @@ export async function migrateLegacyPaperBinaryFields(
     migrated.importedFonts = await Promise.all(migrated.importedFonts.map(async (font) => {
       const candidate = font as unknown as LegacyPaperImportedFont;
       if (isBinaryAssetRef(candidate.fontAsset)) {
-        return normalizeManagedFontFace(candidate, candidate.fontAsset) as ManagedPaperImportedFont;
+        return normalizeManagedFontFace(candidate, candidate.fontAsset, repository);
       }
       if (isBinaryAssetRef(candidate.assetRef)) {
-        return normalizeManagedFontFace(candidate, candidate.assetRef) as ManagedPaperImportedFont;
+        return normalizeManagedFontFace(candidate, candidate.assetRef, repository);
       }
       const dataBase64 = candidate.dataBase64;
       if (typeof dataBase64 !== 'string' || dataBase64.length === 0) {
@@ -458,7 +470,7 @@ export async function migrateLegacyPaperBinaryFields(
         mimeType: fontMimeType(hasManagedFontFormat(candidate.format) ? candidate.format : 'truetype'),
         fileName: `${candidate.id || 'font'}.${fontExtension(hasManagedFontFormat(candidate.format) ? candidate.format : 'truetype')}`,
       });
-      return normalizeManagedFontFace(candidate, ref) as ManagedPaperImportedFont;
+      return normalizeManagedFontFace(candidate, ref, repository);
     }));
   }
 

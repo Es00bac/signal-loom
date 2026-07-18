@@ -12,6 +12,10 @@ import { getSignalLoomNativeBridge, type SignalLoomNativeBridge } from './native
 import { buildImportedFont } from './paperFontLibrary';
 import { normalizePaperFontFamilyId } from './paperManagedFonts';
 import { vetFontBytes } from './paperFontVetting';
+import {
+  registerBundledPaperFontProvenance,
+  type BundledPaperFontProvenanceIdentity,
+} from './bundledPaperFontProvenance';
 
 /**
  * signal-loom-font:// is registered only by this app's own Electron main process
@@ -873,6 +877,33 @@ export interface InstallBundledPaperFontFaceInput {
   fetchImpl?: typeof fetch;
 }
 
+function bundledPaperFontProvenanceIdentity(
+  family: BundledFontFamily,
+  face: BundledFontFace,
+): BundledPaperFontProvenanceIdentity {
+  return {
+    sourceUrl: bundledFontResourceUrl(face.file),
+    sourceVersion: family.sourceVersion,
+    fontId: `bundled-${face.id}`,
+    fontSha256: face.sha256,
+    fontByteLength: face.byteLength,
+    fontMimeType: face.file.toLowerCase().endsWith('.otf') ? 'font/otf' : 'font/ttf',
+    licenseId: family.licenseId,
+    licenseSha256: family.licenseSha256,
+    licenseByteLength: family.licenseByteLength,
+    licenseAttribution: family.sourceUrl,
+    familyId: normalizePaperFontFamilyId(family.family),
+    familyName: family.family,
+    postscriptName: face.postscriptName,
+    weight: face.weight,
+    style: face.style,
+    stretchPercent: face.stretchPercent,
+    collectionIndex: face.collectionIndex,
+    variableAxes: structuredClone(face.axes),
+    canSubset: face.canSubset,
+  };
+}
+
 export async function installBundledPaperFontFace(input: InstallBundledPaperFontFaceInput): Promise<PaperManagedFontFace> {
   if (!bundledFaceBelongsToFamily(input.family, input.face)) {
     throw new Error('The selected face does not belong to the bundled family.');
@@ -921,7 +952,7 @@ export async function installBundledPaperFontFace(input: InstallBundledPaperFont
     },
   });
   if (!built) throw new Error(`${input.face.fullName} cannot be embedded in production output.`);
-  return {
+  const installed = {
     ...built,
     familyId: normalizePaperFontFamilyId(input.family.family),
     familyName: input.family.family,
@@ -931,4 +962,8 @@ export async function installBundledPaperFontFace(input: InstallBundledPaperFont
     variableAxes: input.face.axes,
     canSubset: input.face.canSubset,
   };
+  registerBundledPaperFontProvenance(
+    bundledPaperFontProvenanceIdentity(input.family, input.face),
+  );
+  return installed;
 }

@@ -29,6 +29,7 @@ import {
 import { resolveExactPaperOutputProfile } from './paperManagedIccProfiles';
 import { collectPaperLinkedAssets } from './paperPreflight';
 import { classifyPaperFontPackaging } from './paperManagedFonts';
+import { installTestBundledPaperFontFace } from '../features/paper/assets/testBundledPaperFontFixture';
 import type {
   PaperDocument,
   PaperManagedFontFace,
@@ -209,33 +210,9 @@ afterEach(async () => {
 
 describe('portable .sloom Paper asset section (AUD-004)', () => {
   it('preserves a bundled catalog face and its packaging decision across portable project reopen', async () => {
-    const font = await seedRecord(fontBytes, 'font/ttf', 'bundled-fable-serif.ttf');
-    const license = await seedRecord(licenseBytes, 'text/plain', 'OFL.txt');
-    const source = {
-      kind: 'bundled' as const,
-      url: 'signal-loom-font://library/families/fable-serif/bundled-fable-serif.ttf',
-      version: 'catalog-2026.07.18',
-    };
-    const licenseEvidence = {
-      id: 'OFL-1.1',
-      textAsset: license,
-      attribution: 'https://example.test/fable-serif',
-    };
-    const face = managedFace(font, {
-      id: 'bundled-fable-serif',
-      familyId: 'fable serif',
-      familyName: 'Fable Serif',
-      postscriptName: 'FableSerif-Variable',
-      weight: 425,
-      style: 'oblique',
-      obliqueAngleDeg: 11.5,
-      stretchPercent: 87.5,
-      variableAxes: { wght: { min: 200, default: 400, max: 900 } },
-      variationSettings: { wght: 425 },
-      embeddability: 'unknown',
-      source,
-      license: licenseEvidence,
-    });
+    const face = await installTestBundledPaperFontFace(paperAssetRepository);
+    const source = face.source;
+    const licenseEvidence = face.license;
     seedPaperTabs([{
       id: 'tab-bundled-font',
       document: paperTabDocument({ title: 'Bundled Font Tab', imageRefs: [], fonts: [face] }),
@@ -253,8 +230,50 @@ describe('portable .sloom Paper asset section (AUD-004)', () => {
     expect(restored && classifyPaperFontPackaging(restored)).toEqual(classifyPaperFontPackaging(face));
     expect(restored?.source).not.toBe(source);
     expect(restored?.license).not.toBe(licenseEvidence);
-    expect(await paperAssetRepository.get(font.id)).toBeDefined();
-    expect(await paperAssetRepository.get(license.id)).toBeDefined();
+    expect(await paperAssetRepository.get(face.fontAsset.id)).toBeDefined();
+    expect(await paperAssetRepository.get(face.license.textAsset!.id)).toBeDefined();
+  });
+
+  it('reopens mixed portable faces with bundled trust only on the installed catalog bytes', async () => {
+    const installed = await installTestBundledPaperFontFace(paperAssetRepository);
+    const arbitrary = await seedRecord(new Uint8Array([7, 7, 7, 7]), 'font/ttf', 'arbitrary-user-font.ttf');
+    seedPaperTabs([{
+      id: 'tab-mixed-font-provenance',
+      document: paperTabDocument({
+        title: 'Mixed Font Provenance',
+        imageRefs: [],
+        fonts: [installed, {
+          ...installed,
+          id: 'forged-bundled-face',
+          familyId: 'forged bundled face',
+          familyName: 'Forged Bundled Face',
+          postscriptName: 'ForgedBundledFace-Regular',
+          fontAsset: arbitrary,
+          embeddability: 'unknown',
+        }],
+      }),
+    }]);
+    const saved = await buildSavedPortableProject({ strict: true });
+
+    await resetAllStores();
+    await wipePaperAssetRepository();
+    await restoreProjectDocument(saved, {
+      paperAuthorization: capturePaperWorkspaceAuthorization(),
+    });
+
+    expect(usePaperStore.getState().document.importedFonts?.map((face) => face.source.kind))
+      .toEqual(['bundled', 'user-import']);
+  });
+
+  it('rejects portable save when an installed bundled face has lost its license record', async () => {
+    const face = await installTestBundledPaperFontFace(paperAssetRepository);
+    await paperAssetRepository.delete(face.license.textAsset!.id);
+    seedPaperTabs([{
+      id: 'tab-missing-bundled-license',
+      document: paperTabDocument({ title: 'Missing Bundled License', imageRefs: [], fonts: [face] }),
+    }]);
+
+    await expect(buildSavedPortableProject({ strict: true })).rejects.toThrow(/license|missing/i);
   });
 
   it('embeds every reachable managed record from all Paper tabs and reopens on a clean profile with identical digests', async () => {
