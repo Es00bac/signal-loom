@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Capacitor } from '@capacitor/core';
 import { addFrameToPaperPage, createDefaultPaperDocument, updatePaperDocumentSetup } from '../../lib/paperDocument';
 import type { BinaryAssetRef } from '../../shared/assets/contentAddressedAsset';
 import type { PaperFrame, PaperManagedFontFace, PaperManagedIccProfile } from '../../types/paper';
@@ -18,6 +19,7 @@ import {
   insertPaperFrameVertexPatch,
   materializePaperRasterOutputDocument,
   movePaperFrameVertexPatch,
+  openPrintPreview,
   resolvePaperEyedropperFrameColor,
   shouldShowPaperVertexHandles,
   samplePixelColorFromCanvas,
@@ -28,6 +30,19 @@ import { materializePaperDocumentAssetUrls } from '../../features/paper/assets/P
 const sourceStoreMocks = vi.hoisted(() => ({
   items: [] as Array<{ id: string; label: string; kind: string; mimeType?: string; assetUrl?: string; createdAt: number }>,
 }));
+
+const androidFileMocks = vi.hoisted(() => ({
+  writeFile: vi.fn(),
+  appendFile: vi.fn(),
+  getUri: vi.fn(),
+}));
+
+vi.mock('@capacitor/filesystem', () => ({
+  Directory: { Documents: 'DOCUMENTS', External: 'EXTERNAL', Data: 'DATA' },
+  Filesystem: androidFileMocks,
+}));
+
+vi.mock('../../shared/ui/userNotice', () => ({ showUserNotice: vi.fn() }));
 
 vi.mock('../../store/sourceBinStore', () => ({
   useSourceBinStore: { getState: () => ({ getAllItems: () => sourceStoreMocks.items }) },
@@ -304,6 +319,107 @@ describe('PaperWorkspaceUtils eyedropper', () => {
 });
 
 describe('PaperWorkspaceUtils export', () => {
+  it('returns the successful print-dialog outcome only after invoking the popup print path', async () => {
+    const popupDocument = {
+      open: vi.fn(),
+      write: vi.fn(),
+      close: vi.fn(),
+    };
+    const popup = {
+      document: popupDocument,
+      focus: vi.fn(),
+      print: vi.fn(),
+    };
+    const open = vi.fn(() => popup as unknown as Window);
+    vi.stubGlobal('window', { open });
+
+    const outcome = await openPrintPreview(createDefaultPaperDocument({ title: 'Popup success' }));
+
+    expect(outcome).toEqual({
+      state: 'printed',
+      message: 'Opened browser print dialog after exact managed-face verification.',
+    });
+    expect(open).toHaveBeenCalledWith('', '_blank', 'noopener,noreferrer');
+    expect(popupDocument.open).toHaveBeenCalledOnce();
+    expect(popupDocument.write).toHaveBeenCalledOnce();
+    expect(popupDocument.close).toHaveBeenCalledOnce();
+    expect(popup.focus).toHaveBeenCalledOnce();
+    expect(popup.print).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it('downloads print HTML and returns html-fallback when the browser blocks the popup', async () => {
+    const anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
+    const open = vi.fn(() => null);
+    vi.stubGlobal('window', { open, setTimeout });
+    vi.stubGlobal('document', { createElement: vi.fn(() => anchor), body: { append: vi.fn() } });
+    const createObjectURL = vi.fn(() => 'blob:aud-037-print-html');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+
+    const outcome = await openPrintPreview(createDefaultPaperDocument({ title: 'Blocked Popup' }));
+
+    expect(outcome).toEqual({
+      state: 'html-fallback',
+      message: 'Browser popup was blocked; downloaded print HTML instead.',
+    });
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(anchor.download).toBe('Blocked-Popup-print.html');
+    vi.unstubAllGlobals();
+  });
+
+  it('reports a truthful error outcome instead of claiming a print dialog after popup fallback', async () => {
+    const anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
+    const open = vi.fn(() => null);
+    vi.stubGlobal('window', { open, setTimeout });
+    vi.stubGlobal('document', { createElement: vi.fn(() => anchor), body: { append: vi.fn() } });
+    vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:aud-037-caller'), revokeObjectURL: vi.fn() });
+    const statuses: string[] = [];
+
+    const outcome = await exportPaperPdfDocument(
+      createDefaultPaperDocument({ title: 'Caller fallback' }),
+      (status) => statuses.push(status),
+    );
+
+    expect(outcome).toEqual({
+      state: 'error',
+      message: 'Browser popup was blocked; downloaded print HTML instead.',
+      targetKind: 'file',
+    });
+    expect(statuses).toEqual(['Browser popup was blocked; downloaded print HTML instead.']);
+    expect([...statuses, outcome.message].join(' ')).not.toMatch(/opened browser print dialog/i);
+    expect(anchor.click).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it('routes the same blocked-popup HTML fallback through Android native storage', async () => {
+    const nativePlatform = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    androidFileMocks.writeFile.mockResolvedValue({ uri: 'content://aud-037' });
+    androidFileMocks.getUri.mockResolvedValue({ uri: 'content://aud-037/Android-Fallback-print.html' });
+    const open = vi.fn(() => null);
+    vi.stubGlobal('window', { open });
+    vi.stubGlobal('FileReader', class {
+      result = 'data:text/html;base64,PGh0bWw+';
+      onloadend: (() => void) | null = null;
+
+      readAsDataURL() {
+        this.onloadend?.();
+      }
+    });
+
+    const outcome = await openPrintPreview(createDefaultPaperDocument({ title: 'Android Fallback' }));
+
+    expect(outcome.state).toBe('html-fallback');
+    await vi.waitFor(() => expect(androidFileMocks.writeFile).toHaveBeenCalledOnce());
+    expect(androidFileMocks.writeFile.mock.calls[0][0]).toMatchObject({ path: 'Android-Fallback-print.html' });
+    await vi.waitFor(() => expect(androidFileMocks.getUri).toHaveBeenCalledOnce());
+    nativePlatform.mockRestore();
+    androidFileMocks.writeFile.mockReset();
+    androidFileMocks.getUri.mockReset();
+    vi.unstubAllGlobals();
+  });
+
   it('maps PDF raster presets to predictable format, quality, and DPI limits', () => {
     const doc = createDefaultPaperDocument({ title: 'PDF Presets' });
 
