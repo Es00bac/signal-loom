@@ -11,6 +11,7 @@ import {
   registerProjectSyncChannel,
   resetProjectSyncLog,
   retainProjectSyncAssets,
+  stageProjectSyncAssets,
   waitForProjectSyncEvents,
   type ProjectSyncChannel,
 } from './projectSyncService';
@@ -129,6 +130,20 @@ describe('projectSyncService — retained workspace assets', () => {
     retainProjectSyncAssets('paper', assetIds.slice(250));
     expect(getHostProjectSyncAsset('paper', assetIds[0])).toBeNull();
     expect(getHostProjectSyncAsset('paper', assetIds[250])).toBe('data:application/octet-stream;base64,250');
+  });
+
+  it('does not prune the last accepted inventory while a replacement inventory is only staged', () => {
+    retainProjectSyncAssets('paper', ['old']);
+    recordProjectSyncAsset('paper', 'old', 'data:application/octet-stream;base64,T0xE');
+    stageProjectSyncAssets('paper', ['new']);
+    recordProjectSyncAsset('paper', 'new', 'data:application/octet-stream;base64,TkVX');
+
+    expect(getHostProjectSyncAsset('paper', 'old')).toBe('data:application/octet-stream;base64,T0xE');
+    expect(getHostProjectSyncAsset('paper', 'new')).toBe('data:application/octet-stream;base64,TkVX');
+
+    retainProjectSyncAssets('paper', ['new']);
+    expect(getHostProjectSyncAsset('paper', 'old')).toBeNull();
+    expect(getHostProjectSyncAsset('paper', 'new')).toBe('data:application/octet-stream;base64,TkVX');
   });
 });
 

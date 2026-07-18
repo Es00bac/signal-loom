@@ -3,6 +3,7 @@ import {
   getHostProjectSyncAsset,
   recordProjectSyncAsset,
   retainProjectSyncAssets,
+  stageProjectSyncAssets,
   type ProjectSyncChannelId,
 } from './projectSyncService';
 import { isServedLanSession, remoteHostFetch } from './remoteHostClient';
@@ -37,7 +38,7 @@ export async function prepareVerifiedProjectSyncAssets(
   assetIds: readonly string[],
 ): Promise<boolean> {
   if (isAndroidLanServerAvailable()) {
-    retainProjectSyncAssets(channel, assetIds);
+    stageProjectSyncAssets(channel, assetIds);
     return true;
   }
   if (!isServedLanSession()) return false;
@@ -50,6 +51,19 @@ export async function prepareVerifiedProjectSyncAssets(
   } catch {
     return false;
   }
+}
+
+/** Replace the authority's accepted inventory only after its envelope has applied successfully. */
+export async function commitVerifiedProjectSyncAssets(
+  channel: ProjectSyncChannelId,
+  assetIds: readonly string[],
+): Promise<boolean> {
+  if (isAndroidLanServerAvailable()) {
+    retainProjectSyncAssets(channel, assetIds);
+    return true;
+  }
+  // Served peers finalize through the authority's successful channel apply.
+  return isServedLanSession();
 }
 
 /** Make a layer's encoded pixels (a base64 PNG data URL) available to other devices on this channel. */

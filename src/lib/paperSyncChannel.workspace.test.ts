@@ -18,8 +18,13 @@ vi.mock('./projectSyncClient', () => ({
 }));
 
 import { usePaperStore } from '../store/paperStore';
-import { MemoryPaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
-import { createBinaryAssetRecord, type BinaryAssetRecord } from '../shared/assets/contentAddressedAsset';
+import { MemoryPaperAssetRepository, type PaperAssetRepository } from '../features/paper/assets/PaperAssetRepository';
+import {
+  createBinaryAssetRecord,
+  type BinaryAssetId,
+  type BinaryAssetRecord,
+  type BinaryAssetRef,
+} from '../shared/assets/contentAddressedAsset';
 import type { PaperDocument, PaperManagedFontFace, PaperManagedIccProfile, PaperWorkspaceDocumentSnapshot } from '../types/paper';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { clearProjectSyncChannels, getProjectSyncChannel } from './projectSyncService';
@@ -40,6 +45,7 @@ interface ManagedWorkspaceFixture {
 async function managedWorkspaceFixture(): Promise<ManagedWorkspaceFixture> {
   const art = await createBinaryAssetRecord(new Uint8Array([1, 2, 3, 4]), { mimeType: 'image/png', fileName: 'art.png' });
   const font = await createBinaryAssetRecord(new Uint8Array([5, 6, 7, 8]), { mimeType: 'font/ttf', fileName: 'studio.ttf' });
+  const license = await createBinaryAssetRecord(new TextEncoder().encode('Studio font license'), { mimeType: 'text/plain', fileName: 'LICENSE.txt' });
   const icc = await createBinaryAssetRecord(new Uint8Array([9, 10, 11, 12]), { mimeType: 'application/vnd.iccprofile', fileName: 'press.icc' });
 
   let artDocument = createDefaultPaperDocument({ title: 'Managed art tab' });
@@ -68,7 +74,7 @@ async function managedWorkspaceFixture(): Promise<ManagedWorkspaceFixture> {
     embeddability: 'installable',
     canSubset: true,
     source: { kind: 'user-import' },
-    license: {},
+    license: { id: 'Studio-License', textAsset: license.ref },
   };
   const profile: PaperManagedIccProfile = {
     id: icc.ref.id,
@@ -87,12 +93,37 @@ async function managedWorkspaceFixture(): Promise<ManagedWorkspaceFixture> {
   };
 
   return {
-    records: [art, font, icc],
+    records: [art, font, license, icc],
     documents: [
       { id: 'art-tab', document: artDocument, assetIds: [art.ref.id], selectedPageId: artDocument.pages[0].id, selectedFrameIds: [], tool: 'select', zoom: 0.8 },
-      { id: 'production-tab', document: productionDocument, assetIds: [font.ref.id, icc.ref.id].sort(), selectedPageId: productionDocument.pages[0].id, selectedFrameIds: [], tool: 'hand', zoom: 1.2 },
+      { id: 'production-tab', document: productionDocument, assetIds: [font.ref.id, license.ref.id, icc.ref.id].sort(), selectedPageId: productionDocument.pages[0].id, selectedFrameIds: [], tool: 'hand', zoom: 1.2 },
     ],
   };
+}
+
+class FailingPutRepository implements PaperAssetRepository {
+  private readonly delegate = new MemoryPaperAssetRepository();
+  private putCount = 0;
+  private readonly failAt: number;
+
+  constructor(failAt: number) {
+    this.failAt = failAt;
+  }
+
+  seed(record: BinaryAssetRecord): Promise<BinaryAssetRef> {
+    return this.delegate.put(record);
+  }
+
+  async put(record: BinaryAssetRecord): Promise<BinaryAssetRef> {
+    this.putCount += 1;
+    if (this.putCount === this.failAt) throw new Error('injected repository failure');
+    return this.delegate.put(record);
+  }
+
+  get(id: BinaryAssetId): Promise<BinaryAssetRecord | undefined> { return this.delegate.get(id); }
+  has(id: BinaryAssetId): Promise<boolean> { return this.delegate.has(id); }
+  delete(id: BinaryAssetId): Promise<void> { return this.delegate.delete(id); }
+  listRefs(): Promise<BinaryAssetRef[]> { return this.delegate.listRefs(); }
 }
 
 function installWorkspace(documents: PaperWorkspaceDocumentSnapshot[], activeDocumentId: string): void {
@@ -152,7 +183,7 @@ describe('Paper workspace sync envelope', () => {
     expect(change.workspace.documents.map((candidate) => candidate.id)).toEqual(['art-tab', 'production-tab']);
     expect(change.workspace.activeDocumentId).toBe('production-tab');
     expect(change.workspace.assetRefs.map((ref) => ref.id)).toEqual(fixture.records.map((record) => record.ref.id).sort());
-    expect(payloads.size).toBe(3);
+    expect(payloads.size).toBe(4);
 
     __resetPaperSyncChannelForTests();
     clearProjectSyncChannels();
@@ -205,6 +236,82 @@ describe('Paper workspace sync envelope', () => {
     expect(await receiver.listRefs()).toEqual([]);
   });
 
+  it('rejects an unsupported workspace schema without falling through to legacy document replacement', async () => {
+    const { change } = await buildTransmittedWorkspace();
+    const unsupported = { ...change, schemaVersion: 99 } as unknown as PaperDocumentNativeChange;
+    __resetPaperSyncChannelForTests();
+    clearProjectSyncChannels();
+    h.served.value = true;
+    const receiver = new MemoryPaperAssetRepository();
+    const blank = createDefaultPaperDocument({ title: 'Unsupported schema baseline' });
+    installWorkspace([{ id: 'blank-tab', document: blank, selectedPageId: blank.pages[0].id, selectedFrameIds: [], tool: 'select', zoom: 0.8 }], 'blank-tab');
+    __setPaperSyncDepsForTests({ repository: receiver, getAsset: async () => null });
+    initializePaperSyncChannel();
+
+    await expect(getProjectSyncChannel(PAPER_SYNC_CHANNEL)!.applyRemote(unsupported)).resolves.toBe(false);
+    expect(usePaperStore.getState().activeDocumentId).toBe('blank-tab');
+    expect(usePaperStore.getState().document.title).toBe('Unsupported schema baseline');
+    expect(await receiver.listRefs()).toEqual([]);
+  });
+
+  it('rolls back every earlier repository write after a later write fails and preserves baseline records', async () => {
+    const { change, payloads, fixture } = await buildTransmittedWorkspace();
+    __resetPaperSyncChannelForTests();
+    clearProjectSyncChannels();
+    h.served.value = true;
+    const receiver = new FailingPutRepository(2);
+    const preExistingManaged = fixture.records[0];
+    const unrelated = await createBinaryAssetRecord(new Uint8Array([42]), { mimeType: 'image/png', fileName: 'keep.png' });
+    await receiver.seed(preExistingManaged);
+    await receiver.seed(unrelated);
+    const baselineRefs = (await receiver.listRefs()).sort((left, right) => left.id.localeCompare(right.id));
+    const blank = createDefaultPaperDocument({ title: 'Atomic receiver baseline' });
+    installWorkspace([{ id: 'blank-tab', document: blank, selectedPageId: blank.pages[0].id, selectedFrameIds: [], tool: 'select', zoom: 0.8 }], 'blank-tab');
+    __setPaperSyncDepsForTests({
+      repository: receiver,
+      getAsset: async (_channel, assetId) => payloads.get(assetId) ?? null,
+    });
+    initializePaperSyncChannel();
+
+    await expect(getProjectSyncChannel(PAPER_SYNC_CHANNEL)!.applyRemote(change)).resolves.toBe(false);
+    expect(usePaperStore.getState().activeDocumentId).toBe('blank-tab');
+    expect(usePaperStore.getState().document.title).toBe('Atomic receiver baseline');
+    expect((await receiver.listRefs()).sort((left, right) => left.id.localeCompare(right.id))).toEqual(baselineRefs);
+    expect(await receiver.get(preExistingManaged.ref.id)).toEqual(preExistingManaged);
+    expect(await receiver.get(unrelated.ref.id)).toEqual(unrelated);
+  });
+
+  it('rejects a correctly hashed font record assigned to an image-frame role before any publication', async () => {
+    const { change, payloads } = await buildTransmittedWorkspace();
+    const substituted = structuredClone(change);
+    const fontRef = substituted.workspace.documents[1].document.importedFonts![0].fontAsset;
+    const artFrame = substituted.workspace.documents[0].document.pages[0].frames.find((frame) => frame.kind === 'image')!;
+    const originalLocator = artFrame.asset!.locator;
+    if (originalLocator?.kind !== 'managed') throw new Error('Expected a managed image fixture.');
+    artFrame.asset!.locator = { kind: 'managed', ref: fontRef };
+    substituted.workspace.documents[0].assetIds = [fontRef.id];
+    substituted.workspace.assetRefs = substituted.workspace.assetRefs
+      .filter((ref) => ref.id !== originalLocator.ref.id);
+    substituted.assetIds = substituted.workspace.assetRefs.map((ref) => ref.id);
+
+    __resetPaperSyncChannelForTests();
+    clearProjectSyncChannels();
+    h.served.value = true;
+    const receiver = new MemoryPaperAssetRepository();
+    const blank = createDefaultPaperDocument({ title: 'Role baseline' });
+    installWorkspace([{ id: 'blank-tab', document: blank, selectedPageId: blank.pages[0].id, selectedFrameIds: [], tool: 'select', zoom: 0.8 }], 'blank-tab');
+    __setPaperSyncDepsForTests({
+      repository: receiver,
+      getAsset: async (_channel, assetId) => payloads.get(assetId) ?? null,
+    });
+    initializePaperSyncChannel();
+
+    await expect(getProjectSyncChannel(PAPER_SYNC_CHANNEL)!.applyRemote(substituted)).resolves.toBe(false);
+    expect(usePaperStore.getState().activeDocumentId).toBe('blank-tab');
+    expect(usePaperStore.getState().document.title).toBe('Role baseline');
+    expect(await receiver.listRefs()).toEqual([]);
+  });
+
   it('publishes every verified asset before the envelope event', async () => {
     const fixture = await managedWorkspaceFixture();
     const sender = new MemoryPaperAssetRepository();
@@ -227,7 +334,7 @@ describe('Paper workspace sync envelope', () => {
     await __flushPaperSyncEmitForTests();
 
     expect(events.at(-1)).toBe('envelope');
-    expect(events.slice(0, -1)).toHaveLength(3);
+    expect(events.slice(0, -1)).toHaveLength(4);
     expect(events.slice(0, -1).every((event) => event.startsWith('asset:sha256:'))).toBe(true);
   });
 

@@ -77,6 +77,19 @@ export class IndexedDbPaperAssetRepository implements PaperAssetRepository {
     return { ...record.ref };
   }
 
+  async putAllAtomic(records: readonly BinaryAssetRecord[]): Promise<BinaryAssetRef[]> {
+    if (records.length === 0) return [];
+    const database = await this.getDatabase();
+    const transaction = database.transaction(ASSET_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(ASSET_STORE_NAME);
+    const requests = records.map((record) => store.put(encodePaperAssetDbRecord(record)));
+    await Promise.all([
+      ...requests.map((request) => waitForRequest(request)),
+      waitForTransaction(transaction),
+    ]);
+    return records.map(({ ref }) => ({ ...ref }));
+  }
+
   async get(id: BinaryAssetId): Promise<BinaryAssetRecord | undefined> {
     const database = await this.getDatabase();
     const transaction = database.transaction(ASSET_STORE_NAME, 'readonly');

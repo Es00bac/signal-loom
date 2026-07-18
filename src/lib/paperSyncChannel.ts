@@ -4,6 +4,7 @@ import { isServedLanSession } from './remoteHostClient';
 import { ensureProjectSyncChannelStarted } from './projectSyncClient';
 import { registerProjectSyncChannel, type ProjectSyncChannel } from './projectSyncService';
 import {
+  commitVerifiedProjectSyncAssets,
   getProjectSyncAsset,
   prepareVerifiedProjectSyncAssets,
   putVerifiedProjectSyncAsset,
@@ -54,6 +55,7 @@ let assetRepository: PaperAssetRepository = paperAssetRepository;
 let prepareAssets = prepareVerifiedProjectSyncAssets;
 let putAsset = putVerifiedProjectSyncAsset;
 let getAsset = getProjectSyncAsset;
+let commitAssets = commitVerifiedProjectSyncAssets;
 
 /** Serialize async asset publication and apply so a slower older envelope cannot land after a newer one. */
 let outboundTail: Promise<void> = Promise.resolve();
@@ -155,6 +157,13 @@ async function recordMatchesRef(record: BinaryAssetRecord | undefined, ref: Bina
   return Boolean(record && sameAssetRef(record.ref, ref) && await verifyBinaryAssetRecord(record));
 }
 
+function sameAssetRecord(left: BinaryAssetRecord | undefined, right: BinaryAssetRecord | undefined): boolean {
+  if (!left || !right) return left === right;
+  return sameAssetRef(left.ref, right.ref)
+    && left.bytes.byteLength === right.bytes.byteLength
+    && left.bytes.every((value, index) => value === right.bytes[index]);
+}
+
 async function publishWorkspaceAssets(change: PaperWorkspaceSnapshotChange): Promise<void> {
   const assetIds = change.workspace.assetRefs.map((ref) => ref.id);
   if (!await prepareAssets(PAPER_SYNC_CHANNEL, assetIds)) {
@@ -171,32 +180,123 @@ async function publishWorkspaceAssets(change: PaperWorkspaceSnapshotChange): Pro
   }
 }
 
+interface StagedInboundAssetWrite {
+  record: BinaryAssetRecord;
+  previous: BinaryAssetRecord | undefined;
+}
+
+interface StagedInboundAssets {
+  resolved: Map<BinaryAssetId, BinaryAssetRecord>;
+  writes: StagedInboundAssetWrite[];
+}
+
 /** Fetch and verify the complete asset set without mutating the repository. */
-async function stageInboundAssets(change: PaperWorkspaceSnapshotChange): Promise<BinaryAssetRecord[] | null> {
-  const staged: BinaryAssetRecord[] = [];
+async function stageInboundAssets(change: PaperWorkspaceSnapshotChange): Promise<StagedInboundAssets | null> {
+  const resolved = new Map<BinaryAssetId, BinaryAssetRecord>();
+  const writes: StagedInboundAssetWrite[] = [];
   for (const ref of change.workspace.assetRefs) {
     const existing = await assetRepository.get(ref.id);
-    if (await recordMatchesRef(existing, ref)) continue;
+    if (await recordMatchesRef(existing, ref)) {
+      resolved.set(ref.id, existing!);
+      continue;
+    }
     const encoded = await getAsset(PAPER_SYNC_CHANNEL, ref.id);
     if (!encoded) return null;
     const bytes = bytesFromDataUrl(encoded);
     if (!bytes) return null;
     const record: BinaryAssetRecord = { ref: { ...ref }, bytes };
     if (!await recordMatchesRef(record, ref)) return null;
-    staged.push(record);
+    resolved.set(ref.id, record);
+    writes.push({ record, previous: existing });
   }
-  return staged;
+  return { resolved, writes };
 }
 
-async function commitStagedAssets(records: BinaryAssetRecord[]): Promise<boolean> {
+type PaperManagedAssetRole = 'image' | 'font' | 'font-license' | 'icc-profile';
+
+function recordKindMatchesRole(record: BinaryAssetRecord, role: PaperManagedAssetRole): boolean {
+  const mimeType = record.ref.mimeType.trim().toLowerCase();
+  switch (role) {
+    case 'image': return mimeType.startsWith('image/');
+    case 'font': return mimeType.startsWith('font/');
+    case 'font-license': return mimeType.startsWith('text/');
+    case 'icc-profile': return mimeType === 'application/vnd.iccprofile';
+  }
+}
+
+/** Bind every immutable record to the authored role that will consume it before any publication. */
+function validateResolvedAssetRoles(
+  change: PaperWorkspaceSnapshotChange,
+  resolved: ReadonlyMap<BinaryAssetId, BinaryAssetRecord>,
+): boolean {
+  const roles = new Map<BinaryAssetId, Set<PaperManagedAssetRole>>();
+  const add = (ref: BinaryAssetRef, role: PaperManagedAssetRole): void => {
+    const existing = roles.get(ref.id) ?? new Set<PaperManagedAssetRole>();
+    existing.add(role);
+    roles.set(ref.id, existing);
+  };
+
+  for (const { document } of change.workspace.documents) {
+    for (const page of [...document.pages, ...(document.parentPages ?? [])]) {
+      for (const frame of page.frames) {
+        const locator = frame.asset?.locator;
+        if (frame.kind === 'image' && locator?.kind === 'managed') add(locator.ref, 'image');
+      }
+    }
+    for (const font of document.importedFonts ?? []) {
+      add(font.fontAsset, 'font');
+      if (font.license.textAsset) add(font.license.textAsset, 'font-license');
+    }
+    for (const profile of document.managedIccProfiles ?? []) add(profile.asset, 'icc-profile');
+  }
+
+  for (const [id, expectedRoles] of roles) {
+    const record = resolved.get(id);
+    if (!record || [...expectedRoles].some((role) => !recordKindMatchesRole(record, role))) return false;
+  }
+  return roles.size === resolved.size;
+}
+
+async function rollbackStagedAssets(writes: readonly StagedInboundAssetWrite[]): Promise<boolean> {
   try {
-    for (const record of records) {
-      const stored = await assetRepository.put(record);
-      if (!sameAssetRef(stored, record.ref)) return false;
+    for (const { record, previous } of [...writes].reverse()) {
+      if (previous) await assetRepository.put(previous);
+      else await assetRepository.delete(record.ref.id);
+    }
+    for (const { record, previous } of writes) {
+      if (!sameAssetRecord(await assetRepository.get(record.ref.id), previous)) return false;
     }
     return true;
   } catch {
     return false;
+  }
+}
+
+interface CommittedStagedAssets {
+  rollback: () => Promise<boolean>;
+}
+
+async function commitStagedAssets(writes: readonly StagedInboundAssetWrite[]): Promise<CommittedStagedAssets | null> {
+  try {
+    const records = writes.map(({ record }) => record);
+    if (assetRepository.putAllAtomic) {
+      const stored = await assetRepository.putAllAtomic(records);
+      if (stored.length !== records.length
+        || stored.some((ref, index) => !sameAssetRef(ref, records[index].ref))) {
+        throw new Error('Paper asset repository returned a mismatched atomic commit result.');
+      }
+    } else {
+      for (const record of records) {
+        const stored = await assetRepository.put(record);
+        if (!sameAssetRef(stored, record.ref)) {
+          throw new Error('Paper asset repository returned a mismatched commit result.');
+        }
+      }
+    }
+    return { rollback: () => rollbackStagedAssets(writes) };
+  } catch {
+    await rollbackStagedAssets(writes);
+    return null;
   }
 }
 
@@ -217,6 +317,9 @@ async function flushEmitWork(): Promise<void> {
   const fingerprint = workspaceFingerprint(change);
   if (fingerprint === lastWorkspaceFingerprint) return;
   await publishWorkspaceAssets(change);
+  if (!await commitAssets(PAPER_SYNC_CHANNEL, change.workspace.assetRefs.map((ref) => ref.id))) {
+    throw new Error('Paper sync deferred: the managed asset inventory could not be committed.');
+  }
   notifyLanProjectChange(PAPER_SYNC_CHANNEL, change);
   lastWorkspaceFingerprint = fingerprint;
 }
@@ -250,24 +353,42 @@ function handleStoreChange(): void {
 }
 
 async function applyRemoteChange(change: PaperDocumentNativeChange): Promise<boolean> {
-  if (isPaperWorkspaceSnapshotChange(change)) {
+  // A payload that claims the workspace-envelope shape must never be reinterpreted as a legacy
+  // active-document snapshot merely because its schema version is unknown.
+  if (change.type === 'paper-document-snapshot' && change.workspace !== undefined) {
     const validated = validateWorkspaceChange(change);
     if (!validated) {
       console.warn('[paper-sync] Rejected malformed or unsupported workspace envelope.');
       return false;
     }
     const staged = await stageInboundAssets(validated);
-    if (!staged || !await commitStagedAssets(staged)) {
+    if (!staged || !validateResolvedAssetRoles(validated, staged.resolved)) {
+      console.warn('[paper-sync] Workspace application rejected an asset with the wrong authored role.');
+      return false;
+    }
+    const committed = await commitStagedAssets(staged.writes);
+    if (!committed) {
       console.warn('[paper-sync] Workspace application deferred until every managed asset verifies.');
+      return false;
+    }
+    if (!await commitAssets(PAPER_SYNC_CHANNEL, validated.workspace.assetRefs.map((ref) => ref.id))) {
+      await committed.rollback();
       return false;
     }
     applyingRemote = true;
     try {
       const changed = usePaperStore.getState().applyRemotePaperWorkspaceSnapshot(validated.workspace);
+      if (!changed) {
+        await committed.rollback();
+        return false;
+      }
       canEmit = true;
       lastWorkspaceFingerprint = workspaceFingerprint(currentWorkspaceChange());
       clearPendingEmit();
       return changed;
+    } catch (error) {
+      await committed.rollback();
+      throw error;
     } finally {
       applyingRemote = false;
     }
@@ -302,6 +423,9 @@ const paperChannel: ProjectSyncChannel<PaperDocumentNativeChange> = {
   async snapshot() {
     const change = currentWorkspaceChange();
     await publishWorkspaceAssets(change);
+    if (!await commitAssets(PAPER_SYNC_CHANNEL, change.workspace.assetRefs.map((ref) => ref.id))) {
+      throw new Error('Paper sync deferred: the managed asset inventory could not be committed.');
+    }
     return change;
   },
 };
@@ -327,6 +451,7 @@ export function __resetPaperSyncChannelForTests(): void {
   prepareAssets = prepareVerifiedProjectSyncAssets;
   putAsset = putVerifiedProjectSyncAsset;
   getAsset = getProjectSyncAsset;
+  commitAssets = commitVerifiedProjectSyncAssets;
   outboundTail = Promise.resolve();
   inboundTail = Promise.resolve();
   clearPendingEmit();
@@ -337,11 +462,13 @@ export function __setPaperSyncDepsForTests(deps: {
   prepareAssets?: typeof prepareVerifiedProjectSyncAssets;
   putAsset?: typeof putVerifiedProjectSyncAsset;
   getAsset?: typeof getProjectSyncAsset;
+  commitAssets?: typeof commitVerifiedProjectSyncAssets;
 }): void {
   if (deps.repository) assetRepository = deps.repository;
   if (deps.prepareAssets) prepareAssets = deps.prepareAssets;
   if (deps.putAsset) putAsset = deps.putAsset;
   if (deps.getAsset) getAsset = deps.getAsset;
+  if (deps.commitAssets) commitAssets = deps.commitAssets;
 }
 
 export async function __flushPaperSyncEmitForTests(): Promise<void> {

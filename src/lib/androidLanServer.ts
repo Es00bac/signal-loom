@@ -12,7 +12,7 @@ import {
   getProjectSyncVersion,
   recordProjectSyncAsset,
   recordProjectSyncChange,
-  retainProjectSyncAssets,
+  stageProjectSyncAssets,
   waitForProjectSyncEvents,
   type ProjectSyncChannelId,
 } from './projectSyncService';
@@ -295,7 +295,10 @@ export async function resolveLanRequest(req: { method: string; path: string; bod
       const change = parseJsonBody<unknown>(req.body);
       const channel = getProjectSyncChannel(route.channel);
       if (change != null && channel) {
-        await channel.applyRemote(change);
+        const changed = await channel.applyRemote(change);
+        if (!changed) {
+          return { ok: false, error: 'change-not-applied', version: getProjectSyncVersion() };
+        }
         recordProjectSyncChange(route.channel, change);
       }
       return { ok: true, version: getProjectSyncVersion() };
@@ -322,7 +325,7 @@ export async function resolveLanRequest(req: { method: string; path: string; bod
         || body.assetIds.some((assetId) => typeof assetId !== 'string' || !assetId)) {
         return { ok: false, error: 'A project sync asset inventory must contain only non-empty ids.' };
       }
-      retainProjectSyncAssets(inventoryRoute.channel, [...new Set(body.assetIds)]);
+      stageProjectSyncAssets(inventoryRoute.channel, [...new Set(body.assetIds)]);
       return { ok: true };
     }
     const assetRoute = parseProjectAssetRoute(path.split('?')[0]);

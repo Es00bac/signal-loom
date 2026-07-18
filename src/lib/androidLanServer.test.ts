@@ -32,6 +32,7 @@ import {
 import { claimLock, getEditLockState, resetEditLock } from './projectEditLock';
 import {
   clearProjectSyncChannels,
+  getProjectSyncEventsSince,
   registerProjectSyncChannel,
   resetProjectSyncLog,
   type ProjectSyncChannel,
@@ -202,6 +203,22 @@ describe('androidLanServer — baton write-gate', () => {
     const res = (await mutate('flow', { op: 1 }, DESKTOP.id)) as { ok: boolean };
     expect(res.ok).toBe(true);
     expect(applied).toEqual([{ op: 1 }]);
+  });
+
+  it('does not publish a channel change that the authority did not apply', async () => {
+    const channel: ProjectSyncChannel<unknown> = {
+      id: 'paper',
+      applyRemote: () => false,
+      snapshot: () => null,
+    };
+    registerProjectSyncChannel(channel);
+
+    await expect(mutate('paper', { schemaVersion: 99 }, DESKTOP.id)).resolves.toMatchObject({
+      ok: false,
+      error: 'change-not-applied',
+      version: 0,
+    });
+    expect(getProjectSyncEventsSince(0, 'paper')).toEqual([]);
   });
 
   it('applies a mutate from the device that holds the baton', async () => {
