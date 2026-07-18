@@ -245,6 +245,23 @@ describe('composePaperTextFrame', () => {
     expect(lowerRunLeading.lines[0].layoutBounds?.heightPt).toBeCloseTo(22);
   });
 
+  it('preserves the print paragraph separator between authored rich blocks', async () => {
+    const composed = await composeSizedFixture({
+      widthMm: 100,
+      heightMm: 100,
+      richText: [
+        { runs: [{ text: 'First' }] },
+        { runs: [{ text: 'Second' }] },
+        { runs: [{ text: 'Third' }] },
+      ],
+      typography: { fontSizePt: 12, leadingPt: 20 },
+    });
+
+    expect(composed.lines.map((line) => line.text)).toEqual(['First', 'Second', 'Third']);
+    expect(composed.lines[1].originYPt - composed.lines[0].originYPt).toBeCloseTo(40);
+    expect(composed.lines[2].originYPt - composed.lines[1].originYPt).toBeCloseTo(40);
+  });
+
   it('uses paragraph alignLast for the final line of justified managed text', async () => {
     const composed = await composeFixture(
       [{ text: 'Centered final line' }],

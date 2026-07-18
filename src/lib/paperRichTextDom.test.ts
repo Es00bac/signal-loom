@@ -34,6 +34,24 @@ describe('paperRichTextDom pure helpers', () => {
     expect(richTextToEditorHtml([{ runs: [{ text: '<b>&"x"' }] }], 1)).toContain('&lt;b&gt;&amp;&quot;x&quot;');
   });
 
+  it('shows inherited rich-paragraph separation without persisting authored spacing', () => {
+    const html = richTextToEditorHtml([
+      { runs: [{ text: 'First' }] },
+      { runs: [{ text: 'Second' }] },
+    ], 1, {
+      typography: {
+        fontFamily: 'Fixture Sans', fontSizePt: 12, leadingPt: 20, tracking: 0,
+        align: 'left', hyphenate: false, color: '#111111', fontWeight: '400', fontStyle: 'normal',
+        firstLineIndentMm: 0, smallCaps: false, numericStyle: 'normal', dropCapLines: 0,
+        writingMode: 'horizontal-tb',
+      },
+      managedFonts: [],
+    });
+
+    expect(html).toContain('margin-bottom:26.66px');
+    expect(html).not.toContain('data-sa=');
+  });
+
   it('encodes paragraph shading/borders/indent as CSS + data-* so an edit can round-trip them', () => {
     const html = richTextToEditorHtml([
       {

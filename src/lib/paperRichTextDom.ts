@@ -86,7 +86,7 @@ function borderEdgeCss(edge: PaperParagraphBorderEdge | undefined, zoom: number)
   return edge ? `${(edge.widthPt * PT_TO_PX * zoom).toFixed(2)}px solid ${edge.color}` : undefined;
 }
 
-function paragraphInlineCss(paragraph: PaperRichParagraph, zoom: number): string {
+function paragraphInlineCss(paragraph: PaperRichParagraph, zoom: number, richParagraphGapPt = 0): string {
   const parts: string[] = [];
   if (paragraph.align) parts.push(`text-align:${paragraph.align}`);
   if (paragraph.alignLast) parts.push(`text-align-last:${paragraph.alignLast}`);
@@ -95,7 +95,8 @@ function paragraphInlineCss(paragraph: PaperRichParagraph, zoom: number): string
   if (paragraph.lineBreak && paragraph.lineBreak !== 'auto') parts.push(`text-wrap-style:${paragraph.lineBreak}`);
   if (paragraph.lineBreakStrict != null) parts.push(`line-break:${paragraph.lineBreakStrict ? 'strict' : 'auto'}`);
   if (paragraph.spaceBeforeMm) parts.push(`margin-top:${(paragraph.spaceBeforeMm * MM_TO_PX * zoom).toFixed(2)}px`);
-  if (paragraph.spaceAfterMm) parts.push(`margin-bottom:${(paragraph.spaceAfterMm * MM_TO_PX * zoom).toFixed(2)}px`);
+  const spaceAfterPx = (paragraph.spaceAfterMm ?? 0) * MM_TO_PX * zoom + richParagraphGapPt * PT_TO_PX * zoom;
+  if (spaceAfterPx) parts.push(`margin-bottom:${spaceAfterPx.toFixed(2)}px`);
   const leftPx = Math.max(0, paragraph.leftIndentMm ?? 0) * MM_TO_PX * zoom;
   const rightPx = Math.max(0, paragraph.rightIndentMm ?? 0) * MM_TO_PX * zoom;
   const hangPx = Math.max(0, paragraph.hangingIndentMm ?? 0) * MM_TO_PX * zoom;
@@ -218,7 +219,7 @@ function authoredObliqueDescriptor(fontStyle: string | undefined): string | unde
 export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: number, managedPaint?: RichEditorManagedPaintContext): string {
   if (!paragraphs.length) return '<div><br></div>';
   return paragraphs
-    .map((paragraph) => {
+    .map((paragraph, paragraphIndex) => {
       const runsHtml = paragraph.runs.length && paragraph.runs.some((run) => run.text)
         ? paragraph.runs
             .map((run) => {
@@ -243,7 +244,12 @@ export function richTextToEditorHtml(paragraphs: PaperRichParagraph[], zoom: num
       const marker = paragraph.listMarker
         ? `<span contenteditable="false" data-paper-marker="${escapeHtml(paragraph.listMarker)}">${escapeHtml(paragraph.listMarker)}\u2003</span>`
         : '';
-      const css = paragraphInlineCss(paragraph, zoom);
+      // Presentation-only inherited separation: the serializer reads authored spacing from data-sa, so this
+      // margin never gets baked into the document when the user opens and closes the editor.
+      const richParagraphGapPt = paragraphIndex < paragraphs.length - 1
+        ? managedPaint?.typography.leadingPt ?? 0
+        : 0;
+      const css = paragraphInlineCss(paragraph, zoom, richParagraphGapPt);
       const data = paragraphDataAttrs(paragraph);
       return `<div${css ? ` style="${css}"` : ''}${data}>${marker}${runsHtml}</div>`;
     })

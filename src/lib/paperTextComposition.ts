@@ -1136,6 +1136,13 @@ async function buildParagraphs(
     const firstLineIndentPt = (paragraph.firstLineIndentMm ?? frame.typography.firstLineIndentMm ?? 0) * PT_PER_MM;
     const borderPaddingPt = paragraph.borders?.paddingPt ?? (paragraph.borders ? 1.5 : 0);
     const listMarkerPadPt = paragraph.listMarker ? 4.5 * PT_PER_MM : 0;
+    // Print HTML separates authored rich paragraphs with a preserved newline inside the frame's pre-wrap
+    // container. That separator occupies one frame-leading line in Chromium. Keep it as explicit geometry in
+    // the managed composer instead of collapsing adjacent rich paragraphs into ordinary consecutive lines.
+    // Plain-text hard breaks are already represented by their own composition units and must not gain this gap.
+    const richParagraphGapPt = frame.richText?.length && paragraphIndex < paragraphs.length - 1
+      ? finitePositive(frame.typography.leadingPt, frame.typography.fontSizePt)
+      : 0;
     output.push({
       units,
       ruby,
@@ -1147,7 +1154,7 @@ async function buildParagraphs(
       borderPaddingPt,
       listMarkerPadPt,
       spaceBeforePt: clampNonNegative(paragraph.spaceBeforeMm ?? frame.typography.spaceBeforeMm) * PT_PER_MM,
-      spaceAfterPt: clampNonNegative(paragraph.spaceAfterMm ?? frame.typography.spaceAfterMm) * PT_PER_MM,
+      spaceAfterPt: clampNonNegative(paragraph.spaceAfterMm ?? frame.typography.spaceAfterMm) * PT_PER_MM + richParagraphGapPt,
       sourceEnd: sourceOffset,
       borders: paragraph.borders,
       shading: paragraph.shading,

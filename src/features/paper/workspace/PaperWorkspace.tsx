@@ -9536,6 +9536,11 @@ function PaperRichTextView({
         const dropCapLines = ownsParagraphStart && inheritedDropCapLines && inheritedDropCapLines >= 2 ? Math.min(8, Math.round(inheritedDropCapLines)) : 0;
         const spaceBefore = ownsParagraphStart ? Math.max(0, paragraph.spaceBeforeMm ?? frame.typography.spaceBeforeMm ?? 0) * PX_PER_MM * zoom : 0;
         const spaceAfter = ownsParagraphEnd ? Math.max(0, paragraph.spaceAfterMm ?? frame.typography.spaceAfterMm ?? 0) * PX_PER_MM * zoom : 0;
+        // Authored rich paragraphs are distinct blocks in print HTML. Its pre-wrap separator consumes one
+        // frame-leading line, so mirror that paragraph gap in the browser fallback and managed layer alike.
+        const richParagraphGap = ownsParagraphEnd && !isLastPara
+          ? frame.typography.leadingPt * PT_TO_PX * zoom
+          : 0;
         const leftIndentPx = Math.max(0, paragraph.leftIndentMm ?? 0) * PX_PER_MM * zoom;
         const rightIndentPx = Math.max(0, paragraph.rightIndentMm ?? 0) * PX_PER_MM * zoom;
         const hangingPx = ownsParagraphStart ? Math.max(0, paragraph.hangingIndentMm ?? 0) * PX_PER_MM * zoom : 0;
@@ -9562,7 +9567,7 @@ function PaperRichTextView({
         const padBottomPx = !ownsParagraphEnd || (continuousBox && !isLastPara) ? 0 : borderPadPx;
         const paragraphStyle: React.CSSProperties = {
           marginTop: spaceBefore || undefined,
-          marginBottom: spaceAfter || undefined,
+          marginBottom: spaceAfter + richParagraphGap || undefined,
           textAlign: paragraph.align,
           textAlignLast: ownsParagraphEnd && paragraph.alignLast && paragraph.alignLast !== 'auto' ? paragraph.alignLast : 'auto',
           lineHeight: paragraph.leadingPt != null ? `${paragraph.leadingPt * PT_TO_PX * zoom}px` : undefined,
