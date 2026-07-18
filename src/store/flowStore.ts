@@ -129,6 +129,7 @@ import {
 } from '../lib/referenceGroups';
 import {
   annotateFlowEdges,
+  flowNodeConnectionContractsChanged,
   validateFlowConnection,
 } from '../lib/flowConnectionContracts';
 import { LOOP_BREAK_TARGET_HANDLE } from '../lib/flowControlHandles';
@@ -956,6 +957,24 @@ function normalizeFlowEdgesWithCompositionDiagnostics(
     nodes: surfaceCompositionEdgeDiagnostics(nodes, compositionDiagnostics),
     edges: normalizedEdges,
   };
+}
+
+function reuseEquivalentFlowEdges(previousEdges: Edge[], nextEdges: Edge[]): Edge[] {
+  const previousById = new Map(previousEdges.map((edge) => [edge.id, edge]));
+  const reused = nextEdges.map((edge) => {
+    const previous = previousById.get(edge.id);
+    if (!previous) return edge;
+    try {
+      return JSON.stringify(previous) === JSON.stringify(edge) ? previous : edge;
+    } catch {
+      return edge;
+    }
+  });
+
+  return reused.length === previousEdges.length
+    && reused.every((edge, index) => edge === previousEdges[index])
+    ? previousEdges
+    : reused;
 }
 
 function sanitizePersistedCompositionAudioMigrationWarnings(node: AppNode): AppNode {
@@ -3782,6 +3801,7 @@ export const useFlowStore = create<FlowState>()(
       },
       patchNodeData: (id, patch) => {
         const currentNodes = get().nodes;
+        const currentEdges = get().edges;
         const requestedPatchChanged = currentNodes.some((node) => (
           node.id === id && hasNodeDataPatchChange(node.data, patch)
         ));
@@ -3822,7 +3842,20 @@ export const useFlowStore = create<FlowState>()(
           workspaceStore.invalidateFlowRunForNode(workspaceStore.hydratedWorkspaceId, id);
         }
 
-        set({ nodes });
+        if (!flowNodeConnectionContractsChanged(id, currentNodes, nodes, currentEdges)) {
+          set({ nodes });
+          return;
+        }
+
+        // Node settings can alter visible handles, carried types, accepted types, cardinality, or
+        // routed media families. Run the same canonical ingress pipeline used by import/paste and
+        // retain byte-equivalent edge objects so unrelated persisted edges do not churn.
+        const normalized = normalizeFlowEdgesWithCompositionDiagnostics(nodes, currentEdges);
+        const normalizedNodes = normalizeCompositionAudioTrackCounts(normalized.nodes, normalized.edges);
+        set({
+          nodes: normalizedNodes,
+          edges: reuseEquivalentFlowEdges(currentEdges, normalized.edges),
+        });
       },
       renameNodeBookmark: (id, rawTitle) => {
         const nextState = renameNodeBookmarkState(

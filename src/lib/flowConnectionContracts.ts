@@ -154,6 +154,75 @@ export function annotateFlowEdges(
   return edges.map((edge) => annotateFlowEdge(edge, context));
 }
 
+/**
+ * Determines whether a node-data edit can change any persisted edge contract. Dynamic port
+ * resolvers are the primary authority, so new model/handle/type variants participate without a
+ * second hand-maintained key list. The small explicit projection covers graph-wide semantics that
+ * do not appear in the edited node's own port list: Portal pairing, Function runtime media family,
+ * and Composition's authored-vs-routed track count.
+ */
+export function flowNodeConnectionContractsChanged(
+  nodeId: string,
+  previousNodes: readonly AppNode[],
+  nextNodes: readonly AppNode[],
+  edges: readonly Edge[],
+): boolean {
+  const previousNode = previousNodes.find((node) => node.id === nodeId);
+  const nextNode = nextNodes.find((node) => node.id === nodeId);
+  if (!previousNode || !nextNode) return false;
+
+  const participatesInGraph = edges.some((edge) => edge.source === nodeId || edge.target === nodeId);
+  const canAffectPortalPair = previousNode.type === 'portal' || nextNode.type === 'portal';
+  if (!participatesInGraph && !canAffectPortalPair) return false;
+
+  const normalizationSensitiveDataChanged = (
+    (nextNode.type === 'composition'
+      && !Object.is(previousNode.data.compositionAudioTrackCount, nextNode.data.compositionAudioTrackCount))
+    || (nextNode.type === 'portal'
+      && !Object.is(previousNode.data.portalPairId, nextNode.data.portalPairId))
+    || (nextNode.type === 'functionNode'
+      && !Object.is(previousNode.data.resultType, nextNode.data.resultType))
+  );
+  if (normalizationSensitiveDataChanged) {
+    return true;
+  }
+
+  const previousContext = { node: previousNode, nodes: previousNodes, edges };
+  const nextContext = { node: nextNode, nodes: nextNodes, edges };
+  const previousPorts = resolveFlowNodePorts(previousContext);
+  const nextPorts = resolveFlowNodePorts(nextContext);
+
+  if (!contractProjectionEquals(previousPorts, nextPorts)) return true;
+
+  const outputHandles = new Set<string | null>([
+    ...previousPorts.filter((port) => port.direction === 'output').map((port) => port.id),
+    ...nextPorts.filter((port) => port.direction === 'output').map((port) => port.id),
+  ]);
+  const previousGraphContext = { nodes: previousNodes, edges };
+  const nextGraphContext = { nodes: nextNodes, edges };
+
+  for (const handle of outputHandles) {
+    if (!contractProjectionEquals(
+      resolveFlowOutputType(nodeId, handle, previousGraphContext),
+      resolveFlowOutputType(nodeId, handle, nextGraphContext),
+    )) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function contractProjectionEquals(left: unknown, right: unknown): boolean {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    // Contract projections are expected to be serializable. If a future resolver violates that
+    // boundary, fail toward re-derivation rather than silently retaining an old annotation.
+    return false;
+  }
+}
+
 export function resolveFlowOutputType(
   nodeId: string,
   handle: string | null | undefined,
