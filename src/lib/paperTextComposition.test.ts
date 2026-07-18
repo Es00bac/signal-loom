@@ -116,6 +116,7 @@ async function composeSizedFixture(input: {
   heightMm: number;
   text?: string;
   columns?: number;
+  columnBalance?: boolean;
   richText?: PaperRichParagraph[];
   typography?: Partial<PaperTypography>;
 }) {
@@ -128,6 +129,7 @@ async function composeSizedFixture(input: {
     widthMm: input.widthMm,
     heightMm: input.heightMm,
     columns: input.columns ?? 1,
+    columnBalance: input.columnBalance ?? false,
   });
   document = { ...added.document, importedFonts: [face(400)] };
   const sourceText = input.text ?? input.richText?.map((paragraph) => paragraph.runs.map((run) => run.text).join('')).join('\n') ?? '';
@@ -535,6 +537,37 @@ describe('composePaperTextFrame', () => {
     expect(openingLines[1].originXPt).toBeGreaterThan(openingLines[0].originXPt);
     expect(openingLines[2].originXPt).toBeCloseTo(openingLines[0].originXPt);
     expect(Math.max(...secondParagraphLines.flatMap((line) => line.runs.map((run) => run.fontSizePt)))).toBeCloseTo(9.2);
+  });
+
+  it('moves a complete overflowing word to the next legal line', async () => {
+    const composed = await composeSizedFixture({
+      widthMm: 23,
+      heightMm: 30,
+      text: 'AAAA BBBBB',
+      typography: { fontSizePt: 12, leadingPt: 14 },
+    });
+
+    expect(composed.lines.map((line) => line.text)).toEqual(['AAAA', 'BBBBB']);
+    expect(composed.lines.every((line) => line.widthPt <= composed.bounds.widthPt)).toBe(true);
+  });
+
+  it('balances managed text across authored columns when export balancing is enabled', async () => {
+    const composed = await composeSizedFixture({
+      widthMm: 50,
+      heightMm: 100,
+      columns: 2,
+      columnBalance: true,
+      text: 'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima',
+      typography: { fontSizePt: 12, leadingPt: 14 },
+    });
+    const counts = composed.lines.reduce((totals, line) => {
+      totals[line.columnIndex ?? 0] = (totals[line.columnIndex ?? 0] ?? 0) + 1;
+      return totals;
+    }, [] as number[]);
+
+    expect(counts).toHaveLength(2);
+    expect(Math.abs(counts[0] - counts[1])).toBeLessThanOrEqual(1);
+    expect(composed.overset).toBe(false);
   });
 
   it('keeps an explicit later paragraph drop cap without inheriting the frame cap everywhere', async () => {

@@ -460,16 +460,24 @@ function wrapHorizontalParagraphUnits(
 
   for (const unit of units) {
     const measured = Math.max(0, measure(unit));
-    const previous = current[current.length - 1];
     const maxWidth = Math.max(0, widthForLine(lines.length));
-    if (current.length > 0 && currentWidth + measured > maxWidth && canBreakBefore(unit, previous, strict, false)) {
-      lines.push(trimLineWhitespace(current));
-      current = [unit];
-      currentWidth = measured;
-      continue;
-    }
     current.push(unit);
     currentWidth += measured;
+    if (current.length > 1 && currentWidth > maxWidth) {
+      // CSS decides whether the complete next word fits, then moves that word intact to the next line.
+      // Waiting for the first overflowing grapheme and only checking that exact position lets most of an
+      // over-wide word remain on the current line. Preserve the latest legal boundary so managed text makes
+      // the same whole-word decision as the browser preview and print renderer.
+      let breakIndex = -1;
+      for (let index = 1; index < current.length; index += 1) {
+        if (canBreakBefore(current[index], current[index - 1], strict, false)) breakIndex = index;
+      }
+      if (breakIndex > 0) {
+        lines.push(trimLineWhitespace(current.slice(0, breakIndex)));
+        current = current.slice(breakIndex);
+        currentWidth = current.reduce((total, candidate) => total + Math.max(0, measure(candidate)), 0);
+      }
+    }
   }
 
   if (current.length > 0) lines.push(trimLineWhitespace(current));
@@ -1192,11 +1200,7 @@ export async function composePaperTextFrame(
     const columnCount = frame.kind === 'text' ? Math.max(1, Math.round(frame.columns || 1)) : 1;
     const gutterPt = resolvePaperColumnGutterMm(frame) * PT_PER_MM;
     const columnWidthPt = Math.max(0, (bounds.widthPt - gutterPt * (columnCount - 1)) / columnCount);
-    let columnIndex = 0;
-    let cursorYPt = bounds.yPt;
-    for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
-      cursorYPt += paragraph.spaceBeforePt;
-      cursorYPt += paragraph.borderPaddingPt;
+    const horizontalLayouts = paragraphs.map((paragraph) => {
       const baseWidth = Math.max(0, columnWidthPt - paragraph.leftIndentPt - paragraph.rightIndentPt);
       const dropCapReserve = dropCapReservePt(paragraph);
       const provisional = wrapHorizontalParagraphUnits(
@@ -1205,6 +1209,42 @@ export async function composePaperTextFrame(
         unitMeasure,
         paragraph.lineBreakStrict,
       );
+      return { paragraph, baseWidth, dropCapReserve, provisional };
+    });
+    let balancedColumnHeightPt: number | undefined;
+    if (frame.kind === 'text' && frame.columnBalance && columnCount > 1) {
+      const columnsNeeded = (heightPt: number): number => {
+        let used = 1;
+        let cursor = 0;
+        for (const { paragraph, provisional } of horizontalLayouts) {
+          cursor += paragraph.spaceBeforePt + paragraph.borderPaddingPt;
+          for (const [index, units] of provisional.entries()) {
+            const lineHeight = lineHeightFor(units, paragraph.leadingPt);
+            const bottomPadding = index === provisional.length - 1 ? paragraph.borderPaddingPt : 0;
+            if (cursor + lineHeight + bottomPadding > heightPt && cursor > 0) {
+              used += 1;
+              cursor = 0;
+            }
+            cursor += lineHeight;
+          }
+          cursor += paragraph.borderPaddingPt + paragraph.spaceAfterPt;
+        }
+        return used;
+      };
+      let low = 0;
+      let high = bounds.heightPt;
+      for (let attempt = 0; attempt < 24; attempt += 1) {
+        const candidate = (low + high) / 2;
+        if (columnsNeeded(candidate) <= columnCount) high = candidate;
+        else low = candidate;
+      }
+      balancedColumnHeightPt = high;
+    }
+    let columnIndex = 0;
+    let cursorYPt = bounds.yPt;
+    for (const [paragraphIndex, { paragraph, baseWidth, dropCapReserve, provisional }] of horizontalLayouts.entries()) {
+      cursorYPt += paragraph.spaceBeforePt;
+      cursorYPt += paragraph.borderPaddingPt;
       for (const [index, units] of provisional.entries()) {
         const offsetPt = lineOffsetPt(paragraph, index, dropCapReserve);
         const insetPt = paragraph.leftIndentPt + offsetPt;
@@ -1212,7 +1252,7 @@ export async function composePaperTextFrame(
         const lineHeight = lineHeightFor(units, paragraph.leadingPt);
         const isLastLine = index === provisional.length - 1;
         const bottomPadding = isLastLine ? paragraph.borderPaddingPt : 0;
-        const columnBottomPt = bounds.yPt + bounds.heightPt;
+        const columnBottomPt = bounds.yPt + (balancedColumnHeightPt ?? bounds.heightPt);
         if (cursorYPt + lineHeight + bottomPadding > columnBottomPt
           && cursorYPt > bounds.yPt
           && columnIndex + 1 < columnCount) {
@@ -1236,7 +1276,7 @@ export async function composePaperTextFrame(
           heightPt: lineHeight,
         };
         if (line.layoutBounds.yPt < bounds.yPt
-          || line.layoutBounds.yPt + line.layoutBounds.heightPt + bottomPadding > columnBottomPt) overset = true;
+          || line.layoutBounds.yPt + line.layoutBounds.heightPt + bottomPadding > bounds.yPt + bounds.heightPt) overset = true;
         appendAnnotations(line, paragraph.ruby, false, missingGlyphs, emphasisMarks, units);
         line.runs.forEach((run) => hasMissingGlyph(run, sourceText, missingGlyphs));
         lines.push(line);
