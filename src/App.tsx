@@ -1320,6 +1320,9 @@ function FlowApp() {
           setCurrentProjectAuthorityClaim(state.claim);
           setProjectAuthorityUiState(state);
           setNativeProjectPath(state.filePath);
+          // A project opened through an external intent or another window supersedes any startup
+          // recovery prompt captured before that authority change.
+          if (state.filePath) setStartupProjectRecovery(undefined);
         },
       });
     }
