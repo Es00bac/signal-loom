@@ -1149,22 +1149,27 @@ function createWorkspaceWindow(workspace = 'flow') {
     },
   });
 
-  workspaceWindow.webContents.setWindowOpenHandler((details) =>
+  // BrowserWindow.webContents throws once the window has been destroyed. Keep the WebContents
+  // reference captured while the window is live so teardown listeners can revoke renderer-owned
+  // state without dereferencing the already-destroyed BrowserWindow.
+  const workspaceWebContents = workspaceWindow.webContents;
+
+  workspaceWebContents.setWindowOpenHandler((details) =>
     buildWorkspaceWindowOpenResult(details, workspaceWindow),
   );
 
-  const workspaceWebContentsId = workspaceWindow.webContents.id;
-  workspaceWindow.webContents.once('destroyed', () => {
+  const workspaceWebContentsId = workspaceWebContents.id;
+  workspaceWebContents.once('destroyed', () => {
     invalidateRendererAuthority(workspaceWebContentsId);
   });
-  workspaceWindow.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+  workspaceWebContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
     if (isMainFrame) invalidateRendererAuthority(workspaceWebContentsId);
   });
-  workspaceWindow.webContents.on('render-process-gone', () => {
+  workspaceWebContents.on('render-process-gone', () => {
     invalidateRendererAuthority(workspaceWebContentsId);
   });
 
-  workspaceWindow.webContents.on('did-create-window', (childWindow, details) => {
+  workspaceWebContents.on('did-create-window', (childWindow, details) => {
     if (!isSignalLoomFloatingPanelWindow(details)) {
       return;
     }
@@ -1174,7 +1179,7 @@ function createWorkspaceWindow(workspace = 'flow') {
     childWindow.once('ready-to-show', focusFloatingPanel);
   });
 
-  workspaceWindow.webContents.on('did-fail-load', (_event, _errorCode, _errorDescription, validatedURL, isMainFrame) => {
+  workspaceWebContents.on('did-fail-load', (_event, _errorCode, _errorDescription, validatedURL, isMainFrame) => {
     if (!isMainFrame || !canFallbackToProductionRenderer()) {
       return;
     }
@@ -1184,7 +1189,7 @@ function createWorkspaceWindow(workspace = 'flow') {
     void workspaceWindow.loadURL(buildWorkspaceRendererUrl(workspace));
   });
 
-  workspaceWindow.webContents.on('will-prevent-unload', (event) => {
+  workspaceWebContents.on('will-prevent-unload', (event) => {
     const choice = dialog.showMessageBoxSync(workspaceWindow, {
       type: 'warning',
       title: 'Unsaved Paper changes',
@@ -1200,11 +1205,11 @@ function createWorkspaceWindow(workspace = 'flow') {
   });
 
   if (workspace === 'flow') {
-    workspaceWindow.webContents.on('did-start-loading', () => {
-      revokeExternalOpenRenderer(workspaceWindow.webContents);
+    workspaceWebContents.on('did-start-loading', () => {
+      revokeExternalOpenRenderer(workspaceWebContents);
     });
-    workspaceWindow.webContents.on('render-process-gone', (_event, details) => {
-      revokeExternalOpenRenderer(workspaceWindow.webContents);
+    workspaceWebContents.on('render-process-gone', (_event, details) => {
+      revokeExternalOpenRenderer(workspaceWebContents);
       if (!workspaceWindow.isDestroyed() && ['abnormal-exit', 'crashed', 'oom', 'launch-failed'].includes(details.reason)) {
         // A fresh renderer will receive a new epoch; any uncommitted accepted intent is rolled
         // back and re-offered after the normal startup restore.
@@ -1213,8 +1218,8 @@ function createWorkspaceWindow(workspace = 'flow') {
         }, 0);
       }
     });
-    workspaceWindow.webContents.on('destroyed', () => {
-      revokeExternalOpenRenderer(workspaceWindow.webContents);
+    workspaceWebContents.on('destroyed', () => {
+      revokeExternalOpenRenderer(workspaceWebContents);
     });
   }
 
@@ -1258,7 +1263,7 @@ function createWorkspaceWindow(workspace = 'flow') {
   workspaceWindow.on('closed', () => {
     workspaceWindows.delete(workspace);
     if (workspace === 'flow') {
-      revokeExternalOpenRenderer(workspaceWindow.webContents);
+      revokeExternalOpenRenderer(workspaceWebContents);
       mainWindow = null;
     }
   });

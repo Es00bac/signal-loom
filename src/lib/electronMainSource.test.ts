@@ -6,7 +6,7 @@ describe('Electron main process source guards', () => {
   it('uses platform Leave/Cancel for dirty renderer shutdown after a recovery capture', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
 
-    expect(source).toMatch(/webContents\.on\('will-prevent-unload'[\s\S]*buttons: \['Leave', 'Cancel'\][\s\S]*choice === 0[\s\S]*event\.preventDefault\(\)/);
+    expect(source).toMatch(/workspaceWebContents\.on\('will-prevent-unload'[\s\S]*buttons: \['Leave', 'Cancel'\][\s\S]*choice === 0[\s\S]*event\.preventDefault\(\)/);
     expect(source).toContain('Unsaved Image or Paper changes are still open.');
     expect(source).not.toContain('A local recovery copy was captured.');
   });
@@ -413,6 +413,13 @@ describe('Electron single-instance and external-open source guards', () => {
     expect(source).toMatch(/external-open-authorize[\s\S]*isDesignatedExternalOpenRenderer/);
     expect(source).toMatch(/did-start-loading[\s\S]*revokeExternalOpenRenderer/);
     expect(source).toMatch(/render-process-gone[\s\S]*revokeExternalOpenRenderer/);
+  });
+
+  it('captures WebContents before BrowserWindow teardown instead of dereferencing a destroyed window', () => {
+    expect(source).toContain('const workspaceWebContents = workspaceWindow.webContents;');
+    expect(source).toMatch(/workspaceWebContents\.on\('destroyed',[\s\S]*revokeExternalOpenRenderer\(workspaceWebContents\)/);
+    expect(source).toMatch(/workspaceWindow\.on\('closed',[\s\S]*revokeExternalOpenRenderer\(workspaceWebContents\)/);
+    expect(source).not.toMatch(/workspaceWindow\.on\('closed',[\s\S]{0,240}workspaceWindow\.webContents/);
   });
 
   it('announces queued document opens to the target window over the pending channel', () => {
