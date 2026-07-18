@@ -47,11 +47,13 @@ retains the old `local-ai-cpu` spelling.
 
 ## No-Vulkan coverage
 
-Permanent tests simulate three representative failures:
+Permanent tests simulate five representative failures:
 
 - `VK_ERROR_INCOMPATIBLE_DRIVER`
+- `vkEnumeratePhysicalDevices failed -3`
 - no Vulkan-capable GPU
 - failure to find a Vulkan device
+- invalid GPU device
 
 Each produces the exact `vulkan-unavailable` / 503 / no-CPU-fallback result. Capability coverage
 also proves the managed endpoint cannot advertise a CPU fallback.
@@ -59,7 +61,7 @@ also proves the managed endpoint cannot advertise a CPU fallback.
 ## Author verification
 
 - Focused local-runtime, Paper, universal Image, generative-edit, and endpoint suites: **6 files,
-  66 tests passed**.
+  68 tests passed**.
 - Electron status, help, native bridge, provider catalog, Flow image-provider/cancellation, and Image
   properties adjacency: **7 files, 147 tests passed**.
 - CommonJS and ESM syntax checks for the runtime contract, helper, and Electron main process:
