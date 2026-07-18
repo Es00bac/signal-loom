@@ -104,7 +104,11 @@ import {
   isVertexImagenModelId,
   type VertexImageRoute,
 } from './vertexImageRequests';
-import { runStabilityImageUpscale, runVertexImagenImageUpscale } from './cloudImageUpscale';
+import {
+  materializeStabilityImageUpscaleResponse,
+  runVertexImagenImageUpscale,
+  submitStabilityImageUpscale,
+} from './cloudImageUpscale';
 import {
   normalizeAndroidAcceleratorBaseUrl,
   runAndroidAcceleratorGenerate,
@@ -628,18 +632,25 @@ async function executeFunctionNode(
       resultExtension: execution.extension,
       resultFileName: execution.fileName,
       resultOutputMetadata: execution.outputMetadata,
+      functionOutputs: execution.functionOutputs,
       envelopeItems: undefined,
       statusMessage: execution.statusMessage,
       error: undefined,
     };
     internalResults.set(internalId, execution);
 
-    if (execution.usage) {
-      usages.push(execution.usage);
-      const attribution = { node: { ...internalNode, data: { ...internalNode.data } }, usage: execution.usage };
-      usageAttributions.push(attribution);
-      options.onInternalUsage?.(attribution);
-    }
+    const internalUsage = execution.usage ?? {
+      source: 'actual' as const,
+      confidence: 'unknown' as const,
+      provider: typeof internalNode.data.provider === 'string' ? internalNode.data.provider : undefined,
+      modelId: typeof internalNode.data.modelId === 'string' ? internalNode.data.modelId : undefined,
+      imageCount: execution.resultType === 'image' ? 1 : undefined,
+      notes: ['Internal provider call completed, but the provider did not report numeric usage or cost.'],
+    };
+    usages.push(internalUsage);
+    const attribution = { node: { ...internalNode, data: { ...internalNode.data } }, usage: internalUsage };
+    usageAttributions.push(attribution);
+    options.onInternalUsage?.(attribution);
   }
 
   throwIfAborted(options.signal);
@@ -650,17 +661,21 @@ async function executeFunctionNode(
     const outcome = serializeFunctionExecutionOutcome(config, binding, rawValue);
     const source = binding.sourceNodeId ? nodesById.get(binding.sourceNodeId) : undefined;
     const sourceExecution = binding.sourceNodeId ? internalResults.get(binding.sourceNodeId) : undefined;
+    const namedSourceOutput = binding.sourceHandle && source?.type === 'functionNode'
+      ? source.data.functionOutputs?.[binding.sourceHandle]
+      : undefined;
+    const matchesPrimaryExecution = Boolean(sourceExecution && outcome.result === sourceExecution.result);
+    const matchesSourceResult = Boolean(source && outcome.result === source.data.result);
     resolvedOutputs[binding.targetOutputPortId] = {
       result: outcome.result,
       resultType: outcome.resultType,
-      blob: sourceExecution && outcome.result === sourceExecution.result ? sourceExecution.blob : undefined,
-      mimeType: source && outcome.result === source.data.result ? source.data.resultMimeType : undefined,
-      extension: source && outcome.result === source.data.result ? source.data.resultExtension : undefined,
-      fileName: source && outcome.result === source.data.result ? source.data.resultFileName : undefined,
-      outputMetadata: source && outcome.result === source.data.result ? source.data.resultOutputMetadata : undefined,
-      additionalResults: sourceExecution && outcome.result === sourceExecution.result
-        ? sourceExecution.additionalResults
-        : undefined,
+      blob: namedSourceOutput?.blob ?? (matchesPrimaryExecution ? sourceExecution?.blob : undefined),
+      mimeType: namedSourceOutput?.mimeType ?? (matchesSourceResult ? source?.data.resultMimeType : undefined),
+      extension: namedSourceOutput?.extension ?? (matchesSourceResult ? source?.data.resultExtension : undefined),
+      fileName: namedSourceOutput?.fileName ?? (matchesSourceResult ? source?.data.resultFileName : undefined),
+      outputMetadata: namedSourceOutput?.outputMetadata ?? (matchesSourceResult ? source?.data.resultOutputMetadata : undefined),
+      additionalResults: namedSourceOutput?.additionalResults
+        ?? (matchesPrimaryExecution ? sourceExecution?.additionalResults : undefined),
     };
   }
   const outcome = resolvedOutputs[outputBinding.targetOutputPortId];
@@ -826,7 +841,7 @@ function aggregateFunctionSubgraphUsage(usages: UsageTelemetry[], providerNodeCo
     };
   }
 
-  if (usages.length === 1) {
+  if (usages.length === 1 && providerNodeCount === 1) {
     return {
       ...usages[0],
       source: 'actual',
@@ -848,13 +863,20 @@ function aggregateFunctionSubgraphUsage(usages: UsageTelemetry[], providerNodeCo
     return usages.reduce((total, usage) => total + (select(usage) ?? 0), 0);
   };
 
+  const allIncurredCostsKnown = usages.length === providerNodeCount
+    && usages.every((usage) => typeof usage.costUsd === 'number');
+  const hasIncompleteTelemetry = usages.length < providerNodeCount;
   return {
     source: 'actual',
-    confidence: usages.reduce(
-      (worst, usage) => (confidenceRank[usage.confidence] > confidenceRank[worst] ? usage.confidence : worst),
-      'measured' as UsageTelemetry['confidence'],
-    ),
-    costUsd: sumOf((usage) => usage.costUsd),
+    confidence: hasIncompleteTelemetry || !allIncurredCostsKnown
+      ? 'unknown'
+      : usages.reduce(
+          (worst, usage) => (confidenceRank[usage.confidence] > confidenceRank[worst] ? usage.confidence : worst),
+          'measured' as UsageTelemetry['confidence'],
+        ),
+    costUsd: allIncurredCostsKnown
+      ? usages.reduce((total, usage) => total + (usage.costUsd ?? 0), 0)
+      : undefined,
     inputTokens: sumOf((usage) => usage.inputTokens),
     outputTokens: sumOf((usage) => usage.outputTokens),
     totalTokens: sumOf((usage) => usage.totalTokens),
@@ -863,6 +885,9 @@ function aggregateFunctionSubgraphUsage(usages: UsageTelemetry[], providerNodeCo
     imageCount: sumOf((usage) => usage.imageCount),
     notes: [
       executionNote,
+      ...(!allIncurredCostsKnown
+        ? ['Aggregate cost is omitted because at least one incurred internal provider cost is unknown.']
+        : []),
       ...usages.flatMap((usage) => {
         const label = [usage.provider, usage.modelId].filter(Boolean).join(' ');
         return label ? [`Internal spend: ${label}.`] : [];
@@ -2891,6 +2916,7 @@ async function applyConfiguredAutoUpscaleIfRequested(input: {
     prompt: input.context.prompt,
     settings: input.settings,
     abortSignal: input.abortSignal,
+    onStatus: input.onStatus,
   });
   throwIfAborted(input.abortSignal);
 
@@ -2920,6 +2946,7 @@ async function runConfiguredFlowImageUpscale(input: {
   prompt: string;
   settings: RuntimeSettingsSnapshot;
   abortSignal?: AbortSignal;
+  onStatus?: (statusMessage: string) => void;
 }): Promise<{ result: string; mimeType?: string }> {
   if (input.plan.provider === 'android-accelerator') {
     const dimensions = await resolveImageDimensions(input.sourceImage, input.abortSignal).catch((error) => {
@@ -2989,7 +3016,7 @@ async function runConfiguredFlowImageUpscale(input: {
 
   if (input.plan.provider === 'stability-fast' || input.plan.provider === 'stability-conservative') {
     const isConservative = input.plan.provider === 'stability-conservative';
-    return runStabilityImageUpscale({
+    const stabilityInput = {
       sourceImage: input.sourceImage,
       mode: isConservative ? 'conservative' : 'fast',
       prompt: input.prompt,
@@ -2998,6 +3025,30 @@ async function runConfiguredFlowImageUpscale(input: {
       sourceFilename: 'flow-auto-upscale-source.png',
       errorLabel: 'Configured Stability image upscale failed',
       signal: input.abortSignal,
+    } as const;
+    const acceptedResponse = await withExponentialBackoff({
+      operation: () => submitStabilityImageUpscale(stabilityInput),
+      maxRetries: input.settings.providerSettings.batchMaxRetries ?? 10,
+      baseDelayMs: input.settings.providerSettings.batchRetryBaseDelayMs ?? 30000,
+      maxElapsedMs: FLOW_PROVIDER_RETRY_BUDGET_MS,
+      abortSignal: input.abortSignal,
+      onRetry: (attempt, max, delay, error) => {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        input.onStatus?.(
+          `${input.plan.label} submission failed before acceptance (${message}). Retrying ${attempt} of ${max} in ${Math.round(delay / 1000)}s…`,
+        );
+      },
+    });
+    return retryExistingAsyncJobPhase({
+      phaseLabel: `${input.plan.label} accepted-response materialization failed`,
+      operation: () => materializeStabilityImageUpscaleResponse(
+        acceptedResponse,
+        input.outputFormat,
+        input.abortSignal,
+      ),
+      settings: input.settings,
+      onStatus: input.onStatus,
+      abortSignal: input.abortSignal,
     });
   }
 

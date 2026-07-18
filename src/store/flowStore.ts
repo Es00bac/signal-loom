@@ -4375,6 +4375,22 @@ export const useFlowStore = create<FlowState>()(
             }
           }
         };
+        const persistAndPublishRunAsset = async (
+          currentId: string,
+          item: Parameters<ReturnType<typeof useSourceBinStore.getState>['addAssetItem']>[0],
+        ) => {
+          throwIfRunAborted();
+          if (!isRunOwnerValid(currentId)) {
+            throw new DOMException('The run was cancelled.', 'AbortError');
+          }
+          const sourceStore = useSourceBinStore.getState();
+          const sourceItem = await sourceStore.addAssetItem(item, undefined, { deferPublication: true });
+          if (abortSignal.aborted || !isRunOwnerValid(currentId)) {
+            sourceStore.discardProvisionalAssetItem(sourceItem.id);
+            throw new DOMException('The run was cancelled.', 'AbortError');
+          }
+          return sourceStore.publishProvisionalAssetItem(sourceItem.id) ?? sourceItem;
+        };
         // A dependency can feed multiple branches of one root execution. Memoize
         // the in-flight/completed promise for this root only: it deduplicates a
         // diamond without treating a saved result from an earlier root run as a
@@ -4578,7 +4594,7 @@ export const useFlowStore = create<FlowState>()(
                 
                 if (isAssetSourceKind(execution.resultType)) {
                   if (!isRunOwnerValid(currentId)) return;
-                  const sourceItem = await useSourceBinStore.getState().addAssetItem({
+                  const sourceItem = await persistAndPublishRunAsset(currentId, {
                     label: newEnvelopeItem.label,
                     kind: execution.resultType,
                     mimeType: newEnvelopeItem.mimeType ?? 'application/octet-stream',
@@ -4746,7 +4762,7 @@ export const useFlowStore = create<FlowState>()(
                   return;
                 }
                 const output = allOutputs[index];
-                const sourceItem = await useSourceBinStore.getState().addAssetItem({
+                const sourceItem = await persistAndPublishRunAsset(currentId, {
                   label: `${baseLabel} ${index + 1}`,
                   kind: execution.resultType,
                   mimeType: output.mimeType ?? execution.mimeType ?? 'application/octet-stream',
@@ -4809,7 +4825,7 @@ export const useFlowStore = create<FlowState>()(
                 throw new Error(`The ${execution.resultType} executor returned a non-media value.`);
               }
               if (!isRunOwnerValid(currentId)) return;
-              const sourceItem = await useSourceBinStore.getState().addAssetItem({
+              const sourceItem = await persistAndPublishRunAsset(currentId, {
                 label: (latestNode.data.title as string) || `${latestNode.type} result`,
                 kind: execution.resultType,
                 mimeType: execution.mimeType ?? 'application/octet-stream',

@@ -368,6 +368,28 @@ describe('source bin native file integration', () => {
     });
   });
 
+  it('never gives a deferred run ownership of an existing deduplicated asset', async () => {
+    const firstItem = await useSourceBinStore.getState().addAssetItem({
+      label: 'Published source',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,UFVCTElTSEVE',
+      sourceKey: 'deduplicated:source',
+    });
+
+    const deferredResult = await useSourceBinStore.getState().addAssetItem({
+      label: 'Stale replacement',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,U1RBTEU=',
+      sourceKey: 'deduplicated:source',
+    }, undefined, { deferPublication: true });
+
+    expect(deferredResult).toEqual(firstItem);
+    expect(useSourceBinStore.getState().discardProvisionalAssetItem(firstItem.id)).toBeUndefined();
+    expect(useSourceBinStore.getState().getAllItems()).toEqual([firstItem]);
+  });
+
   it('stores native document, subtitle, and package descriptors as source-bin assets', async () => {
     await useSourceBinStore.getState().importNativeFiles([
       {

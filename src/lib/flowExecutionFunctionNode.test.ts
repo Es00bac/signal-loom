@@ -314,6 +314,98 @@ describe('executeNodeRequest collapsed reusable functions', () => {
     expect(execution.functionOutputs?.['second-output']?.result).toBe('SECOND');
   });
 
+  it('routes Function outputs by source node and source handle while preserving no-handle defaults', async () => {
+    const config = createDefaultFunctionNodeConfig('Editor image and mask');
+    config.contract.outputPorts = [
+      { id: 'image-output', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0 },
+      { id: 'mask-output', key: 'mask', label: 'Mask', resultType: 'image', required: true, order: 1 },
+    ];
+    config.graph = {
+      version: 1,
+      nodes: [node('editor', 'advancedImageEditor', {
+        result: 'data:image/png;base64,REVGQVVMVA==',
+        maskOutput: 'data:image/png;base64,TUFTSw==',
+      })],
+      edges: [],
+    };
+    config.outputBindings = [
+      {
+        ...config.outputBindings[0],
+        targetOutputPortId: 'image-output',
+        sourceNodeId: 'editor',
+        sourceHandle: undefined,
+        resultType: 'image',
+      },
+      {
+        ...config.outputBindings[0],
+        id: 'mask-output-binding',
+        targetOutputPortId: 'mask-output',
+        sourceNodeId: 'editor',
+        sourceHandle: 'maskOutput',
+        resultType: 'image',
+      },
+    ];
+
+    const execution = await executeNodeRequest(functionNodeFor(config), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings);
+
+    expect(execution.result).toBe('data:image/png;base64,REVGQVVMVA==');
+    expect(execution.functionOutputs?.['image-output']?.result).toBe('data:image/png;base64,REVGQVVMVA==');
+    expect(execution.functionOutputs?.['mask-output']?.result).toBe('data:image/png;base64,TUFTSw==');
+  });
+
+  it('preserves source-handle identity through a nested Function output', async () => {
+    const inner = createDefaultFunctionNodeConfig('Inner editor outputs');
+    inner.contract.outputPorts = [
+      { id: 'inner-image', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0 },
+      { id: 'inner-mask', key: 'mask', label: 'Mask', resultType: 'image', required: true, order: 1 },
+    ];
+    inner.graph = {
+      version: 1,
+      nodes: [node('inner-editor', 'advancedImageEditor', {
+        result: 'data:image/png;base64,SU5ORVItSU1BR0U=',
+        maskOutput: 'data:image/png;base64,SU5ORVItTUFTSw==',
+      })],
+      edges: [],
+    };
+    inner.outputBindings = [
+      { ...inner.outputBindings[0], targetOutputPortId: 'inner-image', sourceNodeId: 'inner-editor', resultType: 'image' },
+      {
+        ...inner.outputBindings[0],
+        id: 'inner-mask-binding',
+        targetOutputPortId: 'inner-mask',
+        sourceNodeId: 'inner-editor',
+        sourceHandle: 'maskOutput',
+        resultType: 'image',
+      },
+    ];
+
+    const outer = createDefaultFunctionNodeConfig('Outer nested mask');
+    outer.contract.outputPorts = [
+      { id: 'outer-mask', key: 'mask', label: 'Mask', resultType: 'image', required: true, order: 0 },
+    ];
+    outer.graph = {
+      version: 1,
+      nodes: [functionNodeFor(inner, 'inner-function')],
+      edges: [],
+    };
+    outer.outputBindings = [{
+      ...outer.outputBindings[0],
+      targetOutputPortId: 'outer-mask',
+      sourceNodeId: 'inner-function',
+      sourceHandle: 'inner-mask',
+      resultType: 'image',
+    }];
+
+    const execution = await executeNodeRequest(functionNodeFor(outer, 'outer-function'), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+
+    expect(execution.result).toBe('data:image/png;base64,SU5ORVItTUFTSw==');
+    expect(execution.functionOutputs?.['outer-mask']?.result).toBe('data:image/png;base64,SU5ORVItTUFTSw==');
+  });
+
   it('executes every advertised output subtree once: two providers, different types, exact submission counts', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:multi-output-image');
     const fetchMock = vi.fn().mockResolvedValue(imageResponse('FRESH-MULTI'));
@@ -376,7 +468,7 @@ describe('executeNodeRequest collapsed reusable functions', () => {
       result: 'fresh openai text',
       resultType: 'text',
     });
-    expect(execution.usage?.costUsd).toBeGreaterThanOrEqual(0.03);
+    expect(execution.usage?.costUsd).toBeUndefined();
     expect(execution.usage).toMatchObject({ source: 'actual', inputTokens: 7, outputTokens: 11 });
   });
 
@@ -715,7 +807,7 @@ describe('executeNodeRequest collapsed reusable functions', () => {
 
     expect(execution.result).toBe('blob:function-chain-image');
     expect(execution.statusMessage).toMatch(/Executed .*: 2 provider nodes across 2 internal nodes/);
-    expect(execution.usage?.costUsd).toBeGreaterThanOrEqual(0.03);
+    expect(execution.usage?.costUsd).toBeUndefined();
     expect(execution.usage).toMatchObject({ source: 'actual', inputTokens: 12, outputTokens: 24 });
     expect(execution.usage?.notes?.join(' ')).toContain('Executed 2 internal provider nodes');
   });

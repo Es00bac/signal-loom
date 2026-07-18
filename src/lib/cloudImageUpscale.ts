@@ -62,6 +62,14 @@ export interface StabilityImageUpscaleInput {
 export async function runStabilityImageUpscale(
   input: StabilityImageUpscaleInput,
 ): Promise<CloudImageUpscaleOutput> {
+  const response = await submitStabilityImageUpscale(input);
+  return materializeStabilityImageUpscaleResponse(response, input.outputFormat, input.signal);
+}
+
+/** Submit the paid Stability upscale and stop exactly at the accepted HTTP response. */
+export async function submitStabilityImageUpscale(
+  input: StabilityImageUpscaleInput,
+): Promise<Response> {
   const apiKey = input.apiKey.trim();
   if (!apiKey) {
     throw new Error('Stability AI API key is missing. Add it in Settings.');
@@ -98,10 +106,24 @@ export async function runStabilityImageUpscale(
     throw new Error(await extractCloudUpscaleErrorBody(response, input.errorLabel ?? 'Stability image upscale failed'));
   }
 
-  const blob = await response.blob();
+  return response;
+}
+
+/** Materialize an already accepted Stability response without issuing another POST. */
+export async function materializeStabilityImageUpscaleResponse(
+  response: Response,
+  outputFormat: ImageOutputFormat,
+  signal?: AbortSignal,
+): Promise<CloudImageUpscaleOutput> {
+  throwIfAborted(signal);
+  const materializationResponse = typeof response.clone === 'function'
+    ? response.clone()
+    : response;
+  const blob = await materializationResponse.blob();
+  throwIfAborted(signal);
   return {
     result: URL.createObjectURL(blob),
-    mimeType: blob.type || `image/${input.outputFormat}`,
+    mimeType: blob.type || `image/${outputFormat}`,
   };
 }
 

@@ -1122,7 +1122,14 @@ export function resolveFunctionOutputFromGraph(
     try {
       const targetNodeId = outputBinding.sourceNodeId;
       if (targetNodeId) {
-        const signal = evaluateNodeSignal(targetNodeId, prepared.nodes, prepared.edges);
+        const signal = evaluateNodeSignal(
+          targetNodeId,
+          prepared.nodes,
+          prepared.edges,
+          new Set<string>(),
+          undefined,
+          outputBinding.sourceHandle,
+        );
         return signal.value as DynamicValue;
       }
     } catch (err) {

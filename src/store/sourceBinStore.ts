@@ -225,7 +225,9 @@ export interface SourceBinState {
     envelopeLabel?: string;
     envelopeIndex?: number;
     envelopeCollapsed?: boolean;
-  }, targetBinId?: string) => Promise<SourceBinLibraryItem>;
+  }, targetBinId?: string, options?: { deferPublication?: boolean }) => Promise<SourceBinLibraryItem>;
+  publishProvisionalAssetItem: (id: string, targetBinId?: string) => SourceBinLibraryItem | undefined;
+  discardProvisionalAssetItem: (id: string) => SourceBinLibraryItem | undefined;
   ingestConnectedItems: (
     items: SourceBinItem[],
     targetBinId?: string,
@@ -255,6 +257,7 @@ export interface PreparedSourceBinProjectSnapshot {
 
 const STORAGE_KEY = 'flow-global-source-bin';
 const pendingConnectedSourceKeys = new Set<string>();
+const provisionalSourceBinItemIds = new Set<string>();
 const VALID_SOURCE_KINDS: readonly EditorSourceKind[] = ['text', 'image', 'video', 'audio', 'composition', 'document', 'subtitle', 'package'];
 const TRANSIENT_RECOVERED_SCRATCH_BIN_ID = 'recovered-scratch-assets';
 const TRANSIENT_RECOVERED_SCRATCH_SOURCE_KEY_PREFIX = 'recovered-scratch:';
@@ -1311,10 +1314,16 @@ export const useSourceBinStore = create<SourceBinState>()(
           await get().hydrateAssets().catch(() => undefined);
         }
       },
-      addAssetItem: async (item, targetBinId) => {
+      addAssetItem: async (item, targetBinId, options) => {
         const existingSourceKeyItem = item.sourceKey
           ? get().bins.flatMap((bin) => bin.items).find((candidate) => candidate.sourceKey === item.sourceKey)
           : undefined;
+        // A deferred run publication must never mutate or assume ownership of an
+        // already-published deduplicated item. Returning it unchanged also makes a
+        // later stale-run discard an intentional no-op.
+        if (options?.deferPublication && existingSourceKeyItem) {
+          return existingSourceKeyItem;
+        }
         const nextItem = await persistLibraryAssetItemWithFallback({
           ...item,
           id: existingSourceKeyItem?.id ?? item.id,
@@ -1406,8 +1415,38 @@ export const useSourceBinStore = create<SourceBinState>()(
           };
         });
 
-        broadcastSourceBinItemsAdded([resultItem], targetBinId);
+        const isNewDeferredItem = Boolean(options?.deferPublication)
+          && !existingSourceKeyItem
+          && resultItem.id === nextItem.id;
+        if (isNewDeferredItem) {
+          provisionalSourceBinItemIds.add(resultItem.id);
+        } else {
+          broadcastSourceBinItemsAdded([resultItem], targetBinId);
+        }
         return resultItem;
+      },
+      publishProvisionalAssetItem: (id, targetBinId) => {
+        if (!provisionalSourceBinItemIds.delete(id)) {
+          return undefined;
+        }
+        const item = get().bins.flatMap((bin) => bin.items).find((candidate) => candidate.id === id);
+        if (!item) {
+          return undefined;
+        }
+        broadcastSourceBinItemsAdded([item], targetBinId);
+        return item;
+      },
+      discardProvisionalAssetItem: (id) => {
+        if (!provisionalSourceBinItemIds.delete(id)) {
+          return undefined;
+        }
+        const result = removeSourceBinItem(get().bins, id);
+        if (!result) {
+          return undefined;
+        }
+        set({ bins: result.bins });
+        revokeSourceBinItemObjectUrl(result.removedItem);
+        return result.removedItem;
       },
       ingestConnectedItems: async (connectedItems, targetBinId, ingestOptions) => {
         const initialState = get();
@@ -1889,6 +1928,7 @@ export const useSourceBinStore = create<SourceBinState>()(
       setAllItemsCollapsed: (collapsed) =>
         set((state) => ({ bins: setAllSourceBinItemsCollapsed(state.bins, collapsed) })),
       removeItem: (id) => {
+        provisionalSourceBinItemIds.delete(id);
         const result = removeSourceBinItem(get().bins, id);
 
         if (!result) {

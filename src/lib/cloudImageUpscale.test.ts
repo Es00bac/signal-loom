@@ -114,6 +114,30 @@ describe('runStabilityImageUpscale', () => {
       fetchImpl,
     })).rejects.toThrow('insufficient_balance');
   });
+
+  it('uses the run signal while preparing a remote Stability upscale source', async () => {
+    const controller = new AbortController();
+    const sourceUrl = 'https://assets.example/source.png';
+    let observedSignal: AbortSignal | null | undefined;
+    vi.stubGlobal('fetch', vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      observedSignal = init?.signal;
+      controller.abort(new DOMException('cancel source preparation', 'AbortError'));
+      return Promise.reject(controller.signal.reason);
+    }));
+    const providerFetch = vi.fn();
+
+    await expect(runStabilityImageUpscale({
+      sourceImage: sourceUrl,
+      mode: 'fast',
+      outputFormat: 'png',
+      apiKey: 'sk-test',
+      signal: controller.signal,
+      fetchImpl: providerFetch as unknown as typeof fetch,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(observedSignal).toBe(controller.signal);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('runVertexImagenImageUpscale', () => {
