@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EditorAsset, EditorStageObject } from '../types/flow';
 import {
   buildVisualClipFromEditorAsset,
+  createComicDefaults,
   createEditorAsset,
   getEditorAssets,
   getProjectEditorAssets,
@@ -462,5 +463,133 @@ describe('buildVisualClipFromEditorAsset persistence and export boundaries', () 
     expect(canvas.context.font).toContain('700');
     expect(canvas.context.font).toContain('"M PLUS 1"');
     vi.restoreAllMocks();
+  });
+});
+
+describe('reusable comic asset placement (AUD-035)', () => {
+  it.each([
+    {
+      label: 'speech bubble',
+      defaults: {
+        comicKind: 'speech-bubble' as const,
+        text: 'Stored speech',
+        fontFamily: 'Bangers, sans-serif',
+        fontSizePx: 58,
+        textColor: '#102030',
+        fillColor: '#fefefe',
+        strokeColor: '#405060',
+        strokeWidthPx: 7,
+        tailAngleDeg: 142,
+        tailLengthPx: 73,
+        lineHeightPercent: 133,
+        letterSpacingPx: 2.5,
+        textAlign: 'right' as const,
+      },
+    },
+    {
+      label: 'caption with intentional empty and zero values',
+      defaults: {
+        comicKind: 'caption' as const,
+        text: '',
+        fontFamily: '',
+        fontSizePx: 24,
+        textColor: '#000000',
+        fillColor: '#ffffff',
+        strokeColor: '#000000',
+        strokeWidthPx: 0,
+        tailAngleDeg: 0,
+        tailLengthPx: 0,
+        lineHeightPercent: 0,
+        letterSpacingPx: 0,
+        textAlign: 'left' as const,
+      },
+    },
+  ])('normalizes and reapplies every stored default for a $label without mutating the asset', ({ defaults }) => {
+    const [asset] = getEditorAssets({
+      editorAssets: [{
+        id: `saved-${defaults.comicKind}`,
+        kind: 'comic',
+        label: 'Saved comic',
+        createdAt: 10,
+        updatedAt: 20,
+        comicDefaults: defaults,
+      }],
+    });
+    const beforePlacement = structuredClone(asset);
+
+    const first = buildVisualClipFromEditorAsset(asset, {
+      trackIndex: 0,
+      startMs: 0,
+      durationSeconds: 0,
+    });
+    const second = buildVisualClipFromEditorAsset(asset, {
+      trackIndex: 3,
+      startMs: 8750,
+      durationSeconds: 6,
+    });
+    const expectedComicProjection = {
+      sourceNodeId: asset.id,
+      sourceKind: 'comic',
+      comicKind: defaults.comicKind,
+      comicTailAngleDeg: defaults.tailAngleDeg,
+      comicTailLengthPx: defaults.tailLengthPx,
+      comicLineHeightPercent: defaults.lineHeightPercent,
+      comicLetterSpacingPx: defaults.letterSpacingPx,
+      comicTextAlign: defaults.textAlign,
+      textContent: defaults.text,
+      textFontFamily: defaults.fontFamily,
+      textSizePx: defaults.fontSizePx,
+      textColor: defaults.textColor,
+      shapeFillColor: defaults.fillColor,
+      shapeBorderColor: defaults.strokeColor,
+      shapeBorderWidth: defaults.strokeWidthPx,
+    };
+
+    expect(asset.comicDefaults).toEqual(defaults);
+    expect(first).toMatchObject({
+      ...expectedComicProjection,
+      trackIndex: 0,
+      startMs: 0,
+      durationSeconds: 0,
+      reversePlayback: false,
+    });
+    expect(second).toMatchObject({
+      ...expectedComicProjection,
+      trackIndex: 3,
+      startMs: 8750,
+      durationSeconds: 6,
+      reversePlayback: false,
+    });
+    expect(second.id).not.toBe(first.id);
+    expect(asset).toEqual(beforePlacement);
+  });
+
+  it('keeps a legacy comic asset with absent defaults and applies the declared speech defaults', () => {
+    const [asset] = getEditorAssets({
+      editorAssets: [{
+        id: 'legacy-comic',
+        kind: 'comic',
+        label: 'Legacy comic',
+        createdAt: 1,
+        updatedAt: 2,
+      } as EditorAsset],
+    });
+
+    expect(asset).toMatchObject({
+      id: 'legacy-comic',
+      kind: 'comic',
+      comicDefaults: createComicDefaults('speech-bubble'),
+    });
+    expect(buildVisualClipFromEditorAsset(asset, { trackIndex: 2, startMs: 400 })).toMatchObject({
+      sourceKind: 'comic',
+      comicKind: 'speech-bubble',
+      textContent: 'Speech',
+      textColor: '#181b20',
+      shapeFillColor: '#ffffff',
+      shapeBorderColor: '#181b20',
+      shapeBorderWidth: 6,
+      comicTailAngleDeg: 115,
+      comicTailLengthPx: 90,
+    });
   });
 });

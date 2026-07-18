@@ -315,31 +315,67 @@ export function buildVisualClipFromEditorAsset(
           ? 'comic'
           : 'text';
   const sourceNodeId = asset.kind === 'image' ? asset.imageSourceId ?? asset.id : asset.id;
+  const assetDefaults = projectEditorAssetDefaultsToVisualClip(asset);
 
   return createEditorVisualClip(sourceNodeId, sourceKind, {
+    ...assetDefaults,
     trackIndex: options.trackIndex,
     startMs: options.startMs,
     durationSeconds: options.durationSeconds ?? 4,
-    textContent: asset.textDefaults?.text,
-    textFontFamily: asset.textDefaults?.fontFamily,
-    textSizePx: asset.textDefaults?.fontSizePx,
-    textColor: asset.textDefaults?.color,
-    textEffect: asset.textDefaults?.textEffect,
-    textBackgroundOpacityPercent: asset.textDefaults?.textBackgroundOpacityPercent,
-    textTypography:
-      asset.kind === 'text' && asset.textDefaults
-        ? {
-            fontWeight: asset.textDefaults.fontWeight,
-            fontStyle: asset.textDefaults.fontStyle,
-            managedFace: asset.textDefaults.managedFace,
-            managedFaceIssue: asset.textDefaults.managedFaceIssue,
-          }
-        : undefined,
-    shapeFillColor: asset.shapeDefaults?.fillColor,
-    shapeBorderColor: asset.shapeDefaults?.borderColor,
-    shapeBorderWidth: asset.shapeDefaults?.borderWidth,
-    shapeCornerRadius: asset.shapeDefaults?.cornerRadius,
   });
+}
+
+/**
+ * Project reusable asset defaults onto a fresh timeline clip. Keep this mapping in one place so
+ * every placement/re-placement route receives the same saved styling, while caller-owned placement
+ * coordinates and duration remain authoritative in `buildVisualClipFromEditorAsset`.
+ */
+function projectEditorAssetDefaultsToVisualClip(asset: EditorAsset): Partial<EditorVisualClip> {
+  if (asset.kind === 'text' && asset.textDefaults) {
+    return {
+      textContent: asset.textDefaults.text,
+      textFontFamily: asset.textDefaults.fontFamily,
+      textSizePx: asset.textDefaults.fontSizePx,
+      textColor: asset.textDefaults.color,
+      textEffect: asset.textDefaults.textEffect,
+      textBackgroundOpacityPercent: asset.textDefaults.textBackgroundOpacityPercent,
+      textTypography: {
+        fontWeight: asset.textDefaults.fontWeight,
+        fontStyle: asset.textDefaults.fontStyle,
+        managedFace: asset.textDefaults.managedFace,
+        managedFaceIssue: asset.textDefaults.managedFaceIssue,
+      },
+    };
+  }
+
+  if (asset.kind === 'shape' && asset.shapeDefaults) {
+    return {
+      shapeFillColor: asset.shapeDefaults.fillColor,
+      shapeBorderColor: asset.shapeDefaults.borderColor,
+      shapeBorderWidth: asset.shapeDefaults.borderWidth,
+      shapeCornerRadius: asset.shapeDefaults.cornerRadius,
+    };
+  }
+
+  if (asset.kind === 'comic' && asset.comicDefaults) {
+    return {
+      comicKind: asset.comicDefaults.comicKind,
+      comicTailAngleDeg: asset.comicDefaults.tailAngleDeg,
+      comicTailLengthPx: asset.comicDefaults.tailLengthPx,
+      comicLineHeightPercent: asset.comicDefaults.lineHeightPercent,
+      comicLetterSpacingPx: asset.comicDefaults.letterSpacingPx,
+      comicTextAlign: asset.comicDefaults.textAlign,
+      textContent: asset.comicDefaults.text,
+      textFontFamily: asset.comicDefaults.fontFamily,
+      textSizePx: asset.comicDefaults.fontSizePx,
+      textColor: asset.comicDefaults.textColor,
+      shapeFillColor: asset.comicDefaults.fillColor,
+      shapeBorderColor: asset.comicDefaults.strokeColor,
+      shapeBorderWidth: asset.comicDefaults.strokeWidthPx,
+    };
+  }
+
+  return {};
 }
 
 function normalizeEditorAsset(value: unknown): EditorAsset[] {
@@ -407,6 +443,35 @@ function normalizeEditorAsset(value: unknown): EditorAsset[] {
     }];
   }
 
+  if (value.kind === 'comic') {
+    const defaults = isRecord(value.comicDefaults) ? value.comicDefaults : {};
+    const comicKind = normalizeComicKind(defaults.comicKind);
+    const fallback = createComicDefaults(comicKind);
+
+    return [{
+      id: value.id,
+      kind: 'comic',
+      label: label ?? defaultComicAssetLabel(comicKind),
+      createdAt,
+      updatedAt,
+      comicDefaults: {
+        comicKind,
+        text: typeof defaults.text === 'string' ? defaults.text : fallback.text,
+        fontFamily: typeof defaults.fontFamily === 'string' ? defaults.fontFamily : fallback.fontFamily,
+        fontSizePx: Math.max(8, normalizeFiniteNumber(defaults.fontSizePx, fallback.fontSizePx)),
+        textColor: normalizeColor(defaults.textColor, fallback.textColor),
+        fillColor: normalizeColor(defaults.fillColor, fallback.fillColor),
+        strokeColor: normalizeColor(defaults.strokeColor, fallback.strokeColor),
+        strokeWidthPx: Math.max(0, normalizeFiniteNumber(defaults.strokeWidthPx, fallback.strokeWidthPx)),
+        tailAngleDeg: normalizeFiniteNumber(defaults.tailAngleDeg, fallback.tailAngleDeg),
+        tailLengthPx: Math.max(0, normalizeFiniteNumber(defaults.tailLengthPx, fallback.tailLengthPx)),
+        lineHeightPercent: Math.max(0, normalizeFiniteNumber(defaults.lineHeightPercent, fallback.lineHeightPercent)),
+        letterSpacingPx: normalizeFiniteNumber(defaults.letterSpacingPx, fallback.letterSpacingPx),
+        textAlign: normalizeComicTextAlign(defaults.textAlign, fallback.textAlign),
+      },
+    }];
+  }
+
   if (value.kind === 'image' && typeof value.imageSourceId === 'string') {
     return [{
       id: value.id,
@@ -449,8 +514,27 @@ function defaultAssetLabel(kind: EditorAssetKind): string {
   return kind === 'text' ? 'Text' : kind === 'shape' ? 'Rectangle' : 'Image';
 }
 
+function defaultComicAssetLabel(kind: EditorComicDefaults['comicKind']): string {
+  return kind === 'caption' ? 'Caption' : kind === 'thought-bubble' ? 'Thought Bubble' : 'Speech Bubble';
+}
+
+function normalizeComicKind(value: unknown): EditorComicDefaults['comicKind'] {
+  return value === 'thought-bubble' || value === 'caption' ? value : 'speech-bubble';
+}
+
+function normalizeComicTextAlign(
+  value: unknown,
+  fallback: EditorComicDefaults['textAlign'],
+): EditorComicDefaults['textAlign'] {
+  return value === 'left' || value === 'center' || value === 'right' ? value : fallback;
+}
+
 function normalizeNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
+}
+
+function normalizeFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function normalizePercent(value: unknown, fallback: number): number {
