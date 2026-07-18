@@ -49,6 +49,13 @@ function fixtureShaper(): PaperTextShaper {
         offset += character.length;
         return glyph;
       });
+      // A deterministic kerning pair used to prove wrapping measures the shaped candidate rather than the
+      // sum of isolated graphemes. No other fixture string in this suite relies on an AV pair.
+      if (request.direction !== 'ttb') {
+        for (let index = 0; index < request.text.length - 1; index += 1) {
+          if (request.text.slice(index, index + 2) === 'AV') glyphs[index].xAdvance -= request.fontSizePt / 4;
+        }
+      }
       return {
         direction: request.direction,
         glyphs,
@@ -260,6 +267,17 @@ describe('composePaperTextFrame', () => {
     expect(composed.lines.map((line) => line.text)).toEqual(['First', 'Second', 'Third']);
     expect(composed.lines[1].originYPt - composed.lines[0].originYPt).toBeCloseTo(40);
     expect(composed.lines[2].originYPt - composed.lines[1].originYPt).toBeCloseTo(40);
+  });
+
+  it('uses contextual kerning when deciding whether the next word fits', async () => {
+    const composed = await composeSizedFixture({
+      widthMm: 13.5,
+      heightMm: 40,
+      text: 'AV AV',
+      typography: { fontSizePt: 12, leadingPt: 14 },
+    });
+
+    expect(composed.lines.map((line) => line.text)).toEqual(['AV AV']);
   });
 
   it('uses paragraph alignLast for the final line of justified managed text', async () => {

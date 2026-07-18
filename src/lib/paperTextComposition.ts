@@ -463,33 +463,49 @@ function wrapUnits(
 function wrapHorizontalParagraphUnits(
   units: readonly CompositionUnit[],
   widthForLine: (lineIndex: number) => number,
-  measure: (unit: CompositionUnit) => number,
   strict: boolean,
 ): CompositionUnit[][] {
   if (units.length === 0) return [[]];
+  // CSS/HarfBuzz shape a word (and ultimately its whole line) in context. Summing advances from separately
+  // shaped graphemes discards kerning and ligatures, so the wrap decision can reject a word that the final
+  // painted run—and the export browser—fits. Group source units at legal wrap boundaries, then measure each
+  // candidate line with the exact same grouped shaping used by final positioning.
+  const chunks: CompositionUnit[][] = [];
+  let chunk: CompositionUnit[] = [];
+  for (const unit of units) {
+    if (chunk.length > 0 && canBreakBefore(unit, chunk[chunk.length - 1], strict, false)) {
+      chunks.push(chunk);
+      chunk = [];
+    }
+    chunk.push(unit);
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+
+  const measureUnits = (candidate: readonly CompositionUnit[]): number => groupUnits(candidate, false)
+    .map((group) => shapeGroup(group))
+    .reduce((total, group) => total + group.advancePt, 0);
   const lines: CompositionUnit[][] = [];
   let current: CompositionUnit[] = [];
-  let currentWidth = 0;
 
-  for (const unit of units) {
-    const measured = Math.max(0, measure(unit));
+  for (const nextChunk of chunks) {
     const maxWidth = Math.max(0, widthForLine(lines.length));
-    current.push(unit);
-    currentWidth += measured;
-    if (current.length > 1 && currentWidth > maxWidth) {
-      // CSS decides whether the complete next word fits, then moves that word intact to the next line.
-      // Waiting for the first overflowing grapheme and only checking that exact position lets most of an
-      // over-wide word remain on the current line. Preserve the latest legal boundary so managed text makes
-      // the same whole-word decision as the browser preview and print renderer.
-      let breakIndex = -1;
-      for (let index = 1; index < current.length; index += 1) {
-        if (canBreakBefore(current[index], current[index - 1], strict, false)) breakIndex = index;
-      }
-      if (breakIndex > 0) {
-        lines.push(trimLineWhitespace(current.slice(0, breakIndex)));
-        current = current.slice(breakIndex);
-        currentWidth = current.reduce((total, candidate) => total + Math.max(0, measure(candidate)), 0);
-      }
+    const candidate = [...current, ...nextChunk];
+    if (current.length > 0 && measureUnits(candidate) > maxWidth) {
+      lines.push(trimLineWhitespace(current));
+      current = [...nextChunk];
+    } else {
+      current = candidate;
+    }
+
+    // `overflow-wrap: break-word` still splits one intrinsically over-wide token. This uncommon path can
+    // afford exact prefix measurement; normal prose stays on the much cheaper word/chunk path above.
+    while (current.length > 1 && measureUnits(current) > Math.max(0, widthForLine(lines.length))) {
+      const overwideLimit = Math.max(0, widthForLine(lines.length));
+      let fittingUnits = 1;
+      while (fittingUnits < current.length
+        && measureUnits(current.slice(0, fittingUnits + 1)) <= overwideLimit) fittingUnits += 1;
+      lines.push(trimLineWhitespace(current.slice(0, fittingUnits)));
+      current = current.slice(fittingUnits);
     }
   }
 
@@ -1238,7 +1254,6 @@ export async function composePaperTextFrame(
       let provisional = wrapHorizontalParagraphUnits(
         paragraph.units,
         (lineIndex) => Math.max(0, baseWidth - lineOffsetPt(paragraph, lineIndex, dropCapReserve)),
-        unitMeasure,
         paragraph.lineBreakStrict,
       );
       if (paragraph.balanceLines && dropCapReserve === 0 && provisional.length > 1) {
@@ -1250,7 +1265,6 @@ export async function composePaperTextFrame(
           const candidateLines = wrapHorizontalParagraphUnits(
             paragraph.units,
             () => candidate,
-            unitMeasure,
             paragraph.lineBreakStrict,
           );
           if (candidateLines.length <= targetLineCount) high = candidate;
@@ -1259,7 +1273,6 @@ export async function composePaperTextFrame(
         provisional = wrapHorizontalParagraphUnits(
           paragraph.units,
           () => high,
-          unitMeasure,
           paragraph.lineBreakStrict,
         );
       }
