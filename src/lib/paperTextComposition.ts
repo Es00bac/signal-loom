@@ -34,6 +34,7 @@ import { breakPaperTextUnits } from './paperTextLayout';
 import type { PaperShapedGlyph, PaperTextShaper } from './paperTextShaper';
 
 const PT_PER_MM = 72 / 25.4;
+const CSS_PX_PER_PT = 96 / 72;
 const DEFAULT_UNITS_PER_EM = 1000;
 // Keep managed composition geometrically aligned with `.paper-dropcap::first-letter` in the live
 // fallback and print HTML. The configured value scales the glyph; the float's rendered line box is
@@ -155,6 +156,7 @@ interface ResolvedStyle {
   emphasis: PaperEmphasisMark;
   features: Record<string, boolean | number>;
   variations?: Record<string, number>;
+  autoOpticalSizing: boolean;
   decorations: { underline?: boolean; strike?: boolean; highlight?: string };
   superscriptShiftPt: number;
 }
@@ -198,6 +200,7 @@ interface CompositionParagraph {
   alignLast: PaperTextAlignLast;
   leadingPt: number;
   lineBreakStrict: boolean;
+  balanceLines: boolean;
 }
 
 interface ShapedGroup {
@@ -336,6 +339,7 @@ function styleKey(input: Omit<ResolvedStyle, 'key'>): string {
     input.emphasis,
     Object.entries(input.features).sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => `${key}:${value}`).join(','),
     JSON.stringify(input.variations ?? {}),
+    input.autoOpticalSizing ? 'auto-opsz' : '',
     input.superscriptShiftPt,
     input.decorations.underline ? 'u' : '',
     input.decorations.strike ? 's' : '',
@@ -383,6 +387,15 @@ function scaleStyle(style: ResolvedStyle, factor: number): ResolvedStyle {
     ...base,
     fontSizePt: base.fontSizePt * safeFactor,
     trackingPt: base.trackingPt * safeFactor,
+    ...(base.autoOpticalSizing ? {
+      variations: {
+        ...(base.variations ?? {}),
+        opsz: Math.min(
+          base.face.variableAxes.opsz!.max,
+          Math.max(base.face.variableAxes.opsz!.min, base.fontSizePt * safeFactor * CSS_PX_PER_PT),
+        ),
+      },
+    } : {}),
   };
   return { ...resolved, key: styleKey(resolved) };
 }
@@ -988,6 +1001,16 @@ async function resolveStyle(
   const baseSize = finitePositive(run.fontSizePt, finitePositive(typography.fontSizePt, 10));
   const isRaisedOrLowered = run.vertAlign === 'super' || run.vertAlign === 'sub';
   const fontSizePt = run.fontSizePt ? baseSize : isRaisedOrLowered ? baseSize * 0.7 : baseSize;
+  const authoredVariations = run.fontVariationSettings ?? typography.fontVariationSettings ?? selection.face.variationSettings;
+  const normalizedVariations = normalizePaperFontVariationSettings(authoredVariations, selection.face.variableAxes);
+  const autoOpticalSizing = authoredVariations?.opsz === undefined && Boolean(selection.face.variableAxes.opsz);
+  const variations = autoOpticalSizing ? {
+    ...(normalizedVariations ?? {}),
+    opsz: Math.min(
+      selection.face.variableAxes.opsz!.max,
+      Math.max(selection.face.variableAxes.opsz!.min, fontSizePt * CSS_PX_PER_PT),
+    ),
+  } : normalizedVariations;
   const script = scriptFor(run.text, vertical);
   const resolved: Omit<ResolvedStyle, 'key'> = {
     face: selection.face,
@@ -1003,7 +1026,8 @@ async function resolveStyle(
     glyphOrientation: 'upright',
     emphasis: run.emphasis ?? typography.emphasis ?? 'none',
     features: paperFeatures(typography, run, vertical),
-    variations: normalizePaperFontVariationSettings(run.fontVariationSettings ?? typography.fontVariationSettings ?? selection.face.variationSettings, selection.face.variableAxes),
+    variations,
+    autoOpticalSizing,
     decorations: { underline: run.underline, strike: run.strike, highlight: run.highlight },
     superscriptShiftPt: run.vertAlign === 'super' ? fontSizePt * 0.35 : run.vertAlign === 'sub' ? -fontSizePt * 0.18 : 0,
   };
@@ -1131,6 +1155,7 @@ async function buildParagraphs(
       alignLast: paragraph.alignLast ?? frame.typography.alignLast ?? 'auto',
       leadingPt: paragraphLeadingPt,
       lineBreakStrict: paragraph.lineBreakStrict ?? frame.typography.lineBreakStrict ?? vertical,
+      balanceLines: (paragraph.lineBreak ?? frame.typography.lineBreak) === 'balance',
     });
     sourceOffset += 1;
   }
@@ -1203,12 +1228,34 @@ export async function composePaperTextFrame(
     const horizontalLayouts = paragraphs.map((paragraph) => {
       const baseWidth = Math.max(0, columnWidthPt - paragraph.leftIndentPt - paragraph.rightIndentPt);
       const dropCapReserve = dropCapReservePt(paragraph);
-      const provisional = wrapHorizontalParagraphUnits(
+      let provisional = wrapHorizontalParagraphUnits(
         paragraph.units,
         (lineIndex) => Math.max(0, baseWidth - lineOffsetPt(paragraph, lineIndex, dropCapReserve)),
         unitMeasure,
         paragraph.lineBreakStrict,
       );
+      if (paragraph.balanceLines && dropCapReserve === 0 && provisional.length > 1) {
+        const targetLineCount = provisional.length;
+        let low = 0;
+        let high = baseWidth;
+        for (let attempt = 0; attempt < 24; attempt += 1) {
+          const candidate = (low + high) / 2;
+          const candidateLines = wrapHorizontalParagraphUnits(
+            paragraph.units,
+            () => candidate,
+            unitMeasure,
+            paragraph.lineBreakStrict,
+          );
+          if (candidateLines.length <= targetLineCount) high = candidate;
+          else low = candidate;
+        }
+        provisional = wrapHorizontalParagraphUnits(
+          paragraph.units,
+          () => high,
+          unitMeasure,
+          paragraph.lineBreakStrict,
+        );
+      }
       return { paragraph, baseWidth, dropCapReserve, provisional };
     });
     let balancedColumnHeightPt: number | undefined;

@@ -190,6 +190,14 @@ describe('composePaperTextFrame', () => {
     expect(shapedFeatures.every((features) => features.kern === false)).toBe(true);
   });
 
+  it('derives CSS-compatible optical sizing when a variable face has no authored opsz', async () => {
+    const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
+    await composeFixture([{ text: 'Optical proof' }], {}, undefined, (request) => requests.push(request));
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.variations?.opsz === 16)).toBe(true);
+  });
+
   it('resolves mixed run kerning and numeric features before managed shaping', async () => {
     const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
     await composeFixture([
@@ -549,6 +557,23 @@ describe('composePaperTextFrame', () => {
 
     expect(composed.lines.map((line) => line.text)).toEqual(['AAAA', 'BBBBB']);
     expect(composed.lines.every((line) => line.widthPt <= composed.bounds.widthPt)).toBe(true);
+  });
+
+  it('balances authored display lines without changing their count', async () => {
+    const composed = await composeSizedFixture({
+      widthMm: 65,
+      heightMm: 45,
+      text: 'A PROMPT STOPPED BEING DISPOSABLE AND BECAME MATERIAL WITH A ROUTE.',
+      typography: { fontSizePt: 17.5, leadingPt: 18.2, lineBreak: 'balance' },
+    });
+
+    expect(composed.lines.map((line) => line.text)).toEqual([
+      'A PROMPT',
+      'STOPPED BEING',
+      'DISPOSABLE AND',
+      'BECAME MATERIAL',
+      'WITH A ROUTE.',
+    ]);
   });
 
   it('balances managed text across authored columns when export balancing is enabled', async () => {
