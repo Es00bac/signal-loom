@@ -1,6 +1,8 @@
 import type { Connection, Edge } from '@xyflow/react';
 import type { AppNode } from '../types/flow';
 import {
+  normalizeFlowHandle,
+  resolveFlowNodePort,
   resolveFlowNodePorts,
   type FlowPortContract,
 } from './flowNodeContracts';
@@ -54,12 +56,18 @@ export function validateFlowConnection(
   if (!targetNode) return invalid(`The target node ${candidate.target || '(missing)'} does not exist.`);
   if (sourceNode.id === targetNode.id) return invalid('A node cannot connect to itself.');
 
-  const sourceHandle = normalizeHandle(candidate.sourceHandle);
-  const targetHandle = normalizeHandle(candidate.targetHandle);
-  const sourcePort = resolveFlowNodePorts({ node: sourceNode, nodes: context.nodes, edges: context.edges })
-    .find((port) => port.direction === 'output' && port.id === sourceHandle);
-  const targetPort = resolveFlowNodePorts({ node: targetNode, nodes: context.nodes, edges: context.edges })
-    .find((port) => port.direction === 'input' && port.id === targetHandle);
+  const sourceHandle = normalizeFlowHandle(candidate.sourceHandle);
+  const targetHandle = normalizeFlowHandle(candidate.targetHandle);
+  const sourcePort = resolveFlowNodePort(
+    { node: sourceNode, nodes: context.nodes, edges: context.edges },
+    'output',
+    sourceHandle,
+  );
+  const targetPort = resolveFlowNodePort(
+    { node: targetNode, nodes: context.nodes, edges: context.edges },
+    'input',
+    targetHandle,
+  );
 
   if (!sourcePort) return invalid(`The source handle ${formatHandle(sourceHandle)} is not available on this node.`);
   if (!targetPort) return invalid(`The target handle ${formatHandle(targetHandle)} is not available on this node.`);
@@ -76,7 +84,7 @@ export function validateFlowConnection(
     const existingCount = context.edges.filter((edge) =>
       edge.id !== candidateId
       && edge.target === targetNode.id
-      && normalizeHandle(edge.targetHandle) === targetHandle
+      && normalizeFlowHandle(edge.targetHandle) === targetHandle
     ).length;
 
     if (existingCount >= targetPort.maxConnections) {
@@ -91,7 +99,7 @@ export function validateFlowConnection(
       if (
         edge.id === candidateId
         || edge.target !== targetNode.id
-        || normalizeHandle(edge.targetHandle) !== targetHandle
+        || normalizeFlowHandle(edge.targetHandle) !== targetHandle
       ) {
         return false;
       }
@@ -152,7 +160,7 @@ export function resolveFlowOutputType(
   context: FlowGraphContractContext,
   visited: ReadonlySet<string> = new Set(),
 ): FlowDataType {
-  const normalizedHandle = normalizeHandle(handle);
+  const normalizedHandle = normalizeFlowHandle(handle);
   const visitKey = `${nodeId}:${normalizedHandle ?? '__default__'}`;
   if (visited.has(visitKey)) return unknownType;
   const cache = getOutputTypeCache(context);
@@ -303,7 +311,7 @@ function resolveIncomingTypes(
 ): FlowDataType[] {
   return (getGraphIndexes(context).incomingByNode.get(nodeId) ?? [])
     .filter((edge) =>
-      targetHandles === undefined || targetHandles.includes(normalizeHandle(edge.targetHandle))
+      targetHandles === undefined || targetHandles.includes(normalizeFlowHandle(edge.targetHandle))
     )
     .map((edge) => resolveFlowOutputType(edge.source, edge.sourceHandle, context, visited));
 }
@@ -344,10 +352,6 @@ function peerTypedInputHandles(
     if (handle === 'B') return ['A'];
   }
   return undefined;
-}
-
-function normalizeHandle(handle: string | null | undefined): string | null {
-  return handle ? handle : null;
 }
 
 function formatHandle(handle: string | null): string {

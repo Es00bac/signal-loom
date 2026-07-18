@@ -152,6 +152,7 @@ import {
 } from './geminiTextModel';
 import {
   createDefaultFunctionNodeConfig,
+  assertFunctionOutputBindingHandle,
   executeFunctionNodeConfig,
   prepareFunctionSubgraph,
   resolveFunctionInputBindings,
@@ -530,6 +531,12 @@ async function executeFunctionNode(
 
   const outputBinding = config.outputBindings[0];
   const prepared = prepareFunctionSubgraph(config, flowInputs);
+
+  // Validate exact named output identity before provider planning. Runtime resolution
+  // repeats this guard so an impossible handle can never degrade to primary data.
+  for (const binding of config.outputBindings) {
+    assertFunctionOutputBindingHandle(config, binding, prepared);
+  }
 
   // No binding or an empty internal graph: the synchronous resolution path is the whole
   // truth (defaults, expressions, missing strategies) and there is no provider work.

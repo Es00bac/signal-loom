@@ -471,6 +471,23 @@ export function resolveFlowNodePorts(context: FlowNodeContractContext): readonly
   ];
 }
 
+/** React Flow persists `undefined`, `null`, and an empty string as the same unnamed
+ * handle. Every named handle remains exact and case-sensitive. */
+export function normalizeFlowHandle(handle: string | null | undefined): string | null {
+  return handle ? handle : null;
+}
+
+/** Resolve one port through the same dynamic contract used by connection validation. */
+export function resolveFlowNodePort(
+  context: FlowNodeContractContext,
+  direction: FlowPortContract['direction'],
+  handle: string | null | undefined,
+): FlowPortContract | undefined {
+  const normalizedHandle = normalizeFlowHandle(handle);
+  return resolveFlowNodePorts(context)
+    .find((port) => port.direction === direction && port.id === normalizedHandle);
+}
+
 function define(
   nodeType: FlowNodeType,
   role: FlowNodeExecutionRole,

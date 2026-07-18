@@ -406,6 +406,223 @@ describe('executeNodeRequest collapsed reusable functions', () => {
     expect(execution.functionOutputs?.['outer-mask']?.result).toBe('data:image/png;base64,SU5ORVItTUFTSw==');
   });
 
+  it('rejects the gate\'s unknown Stability output handle before the paid request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(imageResponse('MUST-NOT-RUN'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = createDefaultFunctionNodeConfig('Invalid paid output handle');
+    config.graph = {
+      version: 1,
+      nodes: [
+        node('prompt', 'textNode', { mode: 'prompt', prompt: 'a paid fox' }),
+        node('paid', 'imageGen', {
+          provider: 'stability',
+          modelId: 'stable-image-core',
+          result: FROZEN_INTERNAL_IMAGE,
+        }),
+      ],
+      edges: [{ id: 'prompt-paid', source: 'prompt', target: 'paid' }],
+    };
+    config.outputBindings[0] = {
+      ...config.outputBindings[0],
+      sourceNodeId: 'paid',
+      sourceHandle: 'not-a-real-output',
+      resultType: 'image',
+    };
+
+    await expect(executeNodeRequest(functionNodeFor(config), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime }))
+      .rejects.toMatchObject({
+        name: 'NonRetryableError',
+        message: expect.stringMatching(/source handle "not-a-real-output".*paid/i),
+      });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown nested Function output handle before any inner provider call', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(imageResponse('MUST-NOT-RUN'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const inner = createDefaultFunctionNodeConfig('Paid inner output');
+    inner.contract.outputPorts = [{
+      id: 'inner-image', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0,
+    }];
+    inner.graph = {
+      version: 1,
+      nodes: [
+        node('inner-prompt', 'textNode', { mode: 'prompt', prompt: 'an inner fox' }),
+        node('inner-paid', 'imageGen', { provider: 'stability', modelId: 'stable-image-core' }),
+      ],
+      edges: [{ id: 'inner-prompt-paid', source: 'inner-prompt', target: 'inner-paid' }],
+    };
+    inner.outputBindings = [{
+      ...inner.outputBindings[0],
+      targetOutputPortId: 'inner-image',
+      sourceNodeId: 'inner-paid',
+      resultType: 'image',
+    }];
+
+    const outer = createDefaultFunctionNodeConfig('Invalid nested handle');
+    outer.graph = { version: 1, nodes: [functionNodeFor(inner, 'inner-function')], edges: [] };
+    outer.outputBindings[0] = {
+      ...outer.outputBindings[0],
+      sourceNodeId: 'inner-function',
+      sourceHandle: 'not-an-inner-output',
+      resultType: 'image',
+    };
+
+    await expect(executeNodeRequest(functionNodeFor(outer, 'outer-function'), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime }))
+      .rejects.toMatchObject({
+        name: 'NonRetryableError',
+        message: expect.stringMatching(/source handle "not-an-inner-output".*inner-function/i),
+      });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('routes a provider-backed nested secondary output with its distinct metadata exactly once', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:nested-secondary-image');
+    const calls = { submit: 0, download: 0 };
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes('/model/generateImage')) {
+        calls.submit += 1;
+        return jsonResponse({ data: { outputs: ['https://cdn.atlascloud.ai/nested-secondary.png'] } });
+      }
+      calls.download += 1;
+      return imageResponse('NESTED-SECONDARY');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const inner = createDefaultFunctionNodeConfig('Local primary and paid secondary');
+    inner.contract.outputPorts = [
+      { id: 'inner-text', key: 'text', label: 'Text', resultType: 'text', required: true, order: 0 },
+      { id: 'inner-image', key: 'image', label: 'Image', resultType: 'image', required: true, order: 1 },
+    ];
+    inner.graph = {
+      version: 1,
+      nodes: [
+        node('inner-local', 'textNode', { mode: 'prompt', prompt: 'INNER PRIMARY' }),
+        node('inner-prompt', 'textNode', { mode: 'prompt', prompt: 'an exact secondary fox' }),
+        node('inner-paid', 'imageGen', { provider: 'atlas', modelId: 'black-forest-labs/flux-schnell' }),
+      ],
+      edges: [{ id: 'inner-prompt-paid', source: 'inner-prompt', target: 'inner-paid' }],
+    };
+    inner.outputBindings = [
+      { ...inner.outputBindings[0], targetOutputPortId: 'inner-text', sourceNodeId: 'inner-local', resultType: 'text' },
+      {
+        ...inner.outputBindings[0],
+        id: 'inner-image-binding',
+        targetOutputPortId: 'inner-image',
+        sourceNodeId: 'inner-paid',
+        resultType: 'image',
+      },
+    ];
+
+    const outer = createDefaultFunctionNodeConfig('Outer secondary image');
+    outer.contract.outputPorts = [{
+      id: 'outer-image', key: 'image', label: 'Image', resultType: 'image', required: true, order: 0,
+    }];
+    outer.graph = { version: 1, nodes: [functionNodeFor(inner, 'inner-function')], edges: [] };
+    outer.outputBindings = [{
+      ...outer.outputBindings[0],
+      targetOutputPortId: 'outer-image',
+      sourceNodeId: 'inner-function',
+      sourceHandle: 'inner-image',
+      resultType: 'image',
+    }];
+
+    const execution = await executeNodeRequest(functionNodeFor(outer, 'outer-function'), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, {
+      ...baseSettings,
+      apiKeys: { ...baseSettings.apiKeys, atlas: 'atlas-key' },
+      providerSettings: {
+        ...baseSettings.providerSettings,
+        atlasBaseUrl: 'https://api.atlascloud.ai/api/v1',
+        batchMaxRetries: 0,
+      },
+    }, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+
+    expect(calls).toEqual({ submit: 1, download: 1 });
+    expect(execution.result).toBe('blob:nested-secondary-image');
+    expect(execution.result).not.toBe('INNER PRIMARY');
+    expect(execution.mimeType).toBe('image/png');
+    expect(execution.functionOutputs?.['outer-image']).toMatchObject({
+      result: 'blob:nested-secondary-image',
+      resultType: 'image',
+      mimeType: 'image/png',
+    });
+    expect(execution.usageAttributions).toHaveLength(1);
+  });
+
+  it('keeps absent and persisted empty source handles on the canonical default output', async () => {
+    for (const [id, sourceHandle] of [['absent', undefined], ['empty', '']] as const) {
+      vi.spyOn(URL, 'createObjectURL').mockReturnValueOnce(`blob:${id}-default-image`);
+      const fetchMock = vi.fn().mockResolvedValue(imageResponse(id));
+      vi.stubGlobal('fetch', fetchMock);
+      const config = createDefaultFunctionNodeConfig(`${id} default handle`);
+      config.graph = {
+        version: 1,
+        nodes: [
+          node(`${id}-prompt`, 'textNode', { mode: 'prompt', prompt: `${id} fox` }),
+          node(`${id}-paid`, 'imageGen', { provider: 'stability', modelId: 'stable-image-core' }),
+        ],
+        edges: [{ id: `${id}-edge`, source: `${id}-prompt`, target: `${id}-paid` }],
+      };
+      config.outputBindings[0] = {
+        ...config.outputBindings[0],
+        sourceNodeId: `${id}-paid`,
+        sourceHandle,
+        resultType: 'image',
+      };
+
+      const execution = await executeNodeRequest(functionNodeFor(config, `${id}-function`), {
+        prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+      }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(execution.result).toBe(`blob:${id}-default-image`);
+    }
+  });
+
+  it('does not repair malformed persisted handle casing into a paid named output', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(imageResponse('MUST-NOT-RUN'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = createDefaultFunctionNodeConfig('Malformed named casing');
+    config.graph = {
+      version: 1,
+      nodes: [
+        node('prompt', 'textNode', { mode: 'prompt', prompt: 'a masked fox' }),
+        node('paid', 'imageGen', { provider: 'stability', modelId: 'stable-image-core' }),
+        node('editor', 'advancedImageEditor', {
+          result: 'data:image/png;base64,REVGQVVMVA==',
+          maskOutput: 'data:image/png;base64,TUFTSw==',
+        }),
+      ],
+      edges: [
+        { id: 'prompt-paid', source: 'prompt', target: 'paid' },
+        { id: 'paid-editor', source: 'paid', target: 'editor', targetHandle: 'sourceImage' },
+      ],
+    };
+    config.outputBindings[0] = {
+      ...config.outputBindings[0],
+      sourceNodeId: 'editor',
+      sourceHandle: 'MaskOutput',
+      resultType: 'image',
+    };
+
+    await expect(executeNodeRequest(functionNodeFor(config), {
+      prompt: '', config: DEFAULT_EXECUTION_CONFIG,
+    }, baseSettings, undefined, { functionRuntime: flowFunctionNodeExecutionRuntime }))
+      .rejects.toMatchObject({
+        name: 'NonRetryableError',
+        message: expect.stringMatching(/source handle "MaskOutput".*editor/i),
+      });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('executes every advertised output subtree once: two providers, different types, exact submission counts', async () => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:multi-output-image');
     const fetchMock = vi.fn().mockResolvedValue(imageResponse('FRESH-MULTI'));

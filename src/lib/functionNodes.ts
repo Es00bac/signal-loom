@@ -15,6 +15,8 @@ import type {
   ResultType,
 } from '../types/flow';
 import { FUNCTION_NODE_SCHEMA_VERSION } from '../types/flow';
+import { NonRetryableError } from './exponentialBackoff';
+import { resolveFlowNodePort } from './flowNodeContracts';
 import { evaluateNodeSignal } from './flowSignals';
 
 type IdFactory = (prefix: string) => string;
@@ -1117,6 +1119,8 @@ export function resolveFunctionOutputFromGraph(
   prepared: PreparedFunctionSubgraph | null,
   flowInputs: Record<string, DynamicValue>,
 ): DynamicValue {
+  assertFunctionOutputBindingHandle(config, outputBinding, prepared);
+
   // If there are internal nodes, resolve the bound output through sub-DAG signals
   if (prepared) {
     try {
@@ -1157,6 +1161,30 @@ export function resolveFunctionOutputFromGraph(
   }
 
   return (data.result ?? data.prompt ?? data.sourceAssetUrl ?? '') as DynamicValue;
+}
+
+/** Fail closed for named output identity before signal evaluation can fall back to a
+ * source node's primary/default value. Default handles intentionally retain legacy
+ * compatibility even on nodes whose visible contract uses named ports. */
+export function assertFunctionOutputBindingHandle(
+  config: FunctionNodeConfig,
+  outputBinding: FunctionOutputBinding,
+  prepared: PreparedFunctionSubgraph | null,
+): void {
+  if (!outputBinding.sourceHandle) return;
+
+  const nodes = prepared?.nodes ?? (config.graph.nodes as AppNode[]);
+  const edges = prepared?.edges ?? (Array.isArray(config.graph.edges) ? config.graph.edges : []);
+  const sourceNode = nodes.find((node) => node.id === outputBinding.sourceNodeId);
+  const sourcePort = sourceNode
+    ? resolveFlowNodePort({ node: sourceNode, nodes, edges }, 'output', outputBinding.sourceHandle)
+    : undefined;
+
+  if (!sourceNode || !sourcePort) {
+    throw new NonRetryableError(
+      `Reusable function output source handle "${outputBinding.sourceHandle}" is not available on internal node ${outputBinding.sourceNodeId || '(missing)'}. Refusing to route primary/default data.`,
+    );
+  }
 }
 
 function resolveMissingOutput(binding: FunctionOutputBinding): DynamicValue {
