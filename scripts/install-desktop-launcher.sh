@@ -98,5 +98,5 @@ elif command -v kbuildsycoca5 >/dev/null 2>&1; then
   kbuildsycoca5 >/dev/null 2>&1 || true
 fi
 
-version="$(node -p "require('${project_root}/package.json').version" 2>/dev/null || echo '?')"
+version="$(node -e "const { formatInternalBuildVersion } = require('${project_root}/electron/version-display.cjs'); process.stdout.write(formatInternalBuildVersion(require('${project_root}/package.json').version))" 2>/dev/null || echo '?')"
 printf 'Installed Sloom Studio %s to %s (menu entry: %s)\n' "$version" "$install_dir" "$desktop_target"

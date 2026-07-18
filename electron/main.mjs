@@ -24,8 +24,10 @@ import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
 import panelMenuServiceModule from './globalMenu/panelMenuService.cjs';
 import bundledFontLibraryModule from './bundled-font-library.cjs';
 import interfaceLocaleAuthorityModule from './interface-locale-authority.cjs';
+import versionDisplayModule from './version-display.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
+const { formatInternalBuildVersion } = versionDisplayModule;
 const {
   buildPaperPdfDefaultPath,
   buildPaperPdfPrintOptions,
@@ -4151,7 +4153,8 @@ function installIpcHandlers() {
 
   ipcMain.handle('signal-loom:show-about', async (event, options) => {
     const win = getIpcWindow(event);
-    const version = app.getVersion();
+    const packageVersion = app.getVersion();
+    const version = formatInternalBuildVersion(packageVersion);
     // Edition line comes from the renderer's offline license verification
     // ("Community edition" / "Licensed to <email>"); sanitized, never trusted for gating.
     const edition = typeof options?.edition === 'string' && options.edition.trim()
@@ -4176,7 +4179,7 @@ function installIpcHandlers() {
       noLink: true,
     });
     if (result.response === 0) {
-      await signalLoomCheckForUpdates(win, version);
+      await signalLoomCheckForUpdates(win, packageVersion);
     } else if (result.response === 1) {
       await shell.openExternal('https://sloom.studio/downloads');
     } else if (result.response === 2) {
