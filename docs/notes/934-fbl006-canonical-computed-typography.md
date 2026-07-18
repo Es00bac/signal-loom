@@ -1,8 +1,9 @@
 # 934 — FBL-006 canonical computed typography correction
 
-**Branch:** `audit/fbl006-composer-20260718`  
-**Base:** `17b2f76e66fef5aa460d259cb7ccad0cde7bd7b5`  
+**Branch:** `audit/fbl006-composer-20260718`
+**Base:** `17b2f76e66fef5aa460d259cb7ccad0cde7bd7b5`
 **Production + regression commit:** `bc93a7295ac32611a01ef0146f38cc0a6c314f47`
+**Gate-correction production + regression commit:** `2d64a9325afba433c51949b980a3a3fb59203ed7`
 
 ## Confirmed production defects
 
@@ -74,14 +75,60 @@ Verifier outputs were kept out of the candidate worktree and preserved at:
 That directory contains the verifier JSON, both generated PDFs, separation TIFFs,
 and `SHA256SUMS` for all 15 generated files (3.2 MiB total).
 
-## Bounded residual / gate note
+## Independent correction gate and superseding resolution
 
-This correction does not invent a new managed-composer interpretation of the
-model's per-run `textOrientation` or `emphasis` fields. The existing composer
-behavior for vertical text, ruby, and inline emphasis is preserved and remains
-covered, while DOM/flatten serialization of those explicit run fields is
-unchanged. An independent gate should decide whether the audit's broader wording
-requires a distinct follow-up for managed per-run orientation/emphasis; this
-author lane does not self-approve or close that question.
+An independent Context Cartographer gated clean commit `a7661eefb596545af080a417c2c6f7cfc3894c37`.
+It confirmed the first correction's four regressions were old-code sensitive and
+the candidate remained green, then formally reproduced three additional shipping
+defects that superseded the bounded-residual statement above:
 
-**Ready for independent final gate. Not self-approved.**
+- effective run/frame `textOrientation` and `emphasis` survived DOM/flattened HTML
+  but disappeared from the shared managed composition, live SVG, render plan, and
+  native PDF;
+- `smallCaps: false` could not override a true frame value;
+- a too-tall first horizontal line, too-wide first vertical column, or overflowing
+  line immediately after column rollover could incorrectly report
+  `overset: false`.
+
+Commit `2d64a9325afba433c51949b980a3a3fb59203ed7` resolves those reproduced defects:
+
+- resolved composition units now retain `run -> frame` orientation/emphasis;
+  mixed vertical Latin is shaped horizontally and rotated clockwise, while
+  upright Latin and CJK retain top-to-bottom shaping and vertical OpenType
+  features;
+- positioned glyph-run rotation and exact `dot`, `open-dot`, `sesame`, and
+  `circle` mark styles survive render-plan translation;
+- managed SVG and native PDF consume the same rotation and mark semantics,
+  including stroked open dots, sesame paths, and a rotated native text matrix;
+- an explicit run `smallCaps: false` wins through nullish precedence;
+- horizontal and vertical compositions retain explicit layout boxes, and overset
+  is checked against the actual first-box and post-rollover geometry.
+
+## Superseding permanent regressions and gates
+
+- Composer + live managed SVG + render plan + native PDF: **4 files, 39 tests
+  passed**. The assertions cover shaping requests, positioned rotation, exact
+  mark-style order, SVG transforms/shapes, translated render-plan paints, and PDF
+  `Tm`/path operators.
+- Adjacent Paper rich-text/vector/PDF matrix: **10 files, 108 tests passed**.
+- `npx tsc -b --pretty false --force`: **exit 0**.
+- ESLint on all seven changed production/test files: **exit 0**.
+- `git diff --check`: **clean**.
+- `npm run verify:paper-production`: **passed**, including generated PDF/X-1a
+  and PDF/X-4 structural/font/image/separation checks.
+
+Fresh verifier outputs are preserved outside the worktree at:
+
+```text
+/mnt/d/work_SPaC3/verification-artifacts/fbl006-correction-20260718/
+```
+
+Key SHA-256 evidence:
+
+```text
+2b9c3ff876317dd709c483cc4e0da749100670d1c732565c19a3ea64e301622f  paper-production-verification.json
+43b02b3e873d7db9cb2f2c087bf900b778daa09444270dd1ede5f0791ed83f0b  paper-production-golden-pdf-x-1a.pdf
+950f49311ec6b6e744152bb7d4530724faf3e06478df09bab5ec8bba1f4f99bc  paper-production-golden-pdf-x-4.pdf
+```
+
+**Ready for a different persona's final gate. Not self-approved.**
