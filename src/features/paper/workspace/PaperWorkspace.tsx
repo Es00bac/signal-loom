@@ -68,6 +68,7 @@ import { ensurePaperImportedFontRegistered, PaperFontImportControl, useRegisterI
 import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
 import { PaperBundledFontFaceBrowser, PaperBundledFontPicker } from './PaperBundledFontPicker';
+import type { BundledFontSelectionAuthority } from '../../../components/Common/BundledFontBrowser';
 import { PaperDocumentTabs } from './PaperDocumentTabs';
 import { buildPaperDocumentExactManagedFontOutput, materializePaperDocumentAssetUrls, paperAssetRepository } from '../assets/PaperAssetRuntime';
 import { useSettingsStore } from '../../../store/settingsStore';
@@ -9936,7 +9937,7 @@ const PAPER_RICH_SIZE_CHOICES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 32, 48];
  * colour). On commit it serialises the DOM back to runs. Only rich frames use it — every other text frame
  * keeps the plain single-style editor, so nothing else in Sloom changes.
  */
-function PaperRichEditableText({
+export function PaperRichEditableText({
   baseStyle,
   className,
   frame,
@@ -10123,7 +10124,9 @@ function PaperRichEditableText({
   const applySelectionTypographyPatchNow = (
     patch: Parameters<typeof applyTypographyPatchToDomSelection>[2],
     paintFonts: readonly PaperManagedFontFace[] | undefined = managedFonts,
+    canCommit?: () => boolean,
   ): boolean => {
+    if (canCommit && !canCommit()) return false;
     const editor = editorRef.current;
     if (!editor) return false;
     const managedPaint = { typography: frame.typography, managedFonts: paintFonts };
@@ -10144,9 +10147,10 @@ function PaperRichEditableText({
   const applySelectionTypographyPatch = (
     patch: Parameters<typeof applyTypographyPatchToDomSelection>[2],
     paintFonts: readonly PaperManagedFontFace[] | undefined = managedFonts,
+    canCommit?: () => boolean,
   ): boolean | Promise<boolean> => {
     if (!FACE_SELECTING_TYPOGRAPHY_KEYS.some((key) => key in patch)) {
-      return applySelectionTypographyPatchNow(patch, paintFonts);
+      return applySelectionTypographyPatchNow(patch, paintFonts, canCommit);
     }
     try {
       const editor = editorRef.current;
@@ -10155,10 +10159,11 @@ function PaperRichEditableText({
         : [];
       const effective = selected.length ? selected : [frame.typography];
       const exactFaces = requestedExactPaperManagedFacesForTypographyPatch(effective, patch, paintFonts ?? []);
-      if (!exactFaces.length) return applySelectionTypographyPatchNow(patch, paintFonts);
+      if (!exactFaces.length) return applySelectionTypographyPatchNow(patch, paintFonts, canCommit);
       return Promise.all(exactFaces.map((face) => ensurePaperImportedFontRegistered(face)))
-        .then(() => applySelectionTypographyPatchNow(patch, paintFonts))
+        .then(() => applySelectionTypographyPatchNow(patch, paintFonts, canCommit))
         .catch(async (error) => {
+          if (canCommit && !canCommit()) return false;
           await showAlertDialog({
             title: 'Exact Font Edit Blocked',
             message: error instanceof Error ? error.message : 'The requested exact face could not be authenticated, so the text was not changed.',
@@ -10167,6 +10172,7 @@ function PaperRichEditableText({
           return false;
         });
     } catch (error) {
+      if (canCommit && !canCommit()) return false;
       return showAlertDialog({
         title: 'Exact Font Edit Blocked',
         message: error instanceof Error ? error.message : 'The requested exact face could not be resolved, so the text was not changed.',
@@ -10177,7 +10183,12 @@ function PaperRichEditableText({
   const applyFontSizePt = (pt: number) => {
     applySelectionTypographyPatch({ fontSizePt: pt });
   };
-  const applyBundledFontFace = async (familyName: string, face: { id: string; weight: number; style: PaperManagedFontStyle; stretchPercent: number; axes: Record<string, { default: number }> }) => {
+  const applyBundledFontFace = async (
+    familyName: string,
+    face: { id: string; weight: number; style: PaperManagedFontStyle; stretchPercent: number; axes: Record<string, { default: number }> },
+    authority: BundledFontSelectionAuthority,
+  ) => {
+    if (!authority.isCurrent()) return;
     const currentFonts = usePaperStore.getState().document.importedFonts;
     const installed = currentFonts?.find((candidate) => candidate.id === `bundled-${face.id}`);
     const variationSettings = Object.keys(face.axes).length
@@ -10190,7 +10201,9 @@ function PaperRichEditableText({
       fontStretch: `${face.stretchPercent}%`,
       ...(variationSettings ? { fontVariationSettings: variationSettings } : {}),
     };
-    if (await applySelectionTypographyPatch(patch, currentFonts)) setFontMenuOpen(false);
+    if (!await applySelectionTypographyPatch(patch, currentFonts, authority.isCurrent)) return;
+    if (!authority.isCurrent()) return;
+    setFontMenuOpen(false);
   };
   // Wrap the selection in Japanese inline notation (furigana 語《》 or emphasis 《《語》》). The notation is
   // inserted as plain text — it round-trips through the frame text and renders as <ruby>/圏点 in the non-editing
@@ -10408,7 +10421,7 @@ function PaperRichEditableText({
                   fontStyle={paperFontStyleFromCss(frame.typography.fontStyle)}
                   fontWeight={Number.parseInt(frame.typography.fontWeight, 10) || 400}
                   initiallyOpen
-                  onSelect={(family, face) => applyBundledFontFace(family.family, face)}
+                  onSelect={(family, face, authority) => applyBundledFontFace(family.family, face, authority)}
                 />
               </div>
             ) : null}
