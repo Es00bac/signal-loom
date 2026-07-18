@@ -660,7 +660,8 @@ describe('source bin live workspace sync', () => {
         expect.objectContaining({
           id: 'update-me',
           label: 'New panel.png',
-          assetUrl: 'data:image/png;base64,UPDATED',
+          assetId: 'updated-asset',
+          assetUrl: undefined,
           pixelWidth: 1200,
           pixelHeight: 800,
         }),

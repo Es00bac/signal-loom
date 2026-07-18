@@ -99,6 +99,17 @@ export interface SourceBinLibraryItem {
   envelopeIndex?: number;
   envelopeCollapsed?: boolean;
   isGenerated?: boolean;
+  durability?: SourceLibraryItemDurability;
+  durabilityMessage?: string;
+}
+
+export type SourceLibraryItemDurability = 'recovery-inline' | 'session-only' | 'unavailable';
+
+export interface SourceLibraryDurabilityStatus {
+  state: 'ready' | 'degraded';
+  message?: string;
+  affectedItemIds?: string[];
+  updatedAt?: number;
 }
 
 export interface SourceBin {
@@ -121,34 +132,93 @@ export type PersistedSourceBinState = {
   dismissedSourceKeys?: string[];
   sidebarOpen?: boolean;
   nativeScratchDirectoryPath?: string;
+  durabilityStatus?: SourceLibraryDurabilityStatus;
 };
 
 /**
  * Decide which `assetUrl` (if any) is safe to PERSIST to localStorage for a source-bin item.
  *
- * Persistence must only ever store a small, durable POINTER — never resolved asset bytes. A
+ * Persistence normally stores a small, durable POINTER rather than resolved asset bytes. The one
+ * exception is a fallback-only item whose durable asset write failed: its `recovery-inline` data
+ * URL is the last recoverable copy, so it must survive a reload if localStorage has room. A
  * native-file item carries a tiny native/capacitor pointer (`file://…` / `https://localhost/
  * _capacitor_file_/…`, ~150 chars) worth persisting so the native file can be re-opened. But a
  * `data:` / `blob:` URL is resolved bytes: on a phone-served LAN desktop client, `hydrateAssets`
  * REPLACES a native item's (unreachable) capacitor `assetUrl` with the multi-MB `data:` thumbnail
- * it streamed from the host — while `nativeFilePath` stays set. Persisting those base64 thumbnails
- * (one per item, several MB each) blows the ~5 MB localStorage quota; the `setItem` then throws,
+ * it streamed from the host — while `nativeFilePath` stays set. Persisting those re-derivable
+ * base64 thumbnails (one per item, several MB each) blows the ~5 MB localStorage quota; the
+ * `setItem` then throws,
  * which propagates through zustand's persist into EVERY subsequent `setState` — breaking live-sync
  * apply (the item never lands → no thumbnail → "Preview unavailable") and Image export ("The quota
  * has been exceeded"). Those bytes are re-derivable at runtime (re-streamed via
- * `/source-asset/:itemId`, keyed by the persisted `item.id`), so we never persist them.
+ * `/source-asset/:itemId`, keyed by the persisted `item.id`), so we do not persist them.
  */
 export function persistableSourceBinAssetUrl(
-  item: Pick<SourceBinLibraryItem, 'nativeFilePath' | 'assetUrl'>,
+  item: Pick<SourceBinLibraryItem, 'assetId' | 'scratchFileName' | 'nativeFilePath' | 'assetUrl' | 'durability'>,
 ): string | undefined {
   const url = item.assetUrl;
-  if (!url || !item.nativeFilePath) {
+  if (!url) {
     return undefined;
   }
-  if (url.startsWith('data:') || url.startsWith('blob:')) {
+  const hasDurableBacking = Boolean(item.assetId || item.scratchFileName || item.nativeFilePath);
+  if (url.startsWith('data:')) {
+    return !hasDurableBacking && item.durability === 'recovery-inline' ? url : undefined;
+  }
+  if (url.startsWith('blob:')) {
     return undefined;
   }
-  return url;
+  return item.nativeFilePath ? url : undefined;
+}
+
+const SOURCE_LIBRARY_STORAGE_WARNING = 'Source Library storage is degraded. Some items may require regeneration or reimport after reload; review affected items before closing Sloom Studio.';
+const SOURCE_LIBRARY_QUOTA_ITEM_WARNING = 'Recovery bytes did not fit in browser storage. The item record was kept, but its preview must be regenerated or reimported after reload.';
+
+export function recoverSourceBinStorageValueAfterQuotaFailure(value: string): string | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isRecord(parsed) || !isRecord(parsed.state) || !Array.isArray(parsed.state.bins)) {
+      return undefined;
+    }
+
+    let changed = false;
+    const bins = parsed.state.bins.map((bin) => {
+      if (!isRecord(bin) || !Array.isArray(bin.items)) return bin;
+      const items = bin.items.map((item) => {
+        if (
+          !isRecord(item)
+          || item.durability !== 'recovery-inline'
+          || typeof item.assetUrl !== 'string'
+          || !item.assetUrl.startsWith('data:')
+        ) {
+          return item;
+        }
+        changed = true;
+        return {
+          ...item,
+          assetUrl: undefined,
+          durability: 'unavailable',
+          durabilityMessage: SOURCE_LIBRARY_QUOTA_ITEM_WARNING,
+        };
+      });
+      return { ...bin, items };
+    });
+    if (!changed) return undefined;
+
+    return JSON.stringify({
+      ...parsed,
+      state: {
+        ...parsed.state,
+        bins,
+        durabilityStatus: {
+          state: 'degraded',
+          message: SOURCE_LIBRARY_STORAGE_WARNING,
+          updatedAt: Date.now(),
+        },
+      },
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -156,28 +226,54 @@ export function persistableSourceBinAssetUrl(
  * calls `storage.setItem` synchronously inside the state update; a `QuotaExceededError` (or any
  * storage failure) thrown there propagates out of `set(...)` and breaks the action that triggered
  * it — which is precisely how a full quota turned into broken live-sync and an "Image Export Failed"
- * dialog. With {@link persistableSourceBinAssetUrl} the persisted payload is tiny, but we still wrap
- * `setItem` so any future overflow/availability error degrades to "skip this persist tick" instead
- * of corrupting the running session. Returns `undefined` (persistence disabled) when there is no
- * window, matching zustand's default behavior.
+ * dialog. With {@link persistableSourceBinAssetUrl} the normal persisted payload is tiny, but we
+ * still wrap every storage operation so quota/availability errors cannot corrupt the running
+ * session. If inline recovery bytes exceed quota, the wrapper retries with the item metadata and
+ * an explicit unavailable marker instead of dropping the whole state update. Returns `undefined`
+ * (persistence disabled) when there is no window, matching zustand's default behavior.
  */
-function createQuotaSafeJSONStorage() {
+export function createQuotaSafeJSONStorage() {
   return createJSONStorage(() => {
     // Reference window.localStorage directly (like zustand's default): if it's unavailable (SSR /
     // node tests) this throws, createJSONStorage catches it and returns undefined, and persist
-    // no-ops gracefully — matching prior behavior. When it IS available we wrap setItem so a quota
-    // overflow degrades to a skipped persist tick instead of throwing into setState.
+    // no-ops gracefully — matching prior behavior. When it IS available, every operation is
+    // guarded so a quota or availability failure becomes visible degraded state rather than an
+    // exception escaping into application actions.
     const base = window.localStorage;
     return {
-      getItem: (name: string) => base.getItem(name),
+      getItem: (name: string) => {
+        try {
+          return base.getItem(name);
+        } catch (error) {
+          scheduleSourceLibraryDurabilityFailure(SOURCE_LIBRARY_STORAGE_WARNING);
+          console.warn('[sourceBinStore] persisted Source Library state unavailable:', error);
+          return null;
+        }
+      },
       setItem: (name: string, value: string) => {
         try {
           base.setItem(name, value);
         } catch (error) {
+          const recoveryValue = recoverSourceBinStorageValueAfterQuotaFailure(value);
+          if (recoveryValue) {
+            try {
+              base.setItem(name, recoveryValue);
+            } catch {
+              // The runtime warning below remains the only safe recovery when storage is unavailable.
+            }
+          }
+          scheduleSourceLibraryDurabilityFailure(SOURCE_LIBRARY_STORAGE_WARNING);
           console.warn('[sourceBinStore] persist skipped (storage quota/availability):', error);
         }
       },
-      removeItem: (name: string) => base.removeItem(name),
+      removeItem: (name: string) => {
+        try {
+          base.removeItem(name);
+        } catch (error) {
+          scheduleSourceLibraryDurabilityFailure(SOURCE_LIBRARY_STORAGE_WARNING);
+          console.warn('[sourceBinStore] persisted Source Library state could not be removed:', error);
+        }
+      },
     };
   });
 }
@@ -187,6 +283,7 @@ export interface SourceBinState {
   dismissedSourceKeys: string[];
   sidebarOpen: boolean;
   nativeSyncStatus: SourceLibraryNativeSyncStatus;
+  durabilityStatus: SourceLibraryDurabilityStatus;
   scratchDirectoryHandle?: FileSystemDirectoryHandle;
   nativeScratchDirectoryPath?: string;
   setSidebarOpen: (open: boolean) => void;
@@ -255,6 +352,48 @@ export interface PreparedSourceBinProjectSnapshot {
   dismissedSourceKeys: string[];
 }
 
+export function buildPersistedSourceBinState(
+  state: Pick<SourceBinState, 'sidebarOpen' | 'dismissedSourceKeys' | 'nativeScratchDirectoryPath' | 'durabilityStatus' | 'bins'>,
+): PersistedSourceBinState {
+  return {
+    sidebarOpen: state.sidebarOpen,
+    dismissedSourceKeys: state.dismissedSourceKeys,
+    nativeScratchDirectoryPath: state.nativeScratchDirectoryPath,
+    durabilityStatus: state.durabilityStatus,
+    bins: state.bins.map((bin) => ({
+      id: bin.id,
+      name: bin.name,
+      collapsed: bin.collapsed,
+      createdAt: bin.createdAt,
+      items: bin.items.map((item) => ({
+        id: item.id,
+        label: item.label,
+        kind: item.kind,
+        mimeType: item.mimeType,
+        assetId: item.assetId,
+        scratchFileName: item.scratchFileName,
+        nativeFilePath: item.nativeFilePath,
+        assetUrl: persistableSourceBinAssetUrl(item),
+        text: item.text,
+        durability: item.durability === 'session-only' ? 'unavailable' : item.durability,
+        durabilityMessage: item.durability === 'session-only'
+          ? 'Temporary preview bytes were available only in the previous session. Regenerate or reimport this item.'
+          : item.durabilityMessage,
+        createdAt: item.createdAt,
+        sourceKey: item.sourceKey,
+        originNodeId: item.originNodeId,
+        isGenerated: item.isGenerated,
+        starred: item.starred,
+        collapsed: item.collapsed,
+        envelopeId: item.envelopeId,
+        envelopeLabel: item.envelopeLabel,
+        envelopeIndex: item.envelopeIndex,
+        envelopeCollapsed: item.envelopeCollapsed,
+      })),
+    })),
+  };
+}
+
 const STORAGE_KEY = 'flow-global-source-bin';
 const pendingConnectedSourceKeys = new Set<string>();
 const provisionalSourceBinItemIds = new Set<string>();
@@ -264,6 +403,9 @@ const TRANSIENT_RECOVERED_SCRATCH_SOURCE_KEY_PREFIX = 'recovered-scratch:';
 const PROJECT_IMPORT_ENVELOPE_ID = 'project-imports';
 const PROJECT_IMPORT_ENVELOPE_LABEL = 'Project imports';
 let androidSourceAssetPermissionAlertOpen = false;
+let pendingDurabilityMessage: string | undefined;
+const pendingDurabilityItemIds = new Set<string>();
+let lastReportedDurabilityFingerprint: string | undefined;
 const revocableSourceAssetHandles = createSourceAssetHandlePool((url) => {
   revokeObjectUrl(url);
 });
@@ -654,7 +796,7 @@ async function prepareSourceBinProjectSnapshot(
             continue;
           }
         }
-        if (item.nativeFilePath || item.scratchFileName || item.assetUrl) {
+        if (item.nativeFilePath || item.scratchFileName || item.assetUrl || item.durability === 'unavailable') {
           items.push({ ...item, mimeType: item.mimeType ?? getDefaultMimeType(item.kind) });
         }
       }
@@ -680,6 +822,7 @@ export const useSourceBinStore = create<SourceBinState>()(
       dismissedSourceKeys: [],
       sidebarOpen: true,
       nativeSyncStatus: { state: 'idle' },
+      durabilityStatus: { state: 'ready' },
       scratchDirectoryHandle: undefined,
       nativeScratchDirectoryPath: undefined,
       setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
@@ -1020,6 +1163,8 @@ export const useSourceBinStore = create<SourceBinState>()(
                     envelopeLabel: item.envelopeLabel,
                     envelopeIndex: item.envelopeIndex,
                     envelopeCollapsed: item.envelopeCollapsed,
+                    durability: item.durability,
+                    durabilityMessage: item.durabilityMessage,
                   };
                 }
 
@@ -1053,6 +1198,8 @@ export const useSourceBinStore = create<SourceBinState>()(
                   envelopeLabel: item.envelopeLabel,
                   envelopeIndex: item.envelopeIndex,
                   envelopeCollapsed: item.envelopeCollapsed,
+                  durability: item.durability,
+                  durabilityMessage: item.durabilityMessage,
                 };
               }),
             );
@@ -1227,6 +1374,10 @@ export const useSourceBinStore = create<SourceBinState>()(
                   } satisfies SourceBinLibraryItem;
                 }
 
+                if (item.durability === 'unavailable') {
+                  return { ...item, assetUrl: undefined } satisfies SourceBinLibraryItem;
+                }
+
                 if (!item.assetUrl) {
                   return undefined;
                 }
@@ -1391,6 +1542,8 @@ export const useSourceBinStore = create<SourceBinState>()(
                   envelopeLabel: nextItem.envelopeLabel,
                   envelopeIndex: nextItem.envelopeIndex,
                   envelopeCollapsed: nextItem.envelopeCollapsed ?? existingItem.envelopeCollapsed,
+                  durability: nextItem.durability,
+                  durabilityMessage: nextItem.durabilityMessage,
                   createdAt: existingItem.createdAt,
                   starred: existingItem.starred,
                   collapsed: existingItem.collapsed,
@@ -1798,15 +1951,18 @@ export const useSourceBinStore = create<SourceBinState>()(
               text,
               createdAt: Date.now(),
             });
-          } catch {
-            importedItems.unshift(createFallbackLibraryAssetItem({
+          } catch (error) {
+            const recoveryDataUrl = await blobToDataUrl(file).catch(() => createObjectAssetUrl(file));
+            const fallbackItem = createFallbackLibraryAssetItem({
               id,
               label: file.name,
               kind,
               mimeType,
-              dataUrl: createObjectAssetUrl(file),
+              dataUrl: recoveryDataUrl,
               text,
-            }));
+            });
+            importedItems.unshift(fallbackItem);
+            reportSourceLibraryDurabilityFailure(fallbackItem, error);
           }
         }
 
@@ -1981,9 +2137,12 @@ export const useSourceBinStore = create<SourceBinState>()(
               ...existingItem,
               label: itemUpdate.label ?? existingItem.label,
               mimeType: persisted.mimeType,
+              assetId: persisted.assetId,
               assetUrl: persisted.assetUrl,
               scratchFileName: persisted.scratchFileName,
               nativeFilePath: persisted.nativeFilePath,
+              durability: persisted.durability,
+              durabilityMessage: persisted.durabilityMessage,
               pixelWidth: persisted.pixelWidth,
               pixelHeight: persisted.pixelHeight,
               createdAt: Date.now(),
@@ -2018,6 +2177,7 @@ export const useSourceBinStore = create<SourceBinState>()(
             sidebarOpen: persisted.sidebarOpen ?? true,
             dismissedSourceKeys: persisted.dismissedSourceKeys ?? [],
             nativeScratchDirectoryPath: persisted.nativeScratchDirectoryPath,
+            durabilityStatus: persisted.durabilityStatus,
             bins: [{
               id: 'default',
               name: 'Source Library',
@@ -2032,6 +2192,7 @@ export const useSourceBinStore = create<SourceBinState>()(
           sidebarOpen: persisted.sidebarOpen ?? true,
           dismissedSourceKeys: persisted.dismissedSourceKeys ?? [],
           nativeScratchDirectoryPath: persisted.nativeScratchDirectoryPath,
+          durabilityStatus: persisted.durabilityStatus,
           bins: persisted.bins,
         } as never;
       },
@@ -2042,44 +2203,38 @@ export const useSourceBinStore = create<SourceBinState>()(
           sidebarOpen: safe.sidebarOpen ?? current.sidebarOpen,
           dismissedSourceKeys: safe.dismissedSourceKeys ?? current.dismissedSourceKeys,
           nativeScratchDirectoryPath: safe.nativeScratchDirectoryPath,
+          durabilityStatus: safe.durabilityStatus ?? current.durabilityStatus,
           bins: safe.bins ?? (safe.items ? [{ ...createDefaultBin(), items: safe.items }] : current.bins),
         };
       },
-      partialize: (state): PersistedSourceBinState => ({
-        sidebarOpen: state.sidebarOpen,
-        dismissedSourceKeys: state.dismissedSourceKeys,
-        nativeScratchDirectoryPath: state.nativeScratchDirectoryPath,
-        bins: state.bins.map((bin) => ({
-          id: bin.id,
-          name: bin.name,
-          collapsed: bin.collapsed,
-          createdAt: bin.createdAt,
-          items: bin.items.map((item) => ({
-            id: item.id,
-            label: item.label,
-            kind: item.kind,
-            mimeType: item.mimeType,
-            assetId: item.assetId,
-            scratchFileName: item.scratchFileName,
-            nativeFilePath: item.nativeFilePath,
-            assetUrl: persistableSourceBinAssetUrl(item),
-            text: item.text,
-                  createdAt: item.createdAt,
-                  sourceKey: item.sourceKey,
-                  originNodeId: item.originNodeId,
-                  isGenerated: item.isGenerated,
-                  starred: item.starred,
-                  collapsed: item.collapsed,
-                  envelopeId: item.envelopeId,
-            envelopeLabel: item.envelopeLabel,
-            envelopeIndex: item.envelopeIndex,
-            envelopeCollapsed: item.envelopeCollapsed,
-          })),
-        })),
-      }),
+      partialize: (state: SourceBinState): PersistedSourceBinState => buildPersistedSourceBinState(state),
     },
   ),
 );
+
+function scheduleSourceLibraryDurabilityFailure(message: string, itemId?: string): void {
+  pendingDurabilityMessage = message;
+  if (itemId) pendingDurabilityItemIds.add(itemId);
+  const fingerprint = `${message}:${[...pendingDurabilityItemIds].sort().join(',')}`;
+  if (fingerprint === lastReportedDurabilityFingerprint) return;
+  lastReportedDurabilityFingerprint = fingerprint;
+
+  queueMicrotask(() => {
+    const queuedMessage = pendingDurabilityMessage;
+    const affectedItemIds = [...pendingDurabilityItemIds];
+    pendingDurabilityMessage = undefined;
+    pendingDurabilityItemIds.clear();
+    if (!queuedMessage) return;
+    useSourceBinStore.setState({
+      durabilityStatus: {
+        state: 'degraded',
+        message: queuedMessage,
+        ...(affectedItemIds.length > 0 ? { affectedItemIds } : {}),
+        updatedAt: Date.now(),
+      },
+    });
+  });
+}
 
 function getDefaultMimeType(kind: EditorSourceKind): string {
   return getDefaultMimeTypeForKind(kind);
@@ -2151,6 +2306,20 @@ export function sanitizePersistedSourceBinState(value: unknown): PersistedSource
       : [],
     sidebarOpen: typeof input.sidebarOpen === 'boolean' ? input.sidebarOpen : true,
     nativeScratchDirectoryPath: typeof input.nativeScratchDirectoryPath === 'string' ? input.nativeScratchDirectoryPath : undefined,
+    durabilityStatus: normalizeSourceLibraryDurabilityStatus(input.durabilityStatus),
+  };
+}
+
+function normalizeSourceLibraryDurabilityStatus(value: unknown): SourceLibraryDurabilityStatus | undefined {
+  const input = isRecord(value) ? value : undefined;
+  if (!input || (input.state !== 'ready' && input.state !== 'degraded')) return undefined;
+  return {
+    state: input.state,
+    message: optionalString(input.message),
+    affectedItemIds: Array.isArray(input.affectedItemIds)
+      ? input.affectedItemIds.filter((id): id is string => typeof id === 'string')
+      : undefined,
+    updatedAt: typeof input.updatedAt === 'number' && Number.isFinite(input.updatedAt) ? input.updatedAt : undefined,
   };
 }
 
@@ -2296,9 +2465,14 @@ function normalizeSourceBinLibraryItem(value: unknown): SourceBinLibraryItem | u
   const nativeFilePath = optionalString(input.nativeFilePath);
   const text = optionalString(input.text);
   const sourceKey = optionalString(input.sourceKey);
+  const durability = input.durability === 'recovery-inline'
+    || input.durability === 'session-only'
+    || input.durability === 'unavailable'
+    ? input.durability
+    : undefined;
   if (sourceKey?.startsWith(TRANSIENT_RECOVERED_SCRATCH_SOURCE_KEY_PREFIX)) return undefined;
   if (kind === 'text' && !text && !assetUrl) return undefined;
-  if (kind !== 'text' && !assetId && !assetUrl && !scratchFileName && !nativeFilePath) return undefined;
+  if (kind !== 'text' && !assetId && !assetUrl && !scratchFileName && !nativeFilePath && durability !== 'unavailable') return undefined;
   const label = stringOr(input.label, 'Untitled Source');
   const mimeType = typeof input.mimeType === 'string' ? input.mimeType : getDefaultMimeType(kind);
   return {
@@ -2323,6 +2497,8 @@ function normalizeSourceBinLibraryItem(value: unknown): SourceBinLibraryItem | u
     envelopeLabel: optionalString(input.envelopeLabel),
     envelopeIndex: typeof input.envelopeIndex === 'number' && Number.isFinite(input.envelopeIndex) ? input.envelopeIndex : undefined,
     envelopeCollapsed: typeof input.envelopeCollapsed === 'boolean' ? input.envelopeCollapsed : undefined,
+    durability,
+    durabilityMessage: optionalString(input.durabilityMessage),
   };
 }
 
@@ -2605,9 +2781,24 @@ async function persistLibraryAssetItemWithFallback(item: {
 }, scratchDirectoryHandle?: FileSystemDirectoryHandle): Promise<SourceBinLibraryItem> {
   try {
     return await persistLibraryAssetItem(item, scratchDirectoryHandle);
-  } catch {
-    return createFallbackLibraryAssetItem(item);
+  } catch (error) {
+    let recoveryDataUrl = item.dataUrl;
+    if (!recoveryDataUrl.startsWith('data:')) {
+      recoveryDataUrl = await (async () => {
+        const blob = item.blob ?? await assetUrlToBlob(item.dataUrl, item.mimeType);
+        return blobToDataUrl(blob);
+      })().catch(() => item.dataUrl);
+    }
+    const fallbackItem = createFallbackLibraryAssetItem({ ...item, dataUrl: recoveryDataUrl });
+    reportSourceLibraryDurabilityFailure(fallbackItem, error);
+    return fallbackItem;
   }
+}
+
+function reportSourceLibraryDurabilityFailure(item: SourceBinLibraryItem, error: unknown): void {
+  const message = `“${item.label}” is available, but its Source Library bytes could not be saved to durable storage. Keep this session open until you regenerate, reimport, or save the item to a project scratch folder.`;
+  scheduleSourceLibraryDurabilityFailure(message, item.id);
+  console.warn(`[sourceBinStore] durable storage failed for "${item.label}"; retained a recovery item:`, error);
 }
 
 function notifyAndroidSourceAssetPermissionRequired(label: string): void {
@@ -2646,12 +2837,16 @@ function createFallbackLibraryAssetItem(item: {
   envelopeIndex?: number;
   envelopeCollapsed?: boolean;
 }): SourceBinLibraryItem {
+  const assetUrl = item.dataUrl;
+  const durability: SourceLibraryItemDurability = assetUrl?.startsWith('data:')
+    ? 'recovery-inline'
+    : 'session-only';
   return {
     id: item.id ?? globalThis.crypto?.randomUUID?.() ?? `source-bin-${Date.now()}`,
     label: item.label,
     kind: item.kind,
     mimeType: item.mimeType,
-    assetUrl: item.dataUrl,
+    assetUrl,
     text: item.text,
     createdAt: item.createdAt ?? Date.now(),
     sourceKey: item.sourceKey,
@@ -2665,6 +2860,10 @@ function createFallbackLibraryAssetItem(item: {
     envelopeLabel: item.envelopeLabel,
     envelopeIndex: item.envelopeIndex,
     envelopeCollapsed: item.envelopeCollapsed,
+    durability,
+    durabilityMessage: durability === 'recovery-inline'
+      ? 'Durable asset storage failed. Recovery bytes are stored inline and should be regenerated or reimported when convenient.'
+      : 'Durable asset storage failed. This preview is available only in the current session and must be regenerated or reimported before closing.',
   };
 }
 

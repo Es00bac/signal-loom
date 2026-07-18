@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   broadcastableSourceBinItem,
+  createQuotaSafeJSONStorage,
   persistableSourceBinAssetUrl,
+  recoverSourceBinStorageValueAfterQuotaFailure,
   sanitizePersistedSourceBinState,
   useSourceBinStore,
 } from './sourceBinStore';
@@ -65,6 +67,13 @@ describe('persistableSourceBinAssetUrl (quota-safe persistence)', () => {
     ).toBeUndefined();
   });
 
+  it('keeps inline recovery bytes when no other durable copy exists', () => {
+    expect(persistableSourceBinAssetUrl({
+      assetUrl: 'data:image/png;base64,UkVDT1ZFUlY=',
+      durability: 'recovery-inline',
+    })).toBe('data:image/png;base64,UkVDT1ZFUlY=');
+  });
+
   it('persists nothing for an item without a nativeFilePath', () => {
     expect(
       persistableSourceBinAssetUrl({
@@ -75,6 +84,138 @@ describe('persistableSourceBinAssetUrl (quota-safe persistence)', () => {
     expect(
       persistableSourceBinAssetUrl({ nativeFilePath: undefined, assetUrl: undefined }),
     ).toBeUndefined();
+  });
+});
+
+describe('Source Library quota recovery restart payload (AUD-031)', () => {
+  it('keeps the item and degraded state when inline recovery bytes cannot fit', () => {
+    const compact = recoverSourceBinStorageValueAfterQuotaFailure(JSON.stringify({
+      version: 1,
+      state: {
+        bins: [{
+          id: 'default',
+          name: 'Source Library',
+          collapsed: false,
+          createdAt: 1,
+          items: [{
+            id: 'quota-recovery',
+            label: 'Quota recovery image',
+            kind: 'image',
+            mimeType: 'image/png',
+            assetUrl: 'data:image/png;base64,VE9PLUxBUkdF',
+            durability: 'recovery-inline',
+            createdAt: 2,
+          }],
+        }],
+        dismissedSourceKeys: [],
+        durabilityStatus: { state: 'ready' },
+      },
+    }));
+
+    expect(compact).toBeDefined();
+    const parsed = JSON.parse(compact!) as { state: unknown };
+    const reloaded = sanitizePersistedSourceBinState(parsed.state);
+    expect(reloaded.bins?.[0].items).toEqual([
+      expect.objectContaining({
+        id: 'quota-recovery',
+        assetUrl: undefined,
+        durability: 'unavailable',
+        durabilityMessage: expect.stringContaining('must be regenerated or reimported'),
+      }),
+    ]);
+    expect(reloaded.durabilityStatus).toMatchObject({
+      state: 'degraded',
+      message: expect.stringContaining('storage is degraded'),
+    });
+  });
+
+  it('retries the actual persistence write with compact recoverable metadata after quota failure', async () => {
+    const persisted = new Map<string, string>();
+    const quotaError = Object.assign(new Error('quota exhausted'), { name: 'QuotaExceededError' });
+    const localStorage = {
+      getItem: vi.fn((name: string) => persisted.get(name) ?? null),
+      setItem: vi.fn((name: string, value: string) => {
+        if (value.includes('VE9PLUxBUkdF')) throw quotaError;
+        persisted.set(name, value);
+      }),
+      removeItem: vi.fn((name: string) => persisted.delete(name)),
+      clear: vi.fn(() => persisted.clear()),
+      key: vi.fn(() => null),
+      get length() {
+        return persisted.size;
+      },
+    } satisfies Storage;
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('window', { localStorage });
+
+    try {
+      useSourceBinStore.setState({ durabilityStatus: { state: 'ready' } });
+      const storage = createQuotaSafeJSONStorage();
+      expect(storage).toBeDefined();
+      storage!.setItem('source-library', {
+        version: 1,
+        state: {
+          bins: [{
+            id: 'default',
+            name: 'Source Library',
+            collapsed: false,
+            createdAt: 1,
+            items: [{
+              id: 'quota-recovery',
+              label: 'Quota recovery image',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: 'data:image/png;base64,VE9PLUxBUkdF',
+              durability: 'recovery-inline',
+              createdAt: 2,
+            }],
+          }],
+          dismissedSourceKeys: [],
+          durabilityStatus: { state: 'ready' },
+        },
+      });
+      await Promise.resolve();
+
+      expect(localStorage.setItem).toHaveBeenCalledTimes(2);
+      const stored = JSON.parse(persisted.get('source-library')!) as { state: unknown };
+      const reloaded = sanitizePersistedSourceBinState(stored.state);
+      expect(reloaded.bins?.[0].items[0]).toMatchObject({
+        id: 'quota-recovery',
+        assetUrl: undefined,
+        durability: 'unavailable',
+      });
+      expect(useSourceBinStore.getState().durabilityStatus.state).toBe('degraded');
+    } finally {
+      vi.unstubAllGlobals();
+      warning.mockRestore();
+    }
+  });
+
+  it('does not let unavailable browser storage reads or removals escape into callers', () => {
+    const localStorage = {
+      getItem: vi.fn(() => {
+        throw new Error('storage disabled');
+      }),
+      setItem: vi.fn(),
+      removeItem: vi.fn(() => {
+        throw new Error('storage disabled');
+      }),
+      clear: vi.fn(),
+      key: vi.fn(() => null),
+      length: 0,
+    } satisfies Storage;
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.stubGlobal('window', { localStorage });
+
+    try {
+      const storage = createQuotaSafeJSONStorage();
+      expect(storage?.getItem('source-library')).toBeNull();
+      expect(() => storage?.removeItem('source-library')).not.toThrow();
+      expect(warning).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+      warning.mockRestore();
+    }
   });
 });
 

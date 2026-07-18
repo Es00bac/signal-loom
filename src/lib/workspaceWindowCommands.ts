@@ -252,6 +252,8 @@ const SOURCE_BIN_ITEM_COMPARE_FIELDS = {
   envelopeIndex: true,
   envelopeCollapsed: true,
   isGenerated: true,
+  durability: true,
+  durabilityMessage: true,
 } satisfies Record<keyof SourceBinLibraryItem, true>;
 
 const SOURCE_BIN_ITEM_COMPARE_KEYS = Object.keys(

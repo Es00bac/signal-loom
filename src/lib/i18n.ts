@@ -268,6 +268,11 @@ export const MESSAGES = {
   },
   'sourceBin.sync.retryAria': { en: 'Retry Source Library native sync', ja: 'ソースライブラリのネイティブ同期を再試行' },
   'sourceBin.sync.repair': { en: 'Repair', ja: '修復' },
+  'sourceBin.durability.warningTitle': { en: 'Source Library storage needs attention', ja: 'ソースライブラリの保存状態を確認してください' },
+  'sourceBin.durability.warningMessage': {
+    en: 'One or more items are available only as recovery copies. Regenerate, reimport, or save them to project storage before closing.',
+    ja: '一部の項目は復旧用コピーとしてのみ利用できます。閉じる前に再生成、再読み込み、またはプロジェクトストレージへ保存してください。',
+  },
   'sourceBin.tab.library': { en: 'Source Library', ja: 'ソースライブラリ' },
   'sourceBin.tab.generated': { en: 'Generated Pool', ja: '生成プール' },
   'sourceBin.search.libraryAria': { en: 'Search source library', ja: 'ソースライブラリを検索' },

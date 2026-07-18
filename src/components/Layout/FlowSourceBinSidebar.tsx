@@ -84,6 +84,7 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
   const bins = useSourceBinStore((state) => state.bins);
   const sidebarOpen = useSourceBinStore((state) => state.sidebarOpen);
   const nativeSyncStatus = useSourceBinStore((state) => state.nativeSyncStatus);
+  const durabilityStatus = useSourceBinStore((state) => state.durabilityStatus);
   const toggleSidebar = useSourceBinStore((state) => state.toggleSidebar);
   const retryNativeSourceLibrarySync = useSourceBinStore((state) => state.retryNativeSourceLibrarySync);
   const createBin = useSourceBinStore((state) => state.createBin);
@@ -506,6 +507,14 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
             <div className="mt-2 text-xs leading-5 text-gray-400">
               {isSourceLibraryMode ? t('sourceBin.saved.desc') : t('sourceBin.generated.desc')}
             </div>
+            {isSourceLibraryMode && durabilityStatus.state === 'degraded' ? (
+              <div className="mt-3 rounded-lg border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                <div className="font-semibold">{t('sourceBin.durability.warningTitle')}</div>
+                <div className="mt-1 text-[11px] leading-4 opacity-80">
+                  {durabilityStatus.message ?? t('sourceBin.durability.warningMessage')}
+                </div>
+              </div>
+            ) : null}
             {isSourceLibraryMode && nativeSyncStatus.state !== 'idle' && nativeSyncStatus.state !== 'synced' ? (
               <div
                 className={`mt-3 rounded-lg border px-3 py-2 text-xs ${

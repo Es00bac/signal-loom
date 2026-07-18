@@ -37,4 +37,14 @@ describe('FlowSourceBinSidebar production dialog wiring', () => {
     expect(source).toContain('buildSourceLibraryDisplayRows');
     expect(source).toContain('data-source-library-bin-list');
   });
+
+  it('shows degraded Source Library storage state in the saved-assets panel', () => {
+    const source = readFileSync(new URL('./FlowSourceBinSidebar.tsx', import.meta.url), 'utf8');
+    const catalog = readFileSync(new URL('../../lib/i18n.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain("durabilityStatus.state === 'degraded'");
+    expect(source).toContain("t('sourceBin.durability.warningTitle')");
+    expect(catalog).toContain('Source Library storage needs attention');
+    expect(catalog).toContain('復旧用コピー');
+  });
 });

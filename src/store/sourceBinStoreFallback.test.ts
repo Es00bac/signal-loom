@@ -42,7 +42,15 @@ vi.mock('./alertDialogStore', () => ({
   showAlertDialog: mocks.showAlertDialog,
 }));
 
-import { useSourceBinStore } from './sourceBinStore';
+import {
+  buildPersistedSourceBinState,
+  sanitizePersistedSourceBinState,
+  useSourceBinStore,
+} from './sourceBinStore';
+
+function simulatePersistedReload() {
+  return sanitizePersistedSourceBinState(buildPersistedSourceBinState(useSourceBinStore.getState()));
+}
 
 describe('source bin persistence fallbacks', () => {
   beforeEach(() => {
@@ -72,13 +80,14 @@ describe('source bin persistence fallbacks', () => {
       bins: [{ id: 'default', name: 'Source Library', items: [], collapsed: false, createdAt: Date.now() }],
       dismissedSourceKeys: [],
       sidebarOpen: true,
+      durabilityStatus: { state: 'ready' },
       scratchDirectoryHandle: undefined,
       nativeScratchDirectoryPath: undefined,
     });
   });
 
   it('keeps connected generated media in the source bin if durable persistence fails', async () => {
-    mocks.localizeAssetForProject.mockRejectedValueOnce(new Error('quota exceeded'));
+    mocks.saveDataUrlAsset.mockRejectedValueOnce(new Error('indexedDB transaction failed'));
 
     await useSourceBinStore.getState().ingestConnectedItems([
       {
@@ -104,6 +113,47 @@ describe('source bin persistence fallbacks', () => {
     ]);
     expect(allItems[0].assetId).toBeUndefined();
     expect(allItems[0].scratchFileName).toBeUndefined();
+    expect(allItems[0]).toMatchObject({ durability: 'recovery-inline' });
+    await vi.waitFor(() => expect(useSourceBinStore.getState().durabilityStatus).toMatchObject({
+      state: 'degraded',
+      affectedItemIds: [allItems[0].id],
+    }));
+
+    const reloaded = simulatePersistedReload();
+    expect(reloaded.bins?.[0].items).toEqual([
+      expect.objectContaining({
+        id: allItems[0].id,
+        assetUrl: 'data:image/png;base64,AAAA',
+        durability: 'recovery-inline',
+      }),
+    ]);
+    expect(reloaded.durabilityStatus?.state).toBe('degraded');
+  });
+
+  it('retains native storage failure bytes and degraded state through reload', async () => {
+    mocks.materializeAndroidSourceAsset.mockRejectedValueOnce(new Error('native storage unavailable'));
+
+    const saved = await useSourceBinStore.getState().addAssetItem({
+      id: 'native-idb-fallback',
+      label: 'Native and browser fallback',
+      kind: 'image',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,TkFUSVZF',
+    });
+
+    expect(saved).toMatchObject({
+      id: 'native-idb-fallback',
+      assetUrl: 'data:image/png;base64,TkFUSVZF',
+      durability: 'recovery-inline',
+    });
+    await vi.waitFor(() => expect(useSourceBinStore.getState().durabilityStatus.state).toBe('degraded'));
+
+    const reloaded = simulatePersistedReload();
+    expect(reloaded.bins?.[0].items[0]).toMatchObject({
+      id: 'native-idb-fallback',
+      assetUrl: 'data:image/png;base64,TkFUSVZF',
+      durability: 'recovery-inline',
+    });
   });
 
   it('persists generated media through Android native storage before IndexedDB fallback', async () => {
@@ -177,11 +227,6 @@ describe('source bin persistence fallbacks', () => {
 
   it('keeps imported media in the source bin if durable import persistence fails', async () => {
     mocks.saveImportedAsset.mockRejectedValueOnce(new Error('indexeddb failed'));
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: vi.fn(() => 'blob:source-bin-fallback'),
-    });
-
     await useSourceBinStore.getState().importFiles([
       new File(['image bytes'], 'frame.png', { type: 'image/png' }),
     ]);
@@ -192,11 +237,20 @@ describe('source bin persistence fallbacks', () => {
         label: 'frame.png',
         kind: 'image',
         mimeType: 'image/png',
-        assetUrl: 'blob:source-bin-fallback',
+        assetUrl: 'data:image/png;base64,aW1hZ2UgYnl0ZXM=',
+        durability: 'recovery-inline',
       }),
     ]);
     expect(allItems2[0].assetId).toBeUndefined();
     expect(allItems2[0].scratchFileName).toBeUndefined();
+    await vi.waitFor(() => expect(useSourceBinStore.getState().durabilityStatus.state).toBe('degraded'));
+
+    const reloaded = simulatePersistedReload();
+    expect(reloaded.bins?.[0].items[0]).toMatchObject({
+      id: allItems2[0].id,
+      assetUrl: 'data:image/png;base64,aW1hZ2UgYnl0ZXM=',
+      durability: 'recovery-inline',
+    });
   });
 
   it('restores file-backed project assets when IndexedDB asset lookup fails during project open', async () => {
