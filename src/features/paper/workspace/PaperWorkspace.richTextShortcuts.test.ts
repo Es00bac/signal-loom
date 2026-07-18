@@ -34,7 +34,9 @@ describe('Paper unified rich typesetting surfaces', () => {
     expect(source).toContain('Advanced character, paragraph, and Japanese typesetting');
     expect(source).toMatch(/resolvePaperRichEditorTypographyUpdate\(\s*frame\.id,\s*frame\.typography,\s*typography,\s*frame\.richText,\s*operationContext,\s*\)/);
     expect(source).toContain('data-paper-rich-inspector="true"');
-    expect(source).toContain('label="Selected text colour"');
+    expect(source).toContain("label={t('paper.richType.selectedTextColour')}");
     expect(source).not.toContain('aria-label="Text colour"');
+    expect(source).toContain("<option value=\"normal\">{t('paper.richType.kerningMetrics')}</option>");
+    expect(source).not.toContain('<option value="normal">Metrics</option>');
   });
 });

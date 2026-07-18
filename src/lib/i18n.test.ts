@@ -48,6 +48,16 @@ describe('i18n message catalog', () => {
     expect(translateFormat('flow.toolbar.addNode', 'ja', { name: 'Image' })).toBe('Imageノードを追加');
   });
 
+  it('keeps typography browser and Paper tab interpolation truthful in both locales', () => {
+    const summary = { familyCount: 1, familyUnit: 'ファミリー', faceCount: 2, faceUnit: '書体' };
+    expect(translateFormat('fonts.browser.summary', 'ja', summary)).toBe('1 ファミリー・2 書体');
+    expect(translateFormat('fonts.browser.faceCount.one', 'en', { count: 1 })).toBe('1 face');
+    expect(translateFormat('fonts.browser.faceCount.many', 'en', { count: 2 })).toBe('2 faces');
+    expect(translateFormat('paper.tabs.close', 'en', { title: 'Layout A' })).toBe('Close Layout A');
+    expect(translateFormat('paper.tabs.close', 'ja', { title: 'レイアウト A' })).toBe('「レイアウト A」を閉じる');
+    expect(translateFormat('fonts.browser.catalogError', 'ja', { detail: '接続なし' })).toBe('同梱フォントライブラリを利用できません：接続なし');
+  });
+
   it('discloses every restored settings category in both locales', () => {
     expect(translate('settings.backup.restoreWarning', 'en')).toContain('editor preferences');
     expect(translate('settings.backup.restoreWarning', 'en')).toContain('API keys');

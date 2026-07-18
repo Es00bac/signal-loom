@@ -37,6 +37,7 @@ import {
   usePaperLossPreventionStore,
 } from '../../../store/paperLossPreventionStore';
 import { usePaperStore } from '../../../store/paperStore';
+import { useSettingsStore } from '../../../store/settingsStore';
 import { PaperDocumentTabs } from './PaperDocumentTabs';
 
 let root: Root | undefined;
@@ -72,6 +73,7 @@ async function click(element: HTMLElement) {
 }
 
 beforeEach(() => {
+  useSettingsStore.setState({ locale: 'en' });
   resetPaperLossPreventionForTests();
   resetPaper();
   saveMock.mockReset();
@@ -86,6 +88,34 @@ afterEach(async () => {
 });
 
 describe('PaperDocumentTabs dirty close contract', () => {
+  it('renders Japanese dynamic tab, plural, dirty, close, and tooltip copy', async () => {
+    useSettingsStore.setState({ locale: 'ja' });
+    usePaperStore.getState().addPage();
+    const documentId = usePaperStore.getState().activeDocumentId;
+    await mountTabs();
+
+    const tabList = host?.querySelector<HTMLElement>('[role="tablist"]');
+    const tab = host?.querySelector<HTMLElement>('[role="tab"]');
+    expect(tabList?.getAttribute('aria-label')).toBe('開いている Paper ドキュメント');
+    expect(button('新規 Paper ドキュメント').title).toBe('新規 Paper ドキュメント');
+    expect(tab?.title).toBe('未保存の変更・Close contract・2 ページ');
+    expect(tab?.textContent).toContain('2頁');
+    expect(tab?.querySelector('[aria-label="未保存の変更"]')).not.toBeNull();
+    expect(button('「Close contract」を閉じる').title).toBe('「Close contract」を閉じる');
+    expect(usePaperStore.getState().activeDocumentId).toBe(documentId);
+  });
+
+  it('renders the Japanese recovery action with its document title', async () => {
+    useSettingsStore.setState({ locale: 'ja' });
+    usePaperStore.getState().addFrame('text', { id: 'recover-ja', text: '復元する本文' });
+    const discardedId = usePaperStore.getState().activeDocumentId;
+    expect(usePaperStore.getState().closeDocument(discardedId, { discard: true })).toBe(true);
+    await mountTabs();
+
+    const restore = button('破棄した Paper ドキュメント「Close contract」を復元');
+    expect(restore.title).toBe('破棄した「Close contract」を復元');
+  });
+
   it('settles the visible and queued requests as Cancel when the dialog unmounts', async () => {
     const firstSave = vi.fn(async () => ({ status: 'success' as const }));
     const secondSave = vi.fn(async () => ({ status: 'success' as const }));

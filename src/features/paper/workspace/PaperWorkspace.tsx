@@ -9845,49 +9845,50 @@ function RichTypeSelect({
   );
 }
 
-function PaperRichAdvancedTypePanel({
+export function PaperRichAdvancedTypePanel({
   onApply,
   typography,
 }: {
   onApply: (patch: Partial<RichTypographyPatch>) => void;
   typography: PaperTypography;
 }) {
+  const { t } = useI18n();
   return (
     <div className="max-h-[min(34rem,75vh)] w-[34rem] overflow-y-auto rounded-lg border border-cyan-300/25 bg-[#101722] p-3 text-slate-100 shadow-2xl">
       <div className="mb-3 flex items-start justify-between gap-3 border-b border-cyan-300/10 pb-2">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Advanced type</div>
-          <div className="mt-0.5 text-[10px] text-cyan-100/45">Character settings target highlighted text; paragraph settings target every touched paragraph.</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">{t('paper.richType.title')}</div>
+          <div className="mt-0.5 text-[10px] text-cyan-100/45">{t('paper.richType.scope')}</div>
         </div>
-        <span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-200/70">Live selection</span>
+        <span className="rounded bg-cyan-300/10 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-cyan-200/70">{t('paper.richType.liveSelection')}</span>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <section className="space-y-1.5">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">Character</div>
-          <RichTypeNumber label="Size / pt" max={1600} min={1} onChange={(fontSizePt) => onApply({ fontSizePt })} step={0.5} value={typography.fontSizePt} />
-          <RichTypeNumber label="Tracking / ‰ em" max={2000} min={-200} onChange={(tracking) => onApply({ tracking })} step={5} value={typography.tracking} />
-          <RichTypeSelect label="Kerning" onChange={(fontKerning) => onApply({ fontKerning: fontKerning as PaperTypography['fontKerning'] })} value={typography.fontKerning ?? 'auto'}>
-            <option value="auto">Auto</option><option value="normal">Metrics</option><option value="none">None</option>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">{t('paper.richType.character')}</div>
+          <RichTypeNumber label={t('paper.richType.sizePt')} max={1600} min={1} onChange={(fontSizePt) => onApply({ fontSizePt })} step={0.5} value={typography.fontSizePt} />
+          <RichTypeNumber label={t('paper.richType.tracking')} max={2000} min={-200} onChange={(tracking) => onApply({ tracking })} step={5} value={typography.tracking} />
+          <RichTypeSelect label={t('paper.insp.kerning')} onChange={(fontKerning) => onApply({ fontKerning: fontKerning as PaperTypography['fontKerning'] })} value={typography.fontKerning ?? 'auto'}>
+            <option value="auto">{t('paper.insp.auto')}</option><option value="normal">{t('paper.richType.kerningMetrics')}</option><option value="none">{t('paper.insp.none')}</option>
           </RichTypeSelect>
-          <RichTypeSelect label="Weight" onChange={(fontWeight) => onApply({ fontWeight })} value={typography.fontWeight}>
+          <RichTypeSelect label={t('paper.insp.weight')} onChange={(fontWeight) => onApply({ fontWeight })} value={typography.fontWeight}>
             {PAPER_FONT_WEIGHTS.map((weight) => <option key={weight} value={weight}>{weight}</option>)}
           </RichTypeSelect>
-          <RichTypeSelect label="Style" onChange={(fontStyle) => onApply({ fontStyle: fontStyle as PaperTypography['fontStyle'] })} value={typography.fontStyle}>
-            <option value="normal">Normal</option><option value="italic">Italic</option>
+          <RichTypeSelect label={t('paper.insp.style')} onChange={(fontStyle) => onApply({ fontStyle: fontStyle as PaperTypography['fontStyle'] })} value={typography.fontStyle}>
+            <option value="normal">{t('paper.insp.normal')}</option><option value="italic">{t('paper.insp.italic')}</option>
           </RichTypeSelect>
-          <RichTypeSelect label="Figures" onChange={(numericStyle) => onApply({ numericStyle: numericStyle as PaperNumericStyle })} value={typography.numericStyle ?? 'normal'}>
-            <option value="normal">Default</option><option value="lining">Lining</option><option value="oldstyle">Oldstyle</option><option value="tabular">Tabular</option>
+          <RichTypeSelect label={t('paper.insp.figures')} onChange={(numericStyle) => onApply({ numericStyle: numericStyle as PaperNumericStyle })} value={typography.numericStyle ?? 'normal'}>
+            <option value="normal">{t('paper.insp.default')}</option><option value="lining">{t('paper.insp.lining')}</option><option value="oldstyle">{t('paper.insp.oldstyle')}</option><option value="tabular">{t('paper.insp.tabular')}</option>
           </RichTypeSelect>
           <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
-            Small caps
+            {t('paper.insp.smallCaps')}
             <input checked={Boolean(typography.smallCaps)} onChange={(event) => onApply({ smallCaps: event.target.checked })} type="checkbox" />
           </label>
           <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
-            Text colour
+            {t('paper.richType.textColour')}
             <AdvancedColorPicker
               buttonClassName="rounded border border-cyan-300/20"
               className="h-6 w-16"
-              label="Selected text colour"
+              label={t('paper.richType.selectedTextColour')}
               onChange={(color) => onApply({ color })}
               value={cssColorToPickerValue(typography.color)}
             />
@@ -9895,41 +9896,41 @@ function PaperRichAdvancedTypePanel({
         </section>
 
         <section className="space-y-1.5 border-l border-cyan-300/10 pl-3">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">Paragraph</div>
-          <RichTypeNumber label="Leading / pt" max={3200} min={1} onChange={(leadingPt) => onApply({ leadingPt })} step={0.5} value={typography.leadingPt} />
-          <RichTypeSelect label="Alignment" onChange={(align) => onApply({ align: align as PaperTypography['align'] })} value={typography.align}>
-            <option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option><option value="justify">Justify</option>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">{t('paper.richType.paragraph')}</div>
+          <RichTypeNumber label={t('paper.richType.leadingPt')} max={3200} min={1} onChange={(leadingPt) => onApply({ leadingPt })} step={0.5} value={typography.leadingPt} />
+          <RichTypeSelect label={t('paper.richType.alignment')} onChange={(align) => onApply({ align: align as PaperTypography['align'] })} value={typography.align}>
+            <option value="left">{t('paper.insp.left')}</option><option value="center">{t('paper.insp.center')}</option><option value="right">{t('paper.insp.right')}</option><option value="justify">{t('paper.insp.justify')}</option>
           </RichTypeSelect>
-          <RichTypeSelect label="Last line" onChange={(alignLast) => onApply({ alignLast: alignLast as PaperTextAlignLast })} value={typography.alignLast ?? 'auto'}>
-            <option value="auto">Auto</option><option value="left">Left</option><option value="center">Centre</option><option value="right">Right</option><option value="justify">Justify</option>
+          <RichTypeSelect label={t('paper.insp.lastLine')} onChange={(alignLast) => onApply({ alignLast: alignLast as PaperTextAlignLast })} value={typography.alignLast ?? 'auto'}>
+            <option value="auto">{t('paper.insp.auto')}</option><option value="left">{t('paper.insp.left')}</option><option value="center">{t('paper.insp.center')}</option><option value="right">{t('paper.insp.right')}</option><option value="justify">{t('paper.insp.justify')}</option>
           </RichTypeSelect>
-          <RichTypeNumber label="First indent / mm" max={200} min={-200} onChange={(firstLineIndentMm) => onApply({ firstLineIndentMm })} step={0.5} value={typography.firstLineIndentMm ?? 0} />
-          <RichTypeNumber label="Space before / mm" max={200} onChange={(spaceBeforeMm) => onApply({ spaceBeforeMm })} step={0.5} value={typography.spaceBeforeMm ?? 0} />
-          <RichTypeNumber label="Space after / mm" max={200} onChange={(spaceAfterMm) => onApply({ spaceAfterMm })} step={0.5} value={typography.spaceAfterMm ?? 0} />
-          <RichTypeNumber label="Drop cap / lines" max={8} onChange={(dropCapLines) => onApply({ dropCapLines: Math.round(dropCapLines) })} value={typography.dropCapLines ?? 0} />
-          <RichTypeSelect label="Line breaking" onChange={(lineBreak) => onApply({ lineBreak: lineBreak as PaperLineBreak })} value={typography.lineBreak ?? 'auto'}>
-            <option value="auto">Auto</option><option value="balance">Balance</option><option value="pretty">Pretty</option>
+          <RichTypeNumber label={t('paper.richType.firstIndentMm')} max={200} min={-200} onChange={(firstLineIndentMm) => onApply({ firstLineIndentMm })} step={0.5} value={typography.firstLineIndentMm ?? 0} />
+          <RichTypeNumber label={t('paper.richType.spaceBeforeMm')} max={200} onChange={(spaceBeforeMm) => onApply({ spaceBeforeMm })} step={0.5} value={typography.spaceBeforeMm ?? 0} />
+          <RichTypeNumber label={t('paper.richType.spaceAfterMm')} max={200} onChange={(spaceAfterMm) => onApply({ spaceAfterMm })} step={0.5} value={typography.spaceAfterMm ?? 0} />
+          <RichTypeNumber label={t('paper.richType.dropCapLines')} max={8} onChange={(dropCapLines) => onApply({ dropCapLines: Math.round(dropCapLines) })} value={typography.dropCapLines ?? 0} />
+          <RichTypeSelect label={t('paper.richType.lineBreaking')} onChange={(lineBreak) => onApply({ lineBreak: lineBreak as PaperLineBreak })} value={typography.lineBreak ?? 'auto'}>
+            <option value="auto">{t('paper.insp.auto')}</option><option value="balance">{t('paper.insp.balance')}</option><option value="pretty">{t('paper.insp.pretty')}</option>
           </RichTypeSelect>
           <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
-            Hyphenation
+            {t('paper.insp.hyphenation')}
             <input checked={typography.hyphenate} onChange={(event) => onApply({ hyphenate: event.target.checked })} type="checkbox" />
           </label>
         </section>
 
         <section className="space-y-1.5 border-l border-cyan-300/10 pl-3">
-          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">Japanese / 日本語</div>
-          <RichTypeSelect label="Orientation" onChange={(textOrientation) => onApply({ textOrientation: textOrientation as PaperTextOrientation })} value={typography.textOrientation ?? 'mixed'}>
-            <option value="mixed">Mixed / 縦中横</option><option value="upright">Upright</option>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/40">{t('paper.richType.japanese')}</div>
+          <RichTypeSelect label={t('paper.insp.orientation')} onChange={(textOrientation) => onApply({ textOrientation: textOrientation as PaperTextOrientation })} value={typography.textOrientation ?? 'mixed'}>
+            <option value="mixed">{t('paper.insp.mixedTcy')}</option><option value="upright">{t('paper.insp.upright')}</option>
           </RichTypeSelect>
-          <RichTypeSelect label="圏点 Emphasis" onChange={(emphasis) => onApply({ emphasis: emphasis as PaperEmphasisMark })} value={typography.emphasis ?? 'none'}>
-            <option value="none">None</option><option value="dot">● Dot</option><option value="sesame">﹅ Sesame</option><option value="open-dot">○ Open dot</option><option value="circle">◉ Circle</option>
+          <RichTypeSelect label={t('paper.insp.emphasisField')} onChange={(emphasis) => onApply({ emphasis: emphasis as PaperEmphasisMark })} value={typography.emphasis ?? 'none'}>
+            <option value="none">{t('paper.insp.none')}</option><option value="dot">{t('paper.richType.emphasis.dot')}</option><option value="sesame">{t('paper.richType.emphasis.sesame')}</option><option value="open-dot">{t('paper.richType.emphasis.openDot')}</option><option value="circle">{t('paper.richType.emphasis.circle')}</option>
           </RichTypeSelect>
           <label className="flex items-center justify-between gap-2 text-[10px] text-cyan-100/60">
-            禁則処理 Kinsoku
+            {t('paper.richType.kinsoku')}
             <input checked={Boolean(typography.lineBreakStrict)} onChange={(event) => onApply({ lineBreakStrict: event.target.checked })} type="checkbox" />
           </label>
           <div className="rounded border border-cyan-300/10 bg-[#0b121d] p-2 text-[10px] leading-relaxed text-cyan-100/45">
-            Use the always-visible <span className="text-cyan-100/80">ルビ</span> and <span className="text-cyan-100/80">圏</span> actions for furigana and inline emphasis notation. Writing direction changes the whole frame and remains in the Inspector.
+            {t('paper.richType.help')}
           </div>
         </section>
       </div>
@@ -12172,9 +12173,9 @@ export function PaperInspector({
                       onChange={(event) => applyFrameTypography({ ...frame.typography, fontKerning: event.target.value as NonNullable<PaperFrame['typography']['fontKerning']> })}
                       value={frame.typography.fontKerning ?? 'auto'}
                     >
-                      <option value="auto">Auto</option>
-                      <option value="normal">Metrics</option>
-                      <option value="none">None</option>
+                      <option value="auto">{t('paper.insp.auto')}</option>
+                      <option value="normal">{t('paper.richType.kerningMetrics')}</option>
+                      <option value="none">{t('paper.insp.none')}</option>
                     </select>
                   </Field>
                   <Field label={t('paper.insp.fontColor')}>

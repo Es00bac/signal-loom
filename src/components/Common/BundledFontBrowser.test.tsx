@@ -6,7 +6,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureBundledFontFaceRegistered, type BundledFontCatalog } from '../../lib/bundledFontLibrary';
+import {
+  bundledFontFaceRuntimeFamilyName,
+  bundledFontFaceVariationSettingsCss,
+  createBundledFontFaceReference,
+  ensureBundledFontFaceRegistered,
+  type BundledFontCatalog,
+} from '../../lib/bundledFontLibrary';
+import { useSettingsStore } from '../../store/settingsStore';
 import { BundledFontBrowser } from './BundledFontBrowser';
 
 const testFontBytes = readFileSync(resolve(process.cwd(), 'public/fonts/liberation/LiberationSans-Regular.ttf'));
@@ -110,6 +117,7 @@ async function flushPendingCapabilityQuery(): Promise<void> {
 }
 
 beforeEach(() => {
+  useSettingsStore.setState({ locale: 'en' });
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('crypto', webcrypto);
   vi.stubGlobal('fetch', vi.fn(async () => new Response(testFontBytes)));
@@ -146,7 +154,17 @@ describe('BundledFontBrowser', () => {
 
     expect(host.textContent).not.toContain('Editorial Serif');
     const tokyo = host.querySelector<HTMLButtonElement>('button[aria-label*="Tokyo Regular"]')!;
-    expect(tokyo.style.fontFamily).toBe('"Liberation Sans"');
+    await act(async () => {
+      await vi.waitFor(() => expect(tokyo.querySelector('[data-font-ready="true"]')).not.toBeNull());
+    });
+    const specimen = tokyo.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:regular"]')!;
+    const reference = createBundledFontFaceReference(catalog.families[1], catalog.families[1].faces[0]);
+    expect(specimen.classList.contains('font-sans')).toBe(false);
+    expect(specimen.style.fontFamily).toBe(`"${bundledFontFaceRuntimeFamilyName(reference)}"`);
+    expect(specimen.style.fontWeight).toBe('400');
+    expect(specimen.style.fontStyle).toBe('normal');
+    expect(specimen.style.fontStretch).toBe('100%');
+    expect(specimen.textContent).toBe('Ag あア');
     await act(async () => tokyo.click());
 
     await act(async () => {
@@ -176,6 +194,81 @@ describe('BundledFontBrowser', () => {
     expect(host.textContent).toMatch(/2 families.*2 faces/i);
     expect(host.textContent).toMatch(/Exact face.*PDF/i);
     await act(async () => root.unmount());
+  });
+
+  it('renders a variable specimen with the exact registered face identity and default coordinates', async () => {
+    const variableCatalog = structuredClone(catalog);
+    variableCatalog.familyCount = 1;
+    variableCatalog.faceCount = 1;
+    variableCatalog.families = [variableCatalog.families[1]];
+    const face = variableCatalog.families[0].faces[0];
+    face.id = 'tokyo:variable';
+    face.variable = true;
+    face.axes = {
+      wdth: { min: 75, default: 100, max: 125 },
+      wght: { min: 100, default: 400, max: 900 },
+    };
+    const host = document.createElement('div');
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={variableCatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    await waitForBrowserToggle(host);
+    await act(async () => {
+      await vi.waitFor(() => expect(host.querySelector('[data-font-ready="true"]')).not.toBeNull());
+    });
+
+    const specimen = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:variable"]')!;
+    const reference = createBundledFontFaceReference(variableCatalog.families[0], face);
+    expect(specimen.style.fontFamily).toBe(`"${bundledFontFaceRuntimeFamilyName(reference)}"`);
+    expect(specimen.style.fontVariationSettings).toBe(bundledFontFaceVariationSettingsCss(reference));
+    expect(specimen.style.fontVariationSettings).toBe('"wdth" 100, "wght" 400');
+    expect(specimen.style.fontWeight).toBe('400');
+    expect(specimen.style.fontStyle).toBe('normal');
+    expect(specimen.style.fontStretch).toBe('100%');
+    await act(async () => root.unmount());
+  });
+
+  it('renders Japanese dynamic, plural, tooltip, empty, and catalog-error states', async () => {
+    useSettingsStore.setState({ locale: 'ja' });
+    const singleCatalog = structuredClone(catalog);
+    singleCatalog.familyCount = 1;
+    singleCatalog.faceCount = 1;
+    singleCatalog.families = [singleCatalog.families[1]];
+    const host = document.createElement('div');
+    const root = createRoot(host);
+    await act(async () => root.render(
+      <BundledFontBrowser catalog={singleCatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    const toggle = await waitForBrowserToggle(host);
+
+    expect(toggle.title).toBe('監査済みの同梱フォントライブラリを開く');
+    expect(host.textContent).toContain('同梱フォントを参照');
+    expect(host.textContent).toContain('1 ファミリー・1 書体');
+    expect(host.textContent).toContain('オフライン・ライセンス監査済み');
+    expect(host.textContent).toContain('正確な書体を選択します');
+    expect(host.querySelector('input[aria-label="フォントを検索"]')?.getAttribute('placeholder')).toBe('ファミリー、書体…');
+    expect(host.querySelector('select[aria-label="フォントの用途"]')).not.toBeNull();
+
+    const search = host.querySelector<HTMLInputElement>('input[role="searchbox"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(search, '見つからない');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(host.textContent).toContain('一致するフォントファミリーがありません。');
+    await act(async () => root.unmount());
+
+    const errorHost = document.createElement('div');
+    const errorRoot = createRoot(errorHost);
+    await act(async () => errorRoot.render(
+      <BundledFontBrowser initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
+    ));
+    await waitForBrowserToggle(errorHost);
+    await act(async () => {
+      await vi.waitFor(() => expect(errorHost.textContent).toContain('同梱フォントライブラリを利用できません'));
+    });
+    await act(async () => errorRoot.unmount());
   });
 });
 
@@ -608,7 +701,11 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
       getNativeState: vi.fn(), onMenuCommand: vi.fn(), bundledFontLibraryStatus: vi.fn(async () => ({ available: true })),
     };
     window.signalLoomNative = firstBridge as never;
-    const firstFetch = vi.fn(async () => new Response(JSON.stringify(inventoryResponse('A Catalog')), { status: 200 }));
+    const firstFetch = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).includes('/inventory/font-inventory.json')
+        ? new Response(JSON.stringify(inventoryResponse('A Catalog')), { status: 200 })
+        : new Response(testFontBytes)
+    ));
     vi.stubGlobal('fetch', firstFetch);
     const host = document.createElement('div');
     const root = createRoot(host);
@@ -618,7 +715,7 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     await act(async () => {
       await vi.waitFor(() => expect(host.textContent).toContain('A Catalog'));
     });
-    expect(firstFetch).toHaveBeenCalledTimes(1);
+    expect(firstFetch.mock.calls.filter(([input]) => String(input).includes('/inventory/font-inventory.json'))).toHaveLength(1);
 
     let resolveReplacementStatus: ((status: { available: boolean }) => void) | undefined;
     const replacementBridge = {
@@ -626,7 +723,11 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
       onMenuCommand: vi.fn(),
       bundledFontLibraryStatus: vi.fn(() => new Promise<{ available: boolean }>((resolve) => { resolveReplacementStatus = resolve; })),
     };
-    const replacementFetch = vi.fn(async () => new Response(JSON.stringify(inventoryResponse('B Catalog')), { status: 200 }));
+    const replacementFetch = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).includes('/inventory/font-inventory.json')
+        ? new Response(JSON.stringify(inventoryResponse('B Catalog')), { status: 200 })
+        : new Response(testFontBytes)
+    ));
     window.signalLoomNative = replacementBridge as never;
     vi.stubGlobal('fetch', replacementFetch);
     await act(async () => root.render(<BundledFontBrowser initiallyOpen onSelect={vi.fn()} style="normal" value="" weight={400} />));
@@ -640,7 +741,7 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     });
     expect(host.textContent).not.toContain('A Catalog');
     expect(replacementBridge.bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
-    expect(replacementFetch).toHaveBeenCalledTimes(1);
+    expect(replacementFetch.mock.calls.filter(([input]) => String(input).includes('/inventory/font-inventory.json'))).toHaveLength(1);
     await act(async () => root.unmount());
   });
 
@@ -650,8 +751,13 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     };
     window.signalLoomNative = firstBridge as never;
     let resolveFirstCatalog: ((value: ReturnType<typeof inventoryResponse>) => void) | undefined;
-    const fetchSpy = vi.fn(async () => {
-      if (fetchSpy.mock.calls.length === 1) {
+    let catalogRequestCount = 0;
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).includes('/inventory/font-inventory.json')) {
+        return new Response(testFontBytes);
+      }
+      catalogRequestCount += 1;
+      if (catalogRequestCount === 1) {
         return {
           ok: true,
           status: 200,
@@ -684,7 +790,7 @@ describe('BundledFontBrowser platform capability gate (FBL-025)', () => {
     expect(host.textContent).toContain('B Catalog');
     expect(host.textContent).not.toContain('A Catalog');
     expect(replacementBridge.bundledFontLibraryStatus).toHaveBeenCalledTimes(1);
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).includes('/inventory/font-inventory.json'))).toHaveLength(2);
     await act(async () => root.unmount());
   });
 });

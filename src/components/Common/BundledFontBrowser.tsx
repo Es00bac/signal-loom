@@ -1,6 +1,10 @@
 import { ChevronDown, ChevronUp, LoaderCircle, Search, ShieldCheck, Type } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  bundledFontFaceRuntimeFamilyName,
+  bundledFontFaceStyleDescriptor,
+  bundledFontFaceVariationSettingsCss,
+  createBundledFontFaceReference,
   ensureBundledFontFaceRegistered,
   loadBundledFontCatalog,
   selectBundledFontFace,
@@ -13,16 +17,18 @@ import {
 import { getSignalLoomNativeBridge, type SignalLoomNativeBridge } from '../../lib/nativeApp';
 import type { PaperManagedFontStyle } from '../../types/paper';
 import { formatFontFamily } from '../../lib/formatFontFamily';
+import { useI18n } from '../../lib/useI18n';
+import type { MessageKey } from '../../lib/i18n';
 
-const ROLE_OPTIONS: Array<{ value: '' | BundledFontRole; label: string }> = [
-  { value: '', label: 'All roles' },
-  { value: 'sans', label: 'Sans' },
-  { value: 'serif', label: 'Serif' },
-  { value: 'mono', label: 'Monospace' },
-  { value: 'display', label: 'Display' },
-  { value: 'handwriting', label: 'Handwriting' },
-  { value: 'japanese', label: 'Japanese' },
-  { value: 'cjk', label: 'Chinese / Korean' },
+const ROLE_OPTIONS: Array<{ value: '' | BundledFontRole; labelKey: MessageKey }> = [
+  { value: '', labelKey: 'fonts.browser.role.all' },
+  { value: 'sans', labelKey: 'fonts.browser.role.sans' },
+  { value: 'serif', labelKey: 'fonts.browser.role.serif' },
+  { value: 'mono', labelKey: 'fonts.browser.role.mono' },
+  { value: 'display', labelKey: 'fonts.browser.role.display' },
+  { value: 'handwriting', labelKey: 'fonts.browser.role.handwriting' },
+  { value: 'japanese', labelKey: 'fonts.browser.role.japanese' },
+  { value: 'cjk', labelKey: 'fonts.browser.role.cjk' },
 ];
 
 interface BridgeScopedCatalogState {
@@ -63,6 +69,101 @@ function createSelectionAuthorityGeneration(..._inputs: readonly unknown[]): Sel
   return { id: ++nextSelectionAuthorityGeneration };
 }
 
+type SpecimenState =
+  | { status: 'waiting' | 'loading' }
+  | { status: 'ready'; fontFamily: string; fontStretch: string; fontStyle: string; fontVariationSettings?: string; fontWeight: number }
+  | { status: 'error'; detail: string };
+
+function BundledFontSpecimen({
+  bridge,
+  face,
+  family,
+}: {
+  bridge: SignalLoomNativeBridge | undefined;
+  face: BundledFontFace;
+  family: BundledFontFamily;
+}) {
+  const { t } = useI18n();
+  const specimenRef = useRef<HTMLSpanElement | null>(null);
+  const [state, setState] = useState<SpecimenState>({ status: 'waiting' });
+
+  useEffect(() => {
+    let cancelled = false;
+    let started = false;
+    let observer: IntersectionObserver | undefined;
+    const load = () => {
+      if (started) return;
+      started = true;
+      setState({ status: 'loading' });
+      void ensureBundledFontFaceRegistered(family, face).then(() => {
+        if (cancelled || getSignalLoomNativeBridge() !== bridge) return;
+        const reference = createBundledFontFaceReference(family, face);
+        setState({
+          status: 'ready',
+          fontFamily: formatFontFamily(bundledFontFaceRuntimeFamilyName(reference)),
+          fontStretch: `${reference.stretchPercent}%`,
+          fontStyle: bundledFontFaceStyleDescriptor(reference),
+          fontVariationSettings: bundledFontFaceVariationSettingsCss(reference),
+          fontWeight: reference.weight,
+        });
+      }).catch((reason) => {
+        if (cancelled || getSignalLoomNativeBridge() !== bridge) return;
+        setState({ status: 'error', detail: reason instanceof Error ? reason.message : t('fonts.browser.specimenUnavailable') });
+      });
+    };
+
+    const specimen = specimenRef.current;
+    if (specimen && typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer?.disconnect();
+          load();
+        }
+      });
+      observer.observe(specimen);
+    } else {
+      load();
+    }
+
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
+  }, [bridge, face, family, t]);
+
+  if (state.status === 'ready') {
+    return (
+      <span
+        data-bundled-font-specimen={face.id}
+        data-font-ready="true"
+        ref={specimenRef}
+        style={{
+          fontFamily: state.fontFamily,
+          fontStretch: state.fontStretch,
+          fontStyle: state.fontStyle,
+          fontVariationSettings: state.fontVariationSettings,
+          fontWeight: state.fontWeight,
+        }}
+      >
+        Ag あア
+      </span>
+    );
+  }
+
+  return (
+    <span
+      aria-busy={state.status === 'loading'}
+      className="font-sans"
+      data-bundled-font-specimen={face.id}
+      data-font-ready="false"
+      ref={specimenRef}
+      title={state.status === 'error' ? state.detail : undefined}
+    >
+      {state.status === 'error' ? t('fonts.browser.specimenUnavailable') : t('fonts.browser.specimenLoading')}
+    </span>
+  );
+}
+
 export interface BundledFontBrowserProps {
   catalog?: BundledFontCatalog;
   disabled?: boolean;
@@ -82,6 +183,7 @@ export function BundledFontBrowser({
   value,
   weight = 400,
 }: BundledFontBrowserProps) {
+  const { t, tf } = useI18n();
   // Starts (and stays) false until the main-process round trip positively confirms a usable
   // font-library root — fail closed while pending, not just once it resolves negative.
   const bridge = getSignalLoomNativeBridge();
@@ -120,7 +222,11 @@ export function BundledFontBrowser({
   const busyFace = busyState?.generation === selectionInputGeneration && busyState.authority.isCurrent()
     ? busyState.faceId
     : null;
-  const error = catalogError ?? selectionError;
+  const error = catalogError
+    ? tf('fonts.browser.catalogError', { detail: catalogError })
+    : selectionError
+      ? tf('fonts.browser.selectionError', { detail: selectionError })
+      : null;
   const catalog = suppliedCatalog ?? loadedCatalog;
 
   useEffect(() => {
@@ -193,13 +299,14 @@ export function BundledFontBrowser({
         className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs text-cyan-100 hover:bg-cyan-400/5 disabled:opacity-50"
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
+        title={t('fonts.browser.browseTooltip')}
         type="button"
       >
         <span className="flex min-w-0 items-center gap-2">
           <Type className="shrink-0 text-cyan-300" size={15} />
           <span className="min-w-0">
-            <span className="block font-semibold">Browse bundled fonts</span>
-            <span className="block truncate text-[10px] text-cyan-100/45">{value || 'Choose an audited family and exact face'}</span>
+            <span className="block font-semibold">{t('fonts.browser.browse')}</span>
+            <span className="block truncate text-[10px] text-cyan-100/45">{value || t('fonts.browser.chooseExact')}</span>
           </span>
         </span>
         {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
@@ -209,32 +316,37 @@ export function BundledFontBrowser({
         <div className="space-y-2 border-t border-cyan-300/10 p-3">
           <div className="grid grid-cols-[1fr_8rem] gap-2">
             <label className="relative block">
-              <span className="sr-only">Search fonts</span>
+              <span className="sr-only">{t('fonts.browser.search')}</span>
               <Search className="pointer-events-none absolute left-2 top-2 text-cyan-100/35" size={14} />
               <input
-                aria-label="Search fonts"
+                aria-label={t('fonts.browser.search')}
                 className="w-full rounded border border-cyan-300/15 bg-[#151d29] py-1.5 pl-7 pr-2 text-xs text-white outline-none focus:border-cyan-300/50"
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Family, face…"
+                placeholder={t('fonts.browser.searchPlaceholder')}
                 role="searchbox"
                 value={query}
               />
             </label>
             <select
-              aria-label="Font role"
+              aria-label={t('fonts.browser.role')}
               className="rounded border border-cyan-300/15 bg-[#151d29] px-2 py-1.5 text-xs text-cyan-100 outline-none focus:border-cyan-300/50"
               onChange={(event) => setRole(event.target.value as '' | BundledFontRole)}
               value={role}
             >
-              {ROLE_OPTIONS.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}
+              {ROLE_OPTIONS.map((option) => <option key={option.value || 'all'} value={option.value}>{t(option.labelKey)}</option>)}
             </select>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-cyan-100/45">
-            <span>{catalog ? `${catalog.familyCount} families · ${catalog.faceCount} faces` : 'Loading audited library…'}</span>
-            <span className="inline-flex items-center gap-1 text-emerald-200/70"><ShieldCheck size={12} /> Offline · license-audited</span>
+            <span>{catalog ? tf('fonts.browser.summary', {
+              faceCount: catalog.faceCount,
+              faceUnit: t(catalog.faceCount === 1 ? 'fonts.browser.face.one' : 'fonts.browser.face.many'),
+              familyCount: catalog.familyCount,
+              familyUnit: t(catalog.familyCount === 1 ? 'fonts.browser.family.one' : 'fonts.browser.family.many'),
+            }) : t('fonts.browser.loadingLibrary')}</span>
+            <span className="inline-flex items-center gap-1 text-emerald-200/70"><ShieldCheck size={12} /> {t('fonts.browser.offlineAudited')}</span>
           </div>
-          <p className="text-[10px] leading-4 text-cyan-100/45">Exact face selection; Paper pins and embeds it in PDF/PDF-X output. KDP keeps the same glyphs in its flattened print pages.</p>
+          <p className="text-[10px] leading-4 text-cyan-100/45">{t('fonts.browser.outputTruth')}</p>
 
           {error ? <p className="rounded border border-rose-400/25 bg-rose-400/10 px-2 py-1 text-[11px] text-rose-100">{error}</p> : null}
           <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
@@ -245,34 +357,36 @@ export function BundledFontBrowser({
               return (
                 <div className={`rounded border ${selected ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-cyan-300/10 bg-[#151d29]'}`} key={family.id}>
                   <button
-                    aria-label={`${family.family}, ${face.subfamily}`}
+                    aria-label={tf('fonts.browser.familyFaceAria', { family: family.family, face: face.subfamily })}
                     className="flex w-full items-center justify-between gap-3 px-2.5 py-2 text-left transition-colors hover:bg-cyan-400/5"
                     disabled={busyFace !== null}
                     onClick={() => void choose(family, face)}
-                    style={{ fontFamily: formatFontFamily(family.family) }}
                     type="button"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-sm text-white">{family.family}</span>
-                      <span className="block truncate font-sans text-[10px] text-cyan-100/45">Ag あア · {family.role} · {family.faces.length} face{family.faces.length === 1 ? '' : 's'}</span>
+                      <span className="block truncate font-sans text-sm text-white">{family.family}</span>
+                      <span className="block truncate text-[10px] text-cyan-100/45">
+                        <BundledFontSpecimen bridge={bridge} face={face} family={family} />
+                        <span className="font-sans"> · {t(`fonts.browser.role.${family.role}` as MessageKey)} · {tf(family.faces.length === 1 ? 'fonts.browser.faceCount.one' : 'fonts.browser.faceCount.many', { count: family.faces.length })}</span>
+                      </span>
                     </span>
                     <span className="shrink-0 text-right font-sans text-[10px] text-cyan-100/55">
                       <span className="block">{face.weight} {face.subfamily}</span>
-                      <span className="block">{face.variable ? 'variable default' : family.licenseId}</span>
+                      <span className="block">{face.variable ? t('fonts.browser.variableDefault') : family.licenseId}</span>
                     </span>
                   </button>
                   {selected && family.faces.length > 1 ? (
                     <div className="flex flex-wrap gap-1 border-t border-cyan-300/10 px-2 py-2 font-sans">
                       {family.faces.map((exactFace) => (
                         <button
-                          aria-label={`Use ${family.family} ${exactFace.subfamily}`}
+                          aria-label={tf('fonts.browser.useFaceAria', { family: family.family, face: exactFace.subfamily })}
                           className={`rounded border px-1.5 py-1 text-[10px] ${exactFace.weight === weight && exactFace.style === style ? 'border-cyan-300/45 bg-cyan-300/10 text-cyan-50' : 'border-cyan-300/10 text-cyan-100/55 hover:border-cyan-300/35'}`}
                           disabled={busyFace !== null}
                           key={exactFace.id}
                           onClick={() => void choose(family, exactFace)}
                           type="button"
                         >
-                          {exactFace.weight} {exactFace.subfamily}{exactFace.variable ? ' · variable' : ''}
+                          {exactFace.weight} {exactFace.subfamily}{exactFace.variable ? ` · ${t('fonts.browser.variable')}` : ''}
                         </button>
                       ))}
                     </div>
@@ -280,7 +394,7 @@ export function BundledFontBrowser({
                 </div>
               );
             })}
-            {catalog && visibleFamilies.length === 0 ? <p className="p-4 text-center text-xs text-cyan-100/40">No matching families.</p> : null}
+            {catalog && visibleFamilies.length === 0 ? <p className="p-4 text-center text-xs text-cyan-100/40">{t('fonts.browser.noMatches')}</p> : null}
           </div>
         </div>
       ) : null}

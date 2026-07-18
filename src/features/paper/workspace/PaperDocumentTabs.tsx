@@ -1,5 +1,6 @@
 import { FileText, Plus, RotateCcw, X } from 'lucide-react';
 import { requestClosePaperDocument } from '../../../lib/paperLossPrevention';
+import { useI18n } from '../../../lib/useI18n';
 import {
   listFreshPaperBatonHandoffItems,
   openPaperBatonHandoffItem,
@@ -8,6 +9,7 @@ import { usePaperStore } from '../../../store/paperStore';
 import { useSourceBinStore } from '../../../store/sourceBinStore';
 
 export function PaperDocumentTabs() {
+  const { t, tf } = useI18n();
   const documents = usePaperStore((state) => state.documents);
   const activeDocumentId = usePaperStore((state) => state.activeDocumentId);
   const activeDocument = usePaperStore((state) => state.document);
@@ -23,26 +25,26 @@ export function PaperDocumentTabs() {
 
   return (
     <div
-      aria-label="Open Paper documents"
+      aria-label={t('paper.tabs.openDocuments')}
       className="theme-surface flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-cyan-300/10 bg-[#11131a]"
       data-paper-document-tabs="true"
       role="tablist"
     >
       <button
-        aria-label="New Paper document"
+        aria-label={t('paper.tabs.new')}
         className="flex w-10 shrink-0 items-center justify-center border-r border-cyan-300/10 text-cyan-100/45 transition-colors hover:bg-cyan-300/5 hover:text-cyan-100"
         onClick={() => createNewDocument()}
-        title="New Paper document"
+        title={t('paper.tabs.new')}
         type="button"
       >
         <Plus size={14} />
       </button>
       {latestRecovery ? (
         <button
-          aria-label={`Restore discarded Paper document ${latestRecovery.snapshot.document.title}`}
+          aria-label={tf('paper.tabs.restoreAria', { title: latestRecovery.snapshot.document.title })}
           className="flex w-10 shrink-0 items-center justify-center border-r border-cyan-300/10 text-amber-200/60 transition-colors hover:bg-amber-300/5 hover:text-amber-100"
           onClick={() => restoreDiscardedDocument(latestRecovery.id)}
-          title={`Restore discarded “${latestRecovery.snapshot.document.title}”`}
+          title={tf('paper.tabs.restoreTitle', { title: latestRecovery.snapshot.document.title })}
           type="button"
         >
           <RotateCcw aria-hidden="true" size={13} />
@@ -50,10 +52,10 @@ export function PaperDocumentTabs() {
       ) : null}
       {latestPaperHandoff ? (
         <button
-          aria-label={`Continue handed-off Paper document ${latestPaperHandoff.label}`}
+          aria-label={tf('paper.tabs.continueHandoff', { title: latestPaperHandoff.label })}
           className="flex w-10 shrink-0 items-center justify-center border-r border-cyan-300/10 text-violet-200/60 transition-colors hover:bg-violet-300/5 hover:text-violet-100"
           onClick={() => void openPaperBatonHandoffItem(latestPaperHandoff)}
-          title={latestPaperHandoff.label}
+          title={tf('paper.tabs.continueHandoff', { title: latestPaperHandoff.label })}
           type="button"
         >
           <RotateCcw aria-hidden="true" size={13} />
@@ -63,6 +65,14 @@ export function PaperDocumentTabs() {
         const isActive = workspaceDocument.id === activeDocumentId;
         const document = isActive ? activeDocument : workspaceDocument.document;
         const isDirty = isDocumentDirty(workspaceDocument.id);
+        const pageUnit = t(document.pages.length === 1 ? 'paper.tabs.page.one' : 'paper.tabs.page.many');
+        const tooltip = tf('paper.tabs.tooltip', {
+          count: document.pages.length,
+          dirty: isDirty ? t('paper.tabs.dirtyPrefix') : '',
+          pageUnit,
+          title: document.title,
+        });
+        const closeLabel = tf('paper.tabs.close', { title: document.title });
         return (
           <div
             aria-selected={isActive}
@@ -86,20 +96,20 @@ export function PaperDocumentTabs() {
             }}
             role="tab"
             tabIndex={isActive ? 0 : -1}
-            title={`${isDirty ? 'Unsaved changes · ' : ''}${document.title} · ${document.pages.length} page${document.pages.length === 1 ? '' : 's'}`}
+            title={tooltip}
           >
             <FileText aria-hidden="true" className="shrink-0 opacity-60" size={13} />
             <span className="min-w-0 flex-1 truncate">{document.title}</span>
-            {isDirty ? <span aria-label="Unsaved changes" className="text-amber-300" title="Unsaved changes">●</span> : null}
-            <span className="shrink-0 font-mono text-[9px] text-cyan-100/35">{document.pages.length}P</span>
+            {isDirty ? <span aria-label={t('paper.tabs.unsaved')} className="text-amber-300" title={t('paper.tabs.unsaved')}>●</span> : null}
+            <span className="shrink-0 font-mono text-[9px] text-cyan-100/35">{tf('paper.tabs.pageBadge', { count: document.pages.length })}</span>
             <button
-              aria-label={`Close ${document.title}`}
+              aria-label={closeLabel}
               className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-cyan-100/30 transition-colors hover:bg-white/10 hover:text-white"
               onClick={(event) => {
                 event.stopPropagation();
                 void requestClosePaperDocument(workspaceDocument.id);
               }}
-              title={`Close ${document.title}`}
+              title={closeLabel}
               type="button"
             >
               <X aria-hidden="true" size={12} />
