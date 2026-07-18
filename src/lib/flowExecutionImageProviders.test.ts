@@ -335,6 +335,49 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(result.statusMessage).toContain('auto-upscaled');
   });
 
+  it('does not repeat an accepted configured Stability upscale when response materialization retries', async () => {
+    vi.spyOn(URL, 'createObjectURL')
+      .mockReturnValueOnce('blob:stability-before-upscale')
+      .mockReturnValueOnce('blob:stability-after-upscale');
+    const acceptedBlob = vi.fn()
+      .mockRejectedValueOnce(new TypeError('transient response body read failure'))
+      .mockResolvedValueOnce(new Blob(['UPSCALED'], { type: 'image/png' }));
+    const acceptedResponse = {
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'image/png' }),
+      clone: () => ({ blob: acceptedBlob }),
+    } as unknown as Response;
+    let upscalePosts = 0;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/stable-image/upscale/fast')) {
+        upscalePosts += 1;
+        return acceptedResponse;
+      }
+      return imageResponse(requestUrl.startsWith('blob:') ? 'SOURCE' : 'GENERATED');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await executeNodeRequest(
+      createImageNode('stability', 'stable-image-core', { imageAutoUpscale: true }),
+      { prompt: 'one paid upscale only', config: DEFAULT_EXECUTION_CONFIG },
+      {
+        ...baseSettings,
+        providerSettings: {
+          ...baseSettings.providerSettings,
+          paperPrintUpscaleMethod: 'stability-fast',
+          batchMaxRetries: 1,
+          batchRetryBaseDelayMs: 0,
+        },
+      },
+    );
+
+    expect(result.result).toBe('blob:stability-after-upscale');
+    expect(upscalePosts).toBe(1);
+    expect(acceptedBlob).toHaveBeenCalledTimes(2);
+  });
+
   it('auto-upscales generated Flow images with local CPU upscaler when configured', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL')
       .mockReturnValueOnce('blob:stability-core')
