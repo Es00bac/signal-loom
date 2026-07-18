@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { deriveBatonAction, selectEditBaton } from './editLockStore';
+import { deriveBatonAction, selectEditBaton, useEditLockStore } from './editLockStore';
 import type { EditLockState } from '../lib/projectEditLock';
 
 /**
@@ -14,6 +14,35 @@ const DESKTOP = { id: 'desktop-1', label: 'Desktop browser' };
 function lockHeldBy(holder: { id: string; label: string } | null, pending: { id: string; label: string } | null = null): EditLockState {
   return { holder, pending, heldSince: 1, expiresAt: 2, pendingExpiresAt: 0, revision: 1 };
 }
+
+beforeEach(() => {
+  useEditLockStore.getState().setLock(null);
+});
+
+describe('edit ownership epoch', () => {
+  it('stays stable across a normal same-holder heartbeat', () => {
+    useEditLockStore.getState().setLock(lockHeldBy(DESKTOP));
+    const initialEpoch = useEditLockStore.getState().ownershipEpoch;
+
+    useEditLockStore.getState().setLock({
+      ...lockHeldBy(DESKTOP),
+      revision: 2,
+      expiresAt: 30_000,
+    });
+
+    expect(useEditLockStore.getState().ownershipEpoch).toBe(initialEpoch);
+  });
+
+  it('advances across another holder and back even when the final device ID matches', () => {
+    useEditLockStore.getState().setLock(lockHeldBy(DESKTOP));
+    const initialEpoch = useEditLockStore.getState().ownershipEpoch;
+
+    useEditLockStore.getState().setLock({ ...lockHeldBy(PHONE), heldSince: 2, revision: 2 });
+    useEditLockStore.getState().setLock({ ...lockHeldBy(DESKTOP), heldSince: 3, revision: 3 });
+
+    expect(useEditLockStore.getState().ownershipEpoch).toBe(initialEpoch + 2);
+  });
+});
 
 describe('selectEditBaton', () => {
   it('treats a null lock as an unmanaged single-device session — fully editable', () => {

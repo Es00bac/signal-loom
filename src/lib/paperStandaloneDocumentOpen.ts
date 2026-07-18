@@ -43,13 +43,18 @@ function enqueueStandaloneOpen<T>(open: () => Promise<T>): Promise<T> {
 }
 
 function stableBatonOwnershipSignature(): string {
-  const lock = useEditLockStore.getState().lock;
+  const { lock, ownershipEpoch } = useEditLockStore.getState();
   // Heartbeats intentionally advance revision/expiry while ownership stays unchanged. Binding to
-  // the managed/unmanaged mode plus holder identity rejects take/yield/force transitions without
-  // making a long package decode fail merely because its current owner proved liveness.
+  // the store's continuity epoch also distinguishes release/transfer/reacquisition sequences whose
+  // final holder happens to match the initial holder.
   return JSON.stringify(lock
-    ? { mode: 'managed', holderId: lock.holder?.id ?? null }
-    : { mode: 'unmanaged' });
+    ? {
+        mode: 'managed',
+        holderId: lock.holder?.id ?? null,
+        holderEpoch: lock.holder ? lock.heldSince : null,
+        ownershipEpoch,
+      }
+    : { mode: 'unmanaged', ownershipEpoch });
 }
 
 function projectAuthorityIsCurrent(guard: (() => boolean) | undefined): boolean {

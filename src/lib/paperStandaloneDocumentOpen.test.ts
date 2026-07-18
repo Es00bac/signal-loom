@@ -44,13 +44,29 @@ function importedDocument(
   return document;
 }
 
-function heldLock(holder: EditLockDevice, revision: number, expiresAt = Date.now() + 60_000): EditLockState {
+function heldLock(
+  holder: EditLockDevice,
+  revision: number,
+  expiresAt = Date.now() + 60_000,
+  heldSince = Date.now(),
+): EditLockState {
   return {
     revision,
     holder,
     pending: null,
-    heldSince: Date.now(),
+    heldSince,
     expiresAt,
+    pendingExpiresAt: 0,
+  };
+}
+
+function freeLock(revision: number): EditLockState {
+  return {
+    revision,
+    holder: null,
+    pending: null,
+    heldSince: 0,
+    expiresAt: 0,
     pendingExpiresAt: 0,
   };
 }
@@ -214,15 +230,101 @@ describe('standalone .slppr ownership transaction (FBL-031)', () => {
     const { bytes, record } = await standaloneFixture();
     const target = new DelayedReadRepository();
     const local = getLocalDevice();
-    useEditLockStore.getState().setLock(heldLock(local, 20, Date.now() + 30_000));
+    const holderEpoch = 1_000;
+    useEditLockStore.getState().setLock(heldLock(local, 20, Date.now() + 30_000, holderEpoch));
+    const ownershipEpoch = useEditLockStore.getState().ownershipEpoch;
 
     const opening = openStandaloneSlpprDocument(bytes, { repository: target });
     await target.readStarted;
-    useEditLockStore.getState().setLock(heldLock(local, 21));
+    useEditLockStore.getState().setLock(heldLock(local, 21, Date.now() + 60_000, holderEpoch));
+    expect(useEditLockStore.getState().ownershipEpoch).toBe(ownershipEpoch);
     target.release();
 
     await expect(opening).resolves.toBe('standalone-paper');
     expect(await target.get(record.ref.id)).toEqual(record);
+  });
+
+  it('rejects a release while baseline capture is paused and restores the exact prior record', async () => {
+    const { bytes, record } = await standaloneFixture();
+    const target = new DelayedReadRepository();
+    const priorRecord = { ...record, bytes: new Uint8Array([7, 7, 7, 7]) };
+    await target.put(priorRecord);
+    const local = getLocalDevice();
+    useEditLockStore.getState().setLock(heldLock(local, 30, Date.now() + 60_000, 1_000));
+
+    const opening = openStandaloneSlpprDocument(bytes, { repository: target });
+    await target.readStarted;
+    useEditLockStore.getState().setLock(freeLock(31));
+    target.release();
+
+    await expect(opening).rejects.toThrow(/ownership changed/i);
+    expect(await target.get(record.ref.id)).toEqual(priorRecord);
+    expect(usePaperStore.getState().documents).toHaveLength(1);
+  });
+
+  it('rejects local-to-other-to-local reacquisition even when the final holder ID matches', async () => {
+    const { bytes, record } = await standaloneFixture();
+    const target = new DelayedReadRepository();
+    const priorRecord = { ...record, bytes: new Uint8Array([6, 6, 6, 6]) };
+    await target.put(priorRecord);
+    const local = getLocalDevice();
+    useEditLockStore.getState().setLock(heldLock(local, 40, Date.now() + 60_000, 1_000));
+
+    const opening = openStandaloneSlpprDocument(bytes, { repository: target });
+    await target.readStarted;
+    useEditLockStore.getState().setLock(heldLock(
+      { id: 'phone-other', label: 'Phone' },
+      41,
+      Date.now() + 60_000,
+      2_000,
+    ));
+    useEditLockStore.getState().setLock(heldLock(local, 42, Date.now() + 60_000, 3_000));
+    target.release();
+
+    await expect(opening).rejects.toThrow(/ownership changed/i);
+    expect(await target.get(record.ref.id)).toEqual(priorRecord);
+    expect(usePaperStore.getState().documents).toHaveLength(1);
+  });
+
+  it('rejects an unmanaged-to-managed-to-unmanaged continuity break', async () => {
+    const { bytes, record } = await standaloneFixture();
+    const target = new DelayedReadRepository();
+    const local = getLocalDevice();
+    useEditLockStore.getState().setLock(null);
+
+    const opening = openStandaloneSlpprDocument(bytes, { repository: target });
+    await target.readStarted;
+    useEditLockStore.getState().setLock(heldLock(local, 50, Date.now() + 60_000, 4_000));
+    useEditLockStore.getState().setLock(null);
+    target.release();
+
+    await expect(opening).rejects.toThrow(/ownership changed/i);
+    expect(await target.get(record.ref.id)).toBeUndefined();
+    expect(usePaperStore.getState().documents).toHaveLength(1);
+  });
+
+  it('admits a queued request against the ownership epoch current when it reaches the queue head', async () => {
+    const { bytes, record } = await standaloneFixture();
+    const target = new DelayedReadRepository();
+    const local = getLocalDevice();
+    useEditLockStore.getState().setLock(heldLock(local, 60, Date.now() + 60_000, 5_000));
+
+    const staleFirst = openStandaloneSlpprDocument(bytes, { repository: target });
+    await target.readStarted;
+    const queuedCurrent = openStandaloneSlpprDocument(bytes, { repository: target });
+    useEditLockStore.getState().setLock(heldLock(
+      { id: 'phone-other', label: 'Phone' },
+      61,
+      Date.now() + 60_000,
+      6_000,
+    ));
+    useEditLockStore.getState().setLock(heldLock(local, 62, Date.now() + 60_000, 7_000));
+    target.release();
+
+    await expect(staleFirst).rejects.toThrow(/ownership changed/i);
+    await expect(queuedCurrent).resolves.toBe('standalone-paper');
+    expect(await target.get(record.ref.id)).toEqual(record);
+    expect(usePaperStore.getState().documents).toHaveLength(2);
   });
 
   it('rolls managed records back when Paper changes before the commit boundary', async () => {

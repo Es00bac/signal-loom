@@ -11,12 +11,26 @@ import type { EditLockState } from '../lib/projectEditLock';
  */
 interface EditLockStoreState {
   lock: EditLockState | null;
+  /** Local continuity token; changes only when edit ownership changes, not for normal heartbeats. */
+  ownershipEpoch: number;
   setLock(lock: EditLockState | null): void;
+}
+
+function stableOwnershipIdentity(lock: EditLockState | null): string {
+  if (!lock) return 'unmanaged';
+  if (!lock.holder) return 'managed:free';
+  // `heldSince` is assigned by each grant and deliberately remains stable across heartbeats.
+  return `managed:${lock.holder.id}:${lock.heldSince}`;
 }
 
 export const useEditLockStore = create<EditLockStoreState>((set) => ({
   lock: null,
-  setLock: (lock) => set({ lock }),
+  ownershipEpoch: 0,
+  setLock: (lock) => set((current) => ({
+    lock,
+    ownershipEpoch: current.ownershipEpoch
+      + (stableOwnershipIdentity(current.lock) === stableOwnershipIdentity(lock) ? 0 : 1),
+  })),
 }));
 
 export interface EditBatonView {

@@ -34,6 +34,7 @@ describe('projectEditLock', () => {
     const result = claimLock(phone, T0 + 5_000);
     expect(result.granted).toBe(true);
     expect(result.state.holder).toEqual(phone);
+    expect(result.state.heldSince).toBe(T0);
     expect(result.state.expiresAt).toBe(T0 + 5_000 + EDIT_LOCK_HOLD_TTL_MS);
   });
 

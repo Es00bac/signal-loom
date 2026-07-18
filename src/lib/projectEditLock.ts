@@ -47,7 +47,7 @@ export interface EditLockState {
   holder: EditLockDevice | null;
   /** A device that requested takeover and is awaiting the holder's yield, or null. */
   pending: EditLockDevice | null;
-  /** When the holder last proved liveness (claim/heartbeat); 0 when free. */
+  /** Start of the holder's uninterrupted grant; stable across heartbeats and 0 when free. */
   heldSince: number;
   /** TTL deadline for the current holder; at/after this with no heartbeat the baton is stale. */
   expiresAt: number;
