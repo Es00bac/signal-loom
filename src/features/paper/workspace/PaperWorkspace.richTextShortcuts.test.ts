@@ -32,7 +32,7 @@ describe('Paper unified rich typesetting surfaces', () => {
 
     expect(source).toContain('<PaperRichAdvancedTypePanel');
     expect(source).toContain('Advanced character, paragraph, and Japanese typesetting');
-    expect(source).toContain('resolvePaperRichEditorTypographyUpdate(frame.id, frame.typography, typography, frame.richText)');
+    expect(source).toMatch(/resolvePaperRichEditorTypographyUpdate\(\s*frame\.id,\s*frame\.typography,\s*typography,\s*frame\.richText,\s*operationContext,\s*\)/);
     expect(source).toContain('data-paper-rich-inspector="true"');
     expect(source).toContain('label="Selected text colour"');
     expect(source).not.toContain('aria-label="Text colour"');

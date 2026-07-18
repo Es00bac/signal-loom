@@ -7,10 +7,12 @@ import { createDefaultPaperDocument } from '../../../lib/paperDocument';
 import { usePaperStore } from '../../../store/paperStore';
 import type { PaperFrame, PaperImportedFont } from '../../../types/paper';
 import { PaperRichEditableText } from './PaperWorkspace';
+import { resolvePaperRichEditorTypographyUpdate } from './paperRichEditorSession';
 
 const mocks = vi.hoisted(() => ({
   authenticate: vi.fn(),
   install: vi.fn(),
+  showAlertDialog: vi.fn(async () => undefined),
   authorityCurrent: true,
   authority: { isCurrent: () => mocks.authorityCurrent },
   paper: {
@@ -56,14 +58,17 @@ vi.mock('./PaperFontImport', () => ({
 
 vi.mock('../assets/PaperAssetRuntime', () => ({ paperAssetRepository: {} }));
 
-vi.mock('../../../store/paperStore', () => {
+vi.mock('../../../store/alertDialogStore', () => ({ showAlertDialog: mocks.showAlertDialog }));
+
+vi.mock('../../../store/paperStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../store/paperStore')>();
   const addImportedFont = (font: PaperImportedFont) => {
     mocks.paper.document.importedFonts = [font];
   };
   const state = () => ({ document: mocks.paper.document, undoStack: mocks.paper.undoStack, addImportedFont });
   const usePaperStoreMock = <T,>(selector: (current: ReturnType<typeof state>) => T) => selector(state());
   usePaperStoreMock.getState = state;
-  return { usePaperStore: usePaperStoreMock };
+  return { ...actual, usePaperStore: usePaperStoreMock };
 });
 
 function richFrame(): PaperFrame {
@@ -95,10 +100,13 @@ describe('Paper rich bundled-font selection authority (FBL-025)', () => {
     vi.stubGlobal('FontFace', class { async load() { return this; } });
     Object.defineProperty(document, 'fonts', { configurable: true, value: { add: vi.fn() } });
     mocks.paper.document.importedFonts = undefined;
-    mocks.paper.undoStack = [];
+    // This is deliberately non-empty: stale bundled selections must not rewrite real history that predates
+    // the selection, not merely an empty test store.
+    mocks.paper.undoStack = [{ kind: 'real-history-baseline' }];
     mocks.authorityCurrent = true;
     mocks.install.mockReset();
     mocks.authenticate.mockReset();
+    mocks.showAlertDialog.mockClear();
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -183,5 +191,92 @@ describe('Paper rich bundled-font selection authority (FBL-025)', () => {
     expect(mocks.install).toHaveBeenCalledTimes(1);
     expect(mocks.authenticate).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).not.toContain('Choose authority font');
+  });
+
+  it('carries the transient exact face and the same authority through the Inspector live-editor session await', async () => {
+    let releaseAuthentication: (() => void) | undefined;
+    mocks.authenticate.mockImplementation(() => new Promise<void>((resolve) => { releaseAuthentication = resolve; }));
+    const original = richFrame();
+    render(original);
+    const editor = container.querySelector<HTMLElement>('[role="textbox"]')!;
+    const domBeforeRelease = editor.innerHTML;
+    const next = { ...original.typography, fontFamily: bundledFamily.family };
+    let pending: ReturnType<typeof resolvePaperRichEditorTypographyUpdate> | undefined;
+
+    await act(async () => {
+      pending = resolvePaperRichEditorTypographyUpdate(
+        original.id,
+        original.typography,
+        next,
+        original.richText,
+        { authority: mocks.authority, managedFonts: [installedFace] },
+      );
+      await vi.waitFor(() => expect(mocks.authenticate).toHaveBeenCalledWith(installedFace));
+    });
+
+    mocks.authorityCurrent = false;
+    render({ ...original, typography: { ...original.typography, fontFamily: 'Replacement Sans' } });
+    await act(async () => releaseAuthentication?.());
+    await pending;
+
+    expect(editor.innerHTML).toBe(domBeforeRelease);
+    expect(usePaperStore.getState().document.importedFonts).toBeUndefined();
+    expect(usePaperStore.getState().undoStack).toEqual([{ kind: 'real-history-baseline' }]);
+    expect(mocks.showAlertDialog).not.toHaveBeenCalled();
+  });
+
+  it('publishes no stale rich error, document/history, or menu mutation when pending authentication rejects', async () => {
+    let rejectAuthentication: ((error: Error) => void) | undefined;
+    mocks.install.mockResolvedValue(installedFace);
+    mocks.authenticate.mockImplementation(() => new Promise<void>((_resolve, reject) => { rejectAuthentication = reject; }));
+    const original = richFrame();
+    const onCommit = render(original);
+
+    await openBundledFontMenu();
+    await act(async () => {
+      await vi.waitFor(() => expect(mocks.authenticate).toHaveBeenCalledWith(installedFace));
+    });
+    const editor = container.querySelector<HTMLElement>('[role="textbox"]')!;
+    const domBeforeRejection = editor.innerHTML;
+    const documentBeforeRejection = structuredClone(usePaperStore.getState().document);
+    const historyBeforeRejection = structuredClone(usePaperStore.getState().undoStack);
+
+    mocks.authorityCurrent = false;
+    render({ ...original, typography: { ...original.typography, fontFamily: 'Replacement Sans' } }, onCommit);
+    await act(async () => rejectAuthentication?.(new Error('stale rich authentication failure')));
+
+    expect(editor.innerHTML).toBe(domBeforeRejection);
+    expect(usePaperStore.getState().document).toEqual(documentBeforeRejection);
+    expect(usePaperStore.getState().undoStack).toEqual(historyBeforeRejection);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Choose authority font');
+    expect(document.body.textContent).not.toContain('pinned to this document');
+    expect(mocks.showAlertDialog).not.toHaveBeenCalled();
+  });
+
+  it('retains the current rich rejection alert without DOM, font, history, menu, or notice publication', async () => {
+    mocks.install.mockResolvedValue(installedFace);
+    mocks.authenticate.mockRejectedValue(new Error('current rich authentication failure'));
+    const original = richFrame();
+    const onCommit = render(original);
+    const editor = container.querySelector<HTMLElement>('[role="textbox"]')!;
+    const domBeforeRejection = editor.innerHTML;
+    const documentBeforeRejection = structuredClone(usePaperStore.getState().document);
+    const historyBeforeRejection = structuredClone(usePaperStore.getState().undoStack);
+
+    await openBundledFontMenu();
+    await act(async () => {
+      await vi.waitFor(() => expect(mocks.showAlertDialog).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Exact Font Edit Blocked',
+        message: 'current rich authentication failure',
+      })));
+    });
+
+    expect(editor.innerHTML).toBe(domBeforeRejection);
+    expect(usePaperStore.getState().document).toEqual(documentBeforeRejection);
+    expect(usePaperStore.getState().undoStack).toEqual(historyBeforeRejection);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Choose authority font');
+    expect(document.body.textContent).not.toContain('pinned to this document');
   });
 });

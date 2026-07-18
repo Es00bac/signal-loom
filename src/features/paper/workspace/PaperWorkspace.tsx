@@ -63,7 +63,7 @@ import {
 import { useImageEditorStore } from '../../../store/imageEditorStore';
 import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
-import { usePaperStore } from '../../../store/paperStore';
+import { replacePaperImportedFontFace, usePaperStore } from '../../../store/paperStore';
 import { ensurePaperImportedFontRegistered, PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
@@ -208,6 +208,8 @@ import {
   FACE_SELECTING_TYPOGRAPHY_KEYS,
   registerPaperRichEditorSession,
   resolvePaperRichEditorTypographyUpdate,
+  type PaperRichEditorCommitAuthority,
+  type PaperRichEditorCommitContext,
   runPaperRichEditorCommand,
   type PaperRichEditorSession,
 } from './paperRichEditorSession';
@@ -416,6 +418,7 @@ import type {
   PaperFrame,
   PaperFrameKind,
   PaperFramePatch,
+  PaperImportedFont,
   PaperGuide,
   PaperManagedFontStyle,
   PaperLineBreak,
@@ -10187,10 +10190,12 @@ export function PaperRichEditableText({
     familyName: string,
     face: { id: string; weight: number; style: PaperManagedFontStyle; stretchPercent: number; axes: Record<string, { default: number }> },
     authority: BundledFontSelectionAuthority,
+    installedFont: PaperImportedFont,
   ) => {
-    if (!authority.isCurrent()) return;
+    if (!authority.isCurrent()) return false;
     const currentFonts = usePaperStore.getState().document.importedFonts;
-    const installed = currentFonts?.find((candidate) => candidate.id === `bundled-${face.id}`);
+    const availableFonts = replacePaperImportedFontFace(currentFonts, installedFont);
+    const installed = availableFonts.find((candidate) => candidate.id === `bundled-${face.id}`);
     const variationSettings = Object.keys(face.axes).length
       ? Object.fromEntries(Object.entries(face.axes).map(([tag, axis]) => [tag, axis.default]))
       : undefined;
@@ -10201,9 +10206,10 @@ export function PaperRichEditableText({
       fontStretch: `${face.stretchPercent}%`,
       ...(variationSettings ? { fontVariationSettings: variationSettings } : {}),
     };
-    if (!await applySelectionTypographyPatch(patch, currentFonts, authority.isCurrent)) return;
-    if (!authority.isCurrent()) return;
+    if (!await applySelectionTypographyPatch(patch, availableFonts, authority.isCurrent)) return false;
+    if (!authority.isCurrent()) return false;
     setFontMenuOpen(false);
+    return true;
   };
   // Wrap the selection in Japanese inline notation (furigana 語《》 or emphasis 《《語》》). The notation is
   // inserted as plain text — it round-trips through the frame text and renders as <ruby>/圏点 in the non-editing
@@ -10279,12 +10285,13 @@ export function PaperRichEditableText({
   useEffect(() => {
     if (!managedFacesReady) return undefined;
     return registerPaperRichEditorSession(frame.id, {
-      applyTypography: (previous, next) => {
+      applyTypography: (previous, next, context) => {
         const patch = changedRichTypographyPatch(previous, next);
         const applyAuthenticatedUpdate = (): ReturnType<PaperRichEditorSession['applyTypography']> => {
+          if (context?.authority && !context.authority.isCurrent()) return null;
           const editor = editorRef.current;
           if (!editor || finishedRef.current) return null;
-          const currentFonts = usePaperStore.getState().document.importedFonts;
+          const currentFonts = context?.managedFonts ?? usePaperStore.getState().document.importedFonts;
           const applied = applyTypographyToDomSelection(
             editor,
             savedRangeRef.current,
@@ -10319,7 +10326,7 @@ export function PaperRichEditableText({
 
         if (!FACE_SELECTING_TYPOGRAPHY_KEYS.some((key) => key in patch)) return applyAuthenticatedUpdate();
         try {
-          const currentFonts = usePaperStore.getState().document.importedFonts ?? [];
+          const currentFonts = context?.managedFonts ?? usePaperStore.getState().document.importedFonts ?? [];
           const exactFace = requestedExactPaperManagedFace(next, currentFonts);
           return exactFace
             ? ensurePaperImportedFontRegistered(exactFace).then(applyAuthenticatedUpdate)
@@ -10421,7 +10428,7 @@ export function PaperRichEditableText({
                   fontStyle={paperFontStyleFromCss(frame.typography.fontStyle)}
                   fontWeight={Number.parseInt(frame.typography.fontWeight, 10) || 400}
                   initiallyOpen
-                  onSelect={(family, face, authority) => applyBundledFontFace(family.family, face, authority)}
+                  onSelect={(family, face, authority, installedFont) => applyBundledFontFace(family.family, face, authority, installedFont)}
                 />
               </div>
             ) : null}
@@ -11127,7 +11134,7 @@ function PaperFindChangePanel({
   );
 }
 
-function PaperInspector({
+export function PaperInspector({
   document,
   documentTitle,
   frame,
@@ -11188,21 +11195,88 @@ function PaperInspector({
   const effectiveFrame = frame ? computeEffectivePaperFrame(document, frame) : null;
   const selectedFontFamily = frameTypography?.fontFamily ?? '';
   const [newSpotName, setNewSpotName] = useState('');
+  const commitBundledFrameTypography = usePaperStore((state) => state.commitBundledFrameTypography);
+  const inspectorGeneration = useRef(0);
+  const inspectorAuthority = useRef<{
+    document: PaperDocument;
+    page: PaperDocument['pages'][number];
+    frame: PaperFrame;
+    generation: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!frame) {
+      inspectorAuthority.current = null;
+      return;
+    }
+    const authority = { document, page: currentPage, frame, generation: ++inspectorGeneration.current };
+    inspectorAuthority.current = authority;
+    return () => {
+      if (inspectorAuthority.current === authority) inspectorAuthority.current = null;
+    };
+  }, [currentPage, document, frame]);
   const importedFontFamilies = [...new Set((document.importedFonts ?? []).map((font) => font.familyName))];
   const selectedFontIsPreset = PAPER_FONT_OPTIONS.some((option) => option.value === selectedFontFamily)
     || importedFontFamilies.includes(selectedFontFamily);
-  const applyFrameTypography = (typography: PaperFrame['typography']) => {
-    if (!frame) return;
-    const resolved = resolvePaperRichEditorTypographyUpdate(frame.id, frame.typography, typography, frame.richText);
+  const applyFrameTypography = (
+    typography: PaperFrame['typography'],
+    bundledAuthority?: BundledFontSelectionAuthority,
+    installedFont?: PaperImportedFont,
+  ) => {
+    if (!frame) return false;
+    const target = inspectorAuthority.current;
+    const operationAuthority: PaperRichEditorCommitAuthority | undefined = bundledAuthority && installedFont
+      ? {
+          isCurrent: () => Boolean(
+            bundledAuthority.isCurrent()
+            && target
+            && inspectorAuthority.current === target
+            && inspectorGeneration.current === target.generation
+            && target.document === document
+            && target.page === currentPage
+            && target.frame === frame,
+          ),
+        }
+      : undefined;
+    if (operationAuthority && !operationAuthority.isCurrent()) return false;
+    const operationFonts = operationAuthority && installedFont
+      ? replacePaperImportedFontFace(target?.document.importedFonts, installedFont)
+      : undefined;
+    const operationContext: PaperRichEditorCommitContext | undefined = operationAuthority
+      ? { authority: operationAuthority, managedFonts: operationFonts }
+      : undefined;
+    const commit = (patch: PaperFramePatch) => {
+      if (operationAuthority && installedFont) {
+        if (!operationAuthority.isCurrent()) return false;
+        return commitBundledFrameTypography({
+          document: target!.document,
+          page: target!.page,
+          frame: target!.frame,
+          patch,
+          importedFont: installedFont,
+        });
+      }
+      onUpdateFrame(patch);
+      return true;
+    };
+    const resolved = resolvePaperRichEditorTypographyUpdate(
+      frame.id,
+      frame.typography,
+      typography,
+      frame.richText,
+      operationContext,
+    );
     if (!(resolved instanceof Promise)) {
-      onUpdateFrame(resolved);
+      commit(resolved);
       return;
     }
-    void resolved.then(onUpdateFrame).catch((error) => showAlertDialog({
-      title: 'Exact Font Edit Blocked',
-      message: error instanceof Error ? error.message : 'The requested exact face could not be authenticated, so the typography was not changed.',
-      tone: 'danger',
-    }));
+    return resolved.then(commit).catch((error) => {
+      if (operationAuthority && !operationAuthority.isCurrent()) return false;
+      return showAlertDialog({
+        title: 'Exact Font Edit Blocked',
+        message: error instanceof Error ? error.message : 'The requested exact face could not be authenticated, so the typography was not changed.',
+        tone: 'danger',
+      }).then(() => false);
+    });
   };
   const outputIntent = PAPER_OUTPUT_INTENT_PROFILES[document.printProduction.outputIntentProfileId];
   const outputConditionId = document.printProduction.outputIntentProfileId === 'custom'
@@ -12008,7 +12082,7 @@ function PaperInspector({
                 </Field>
                 <Field label={t('paper.insp.fontFamily')}>
                   <PaperBundledFontPicker
-                    onChange={applyFrameTypography}
+                    onChange={(typography, authority, installedFont) => applyFrameTypography(typography, authority, installedFont)}
                     typography={frame.typography}
                   />
                   <select

@@ -28,6 +28,21 @@ export interface PaperRichEditorApplyResult {
   text: string;
 }
 
+/**
+ * One operation-scoped authority follows an asynchronous Inspector edit through the live editor.
+ * It is intentionally structural so the bundled-font browser can supply its irreversible selection
+ * authority without coupling this editor-session module to a React component.
+ */
+export interface PaperRichEditorCommitAuthority {
+  isCurrent: () => boolean;
+}
+
+export interface PaperRichEditorCommitContext {
+  authority?: PaperRichEditorCommitAuthority;
+  /** Transient exact faces authenticated by the initiating operation but not yet durably committed. */
+  managedFonts?: readonly PaperManagedFontFace[];
+}
+
 export interface PaperRichEditorSession {
   /**
    * A promise is returned when the edit selects an exact managed face: the live editor must authenticate
@@ -37,6 +52,7 @@ export interface PaperRichEditorSession {
   applyTypography: (
     previous: PaperTypography,
     next: PaperTypography,
+    context?: PaperRichEditorCommitContext,
   ) => PaperRichEditorApplyResult | null | Promise<PaperRichEditorApplyResult | null>;
 }
 
@@ -53,8 +69,10 @@ export function applyTypographyToActiveRichEditor(
   frameId: string,
   previous: PaperTypography,
   next: PaperTypography,
+  context?: PaperRichEditorCommitContext,
 ): PaperRichEditorApplyResult | null | Promise<PaperRichEditorApplyResult | null> {
-  return sessions.get(frameId)?.applyTypography(previous, next) ?? null;
+  if (context?.authority && !context.authority.isCurrent()) return null;
+  return sessions.get(frameId)?.applyTypography(previous, next, context) ?? null;
 }
 
 export interface PaperRichEditorTypographyUpdate {
@@ -75,12 +93,13 @@ export function resolvePaperRichEditorTypographyUpdate(
   previous: PaperTypography,
   next: PaperTypography,
   currentRichText: PaperRichParagraph[] | undefined,
+  context?: PaperRichEditorCommitContext,
 ): PaperRichEditorTypographyUpdate | Promise<PaperRichEditorTypographyUpdate> {
   const fallback = (): PaperRichEditorTypographyUpdate => ({
     typography: next,
     richText: synchronizeRichTextWithTypographyChange(currentRichText, previous, next),
   });
-  const live = applyTypographyToActiveRichEditor(frameId, previous, next);
+  const live = applyTypographyToActiveRichEditor(frameId, previous, next, context);
   if (live && typeof (live as Promise<PaperRichEditorApplyResult | null>).then === 'function') {
     return (live as Promise<PaperRichEditorApplyResult | null>).then((result) => (result
       ? { typography: next, text: result.text, richText: result.richText }

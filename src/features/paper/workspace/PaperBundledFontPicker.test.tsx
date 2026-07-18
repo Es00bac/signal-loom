@@ -207,10 +207,10 @@ describe('PaperBundledFontPicker selection authority (FBL-025)', () => {
       await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
         fontFamily: 'Liberation Sans',
         fontWeight: '400',
-      })));
+      }), expect.any(Object), { id: 'installed-current-face' }));
     });
 
-    expect(mocks.addImportedFont).toHaveBeenCalledWith({ id: 'installed-current-face' });
+    expect(mocks.addImportedFont).not.toHaveBeenCalled();
     expect(host.textContent).toContain('Liberation Sans Regular pinned to this document');
     await act(async () => root.unmount());
   });
@@ -235,8 +235,7 @@ describe('PaperBundledFontPicker selection authority (FBL-025)', () => {
     await act(async () => {
       await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
     });
-    expect(mocks.addImportedFont).toHaveBeenNthCalledWith(1, { id: 'installed-first-face' });
-    expect(mocks.addImportedFont).toHaveBeenNthCalledWith(2, { id: 'installed-second-face' });
+    expect(mocks.addImportedFont).not.toHaveBeenCalled();
     await act(async () => root.unmount());
   });
 });

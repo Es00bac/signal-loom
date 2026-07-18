@@ -75,6 +75,27 @@ import type {
 } from '../types/paper';
 import { sanitizePaperSnapshotRecovery } from '../lib/paperSnapshotRecovery';
 
+/**
+ * Replace one exact family/weight/style/stretch/collection face without collapsing a neighbouring
+ * instance. Async font consumers use this same projection before authentication and at durable commit.
+ */
+export function replacePaperImportedFontFace(
+  fonts: readonly PaperImportedFont[] | undefined,
+  replacement: PaperImportedFont,
+): PaperImportedFont[] {
+  const kept = (fonts ?? []).filter(
+    (font) => !(
+      font.familyId === replacement.familyId
+      && font.weight === replacement.weight
+      && font.style === replacement.style
+      && canonicalPaperFontObliqueAngle(font.style, font.obliqueAngleDeg) === canonicalPaperFontObliqueAngle(replacement.style, replacement.obliqueAngleDeg)
+      && font.stretchPercent === replacement.stretchPercent
+      && font.collectionIndex === replacement.collectionIndex
+    ),
+  );
+  return [...kept, replacement];
+}
+
 interface PaperState {
   documents: PaperWorkspaceDocumentSnapshot[];
   /** Runtime-only identity for each open tab; regenerated when a tab is closed and reopened. */
@@ -167,6 +188,14 @@ interface PaperActions {
   splitPanelFrames: (pageId: string, start: PaperPoint, current: PaperPoint) => void;
   updateFrame: (pageId: string, frameId: string, patch: PaperFramePatch) => void;
   updateSelectedFrame: (patch: PaperFramePatch) => void;
+  /** Atomically pin a bundled face and apply typography to the exact Inspector target that initiated it. */
+  commitBundledFrameTypography: (target: {
+    document: PaperDocument;
+    page: PaperDocument['pages'][number];
+    frame: PaperFrame;
+    patch: PaperFramePatch;
+    importedFont: PaperImportedFont;
+  }) => boolean;
   redefineSelectedStyle: (kind: 'paragraph' | 'character' | 'object') => void;
   clearSelectedStyleLinks: () => void;
   clearSelectedStyleOverrides: () => void;
@@ -895,6 +924,29 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         set(withPaperHistory(state, { document }));
       },
 
+      commitBundledFrameTypography: (target) => {
+        const state = get();
+        // Object identities are deliberate: a reopened/replaced document, page, or same-ID frame is a
+        // different Inspector authority and must not be revived by an old exact-face authentication.
+        if (
+          state.document !== target.document
+          || state.selectedPageId !== target.page.id
+          || state.selectedFrameId !== target.frame.id
+        ) return false;
+        const page = state.document.pages.find((candidate) => candidate.id === target.page.id);
+        const frame = page?.frames.find((candidate) => candidate.id === target.frame.id);
+        if (page !== target.page || frame !== target.frame) return false;
+        const updated = updatePaperFrame(state.document, target.page.id, target.frame.id, target.patch);
+        if (updated === state.document) return false;
+        set(withPaperHistory(state, {
+          document: {
+            ...updated,
+            importedFonts: replacePaperImportedFontFace(updated.importedFonts, target.importedFont),
+          },
+        }));
+        return true;
+      },
+
       redefineSelectedStyle: (kind) => {
         const state = get();
         const page = state.document.pages.find((candidate) => candidate.id === state.selectedPageId);
@@ -939,20 +991,11 @@ export const usePaperStore = create<PaperState & PaperActions>()(
 
       addImportedFont: (font) =>
         set((state) => {
-          // Replace an exact family/weight/style/stretch face so re-importing updates in place without
-          // collapsing a neighbouring instance or an explicitly different collection face.
-          const kept = (state.document.importedFonts ?? []).filter(
-            (f) => !(
-              f.familyId === font.familyId
-              && f.weight === font.weight
-              && f.style === font.style
-              && canonicalPaperFontObliqueAngle(f.style, f.obliqueAngleDeg) === canonicalPaperFontObliqueAngle(font.style, font.obliqueAngleDeg)
-              && f.stretchPercent === font.stretchPercent
-              && f.collectionIndex === font.collectionIndex
-            ),
-          );
           return withPaperHistory(state, {
-            document: { ...state.document, importedFonts: [...kept, font] },
+            document: {
+              ...state.document,
+              importedFonts: replacePaperImportedFontFace(state.document.importedFonts, font),
+            },
           });
         }),
 
