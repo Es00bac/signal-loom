@@ -1,7 +1,11 @@
 import { useCallback, useState } from 'react';
 import { BundledFontBrowser, type BundledFontSelectionAuthority } from '../../../components/Common/BundledFontBrowser';
 import { installBundledPaperFontFace, type BundledFontFace, type BundledFontFamily } from '../../../lib/bundledFontLibrary';
-import { usePaperStore } from '../../../store/paperStore';
+import {
+  capturePaperInspectorStoreAuthority,
+  isPaperInspectorStoreAuthorityCurrent,
+  usePaperStore,
+} from '../../../store/paperStore';
 import type { PaperImportedFont, PaperManagedFontStyle, PaperTypography } from '../../../types/paper';
 import { paperAssetRepository } from '../assets/PaperAssetRuntime';
 import { paperFontStyleFromCss } from '../../../lib/paperExactManagedFonts';
@@ -71,10 +75,14 @@ export function PaperBundledFontFaceBrowser({
     authority: BundledFontSelectionAuthority,
   ) => {
     if (!authority.isCurrent()) return;
+    // Inspector defers every document mutation until its one atomic commit, so a store transition
+    // during face installation is always external and revokes this operation. The rich toolbar has
+    // its own live-editor transaction authority and may author intermediate state itself.
+    const storeAuthority = registerImportedFont ? undefined : capturePaperInspectorStoreAuthority();
     const installed = await installBundledPaperFontFace({ family, face, repository: paperAssetRepository });
     // Pinning bytes has its own async boundary. The browser could have moved to another
     // renderer bridge while it was in flight, so no document or notice state may publish.
-    if (!authority.isCurrent()) return;
+    if (!authority.isCurrent() || (storeAuthority && !isPaperInspectorStoreAuthorityCurrent(storeAuthority))) return;
     const committed = await onSelect(family, face, authority, installed);
     if (committed === false) return;
     if (!authority.isCurrent()) return;

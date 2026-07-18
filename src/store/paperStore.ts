@@ -123,6 +123,25 @@ interface PaperState {
   discardedDocumentRecoveries: PaperDiscardedDocumentRecovery[];
 }
 
+/**
+ * Opaque runtime authority captured around an async Paper Inspector operation. The generation is
+ * subscription-backed rather than persisted: every live document/selection authority transition
+ * advances it, including direct `setState` transitions that React may batch away.
+ */
+export interface PaperInspectorStoreAuthority {
+  readonly generation: number;
+}
+
+let paperInspectorStoreAuthorityGeneration = 0;
+
+export function capturePaperInspectorStoreAuthority(): PaperInspectorStoreAuthority {
+  return { generation: paperInspectorStoreAuthorityGeneration };
+}
+
+export function isPaperInspectorStoreAuthorityCurrent(authority: PaperInspectorStoreAuthority): boolean {
+  return authority.generation === paperInspectorStoreAuthorityGeneration;
+}
+
 interface PaperActions {
   undo: () => void;
   redo: () => void;
@@ -190,6 +209,7 @@ interface PaperActions {
   updateSelectedFrame: (patch: PaperFramePatch) => void;
   /** Atomically pin a bundled face and apply typography to the exact Inspector target that initiated it. */
   commitBundledFrameTypography: (target: {
+    authority: PaperInspectorStoreAuthority;
     document: PaperDocument;
     page: PaperDocument['pages'][number];
     frame: PaperFrame;
@@ -929,7 +949,8 @@ export const usePaperStore = create<PaperState & PaperActions>()(
         // Object identities are deliberate: a reopened/replaced document, page, or same-ID frame is a
         // different Inspector authority and must not be revived by an old exact-face authentication.
         if (
-          state.document !== target.document
+          !isPaperInspectorStoreAuthorityCurrent(target.authority)
+          || state.document !== target.document
           || state.selectedPageId !== target.page.id
           || state.selectedFrameId !== target.frame.id
         ) return false;
@@ -1321,6 +1342,24 @@ export const usePaperStore = create<PaperState & PaperActions>()(
     },
   ),
 );
+
+function samePaperFrameSelection(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((frameId, index) => frameId === right[index]);
+}
+
+usePaperStore.subscribe((state, previous) => {
+  // These are exactly the live inputs used by Inspector authority. Runtime/UI-only updates such as
+  // zoom, tool, clipboard, persistence bookkeeping, or background-tab metadata do not revoke it.
+  if (
+    state.activeDocumentId !== previous.activeDocumentId
+    || state.document !== previous.document
+    || state.selectedPageId !== previous.selectedPageId
+    || state.selectedFrameId !== previous.selectedFrameId
+    || !samePaperFrameSelection(state.selectedFrameIds, previous.selectedFrameIds)
+  ) {
+    paperInspectorStoreAuthorityGeneration += 1;
+  }
+});
 
 function sanitizePaperSnapshot(
   snapshot: unknown,

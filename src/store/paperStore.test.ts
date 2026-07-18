@@ -8,6 +8,8 @@ import type { SourceBinLibraryItem } from './sourceBinStore';
 import type { PaperImportedFont } from '../types/paper';
 import {
   capturePaperWorkspaceAuthorization,
+  capturePaperInspectorStoreAuthority,
+  isPaperInspectorStoreAuthorityCurrent,
   mergePersistedPaperWorkspace,
   projectPersistedPaperWorkspace,
   usePaperStore,
@@ -167,6 +169,34 @@ describe('paperStore boot baseline', () => {
     usePaperStore.getState().createNewDocument({ title: 'User-created unsaved layout' });
     expect(usePaperStore.getState().isDocumentDirty()).toBe(true);
     expect(usePaperStore.getState().isDocumentDirty(bootDocumentId)).toBe(false);
+  });
+});
+
+describe('paperStore Inspector authority epoch', () => {
+  beforeEach(resetPaperStore);
+
+  it('revokes every document and selection authority transition, even if a later state could reuse IDs', () => {
+    const expectRevokedBy = (transition: () => void) => {
+      resetPaperStore();
+      const authority = capturePaperInspectorStoreAuthority();
+      transition();
+      expect(isPaperInspectorStoreAuthorityCurrent(authority)).toBe(false);
+    };
+
+    expectRevokedBy(() => usePaperStore.setState((state) => ({ document: { ...state.document } })));
+    expectRevokedBy(() => usePaperStore.setState({ activeDocumentId: 'replacement-document-tab' }));
+    expectRevokedBy(() => usePaperStore.setState({ selectedPageId: 'replacement-page' }));
+    expectRevokedBy(() => usePaperStore.setState({ selectedFrameId: 'replacement-frame' }));
+    expectRevokedBy(() => usePaperStore.setState({ selectedFrameIds: ['secondary-selection'] }));
+  });
+
+  it('does not revoke Inspector authority for unrelated UI state or an equal selection projection', () => {
+    const authority = capturePaperInspectorStoreAuthority();
+    const selectedFrameIds = [...usePaperStore.getState().selectedFrameIds];
+
+    usePaperStore.setState({ zoom: 1.25, tool: 'hand', selectedFrameIds });
+
+    expect(isPaperInspectorStoreAuthorityCurrent(authority)).toBe(true);
   });
 });
 

@@ -357,6 +357,51 @@ describe('Paper Inspector bundled-font selection authority (FBL-025)', () => {
     unregister();
   });
 
+  it('cannot revive the exact original A object after an unrendered store A to B to A cycle', async () => {
+    let releaseAuthentication: (() => void) | undefined;
+    mocks.install.mockResolvedValue(installedFace);
+    mocks.authenticate.mockImplementation(() => new Promise<void>((resolve) => { releaseAuthentication = resolve; }));
+    const a = makeDocument('A', 'Original A rich text');
+    const b = makeDocument('B', 'B replacement with the same IDs');
+    const liveEditor = document.createElement('div');
+    liveEditor.dataset.fbl025LiveEditor = 'true';
+    liveEditor.textContent = 'Original A rich DOM';
+    document.body.append(liveEditor);
+    setStore(a);
+    const unregister = registerPaperRichEditorSession(a.pages[0].frames[0].id, {
+      applyTypography: async (_previous, _next, context) => {
+        await mocks.authenticate(context?.managedFonts?.at(-1));
+        if (!context?.authority?.isCurrent()) return null;
+        mocks.sessionCommit('revived exact A');
+        liveEditor.textContent = 'revived exact A rich DOM';
+        return { text: 'revived exact A', richText: [{ runs: [{ text: 'revived exact A' }] }] };
+      },
+    });
+    render(a);
+    await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Choose inspector authority font')?.click());
+    await act(async () => { await vi.waitFor(() => expect(mocks.authenticate).toHaveBeenCalledWith(installedFace)); });
+
+    // React may batch away both external transitions. The Inspector props, its local generation, and
+    // all final object identities therefore look exactly current again unless the store records that
+    // authority left A in between.
+    act(() => {
+      setStore(b);
+      setStore(a);
+    });
+    const historyBefore = structuredClone(usePaperStore.getState().undoStack);
+    await act(async () => releaseAuthentication?.());
+
+    expect(liveEditor.textContent).toBe('Original A rich DOM');
+    expect(usePaperStore.getState().document).toBe(a);
+    expect(usePaperStore.getState().document.importedFonts).toBeUndefined();
+    expect(usePaperStore.getState().document.pages[0].frames[0].typography.fontFamily).not.toBe(bundledFamily.family);
+    expect(usePaperStore.getState().undoStack).toEqual(historyBefore);
+    expect(mocks.sessionCommit).not.toHaveBeenCalled();
+    expect(mocks.showAlertDialog).not.toHaveBeenCalled();
+    unregister();
+  });
+
   it('suppresses the success notice when a no-live-editor commit loses the store target', async () => {
     let resolveInstall: ((font: PaperImportedFont) => void) | undefined;
     mocks.install.mockImplementation(() => new Promise<PaperImportedFont>((resolve) => { resolveInstall = resolve; }));

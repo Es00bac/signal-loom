@@ -63,7 +63,12 @@ import {
 import { useImageEditorStore } from '../../../store/imageEditorStore';
 import { useEditorStore } from '../../../store/editorStore';
 import { useDockablePanelStore } from '../../../store/dockablePanelStore';
-import { replacePaperImportedFontFace, usePaperStore } from '../../../store/paperStore';
+import {
+  capturePaperInspectorStoreAuthority,
+  isPaperInspectorStoreAuthorityCurrent,
+  replacePaperImportedFontFace,
+  usePaperStore,
+} from '../../../store/paperStore';
 import { ensurePaperImportedFontRegistered, PaperFontImportControl, useRegisterImportedFonts } from './PaperFontImport';
 import { PaperIccProfileManager, type PaperIccProfileManagerChange } from './PaperIccProfileManager';
 import { PaperManagedTextLayer } from './PaperManagedTextLayer';
@@ -11224,11 +11229,13 @@ export function PaperInspector({
   ) => {
     if (!frame) return false;
     const target = inspectorAuthority.current;
+    const storeAuthority = capturePaperInspectorStoreAuthority();
     const operationAuthority: PaperRichEditorCommitAuthority | undefined = bundledAuthority && installedFont
       ? {
           isCurrent: () => {
             if (
               !bundledAuthority.isCurrent()
+              || !isPaperInspectorStoreAuthorityCurrent(storeAuthority)
               || !target
               || inspectorAuthority.current !== target
               || inspectorGeneration.current !== target.generation
@@ -11258,6 +11265,7 @@ export function PaperInspector({
       if (operationAuthority && installedFont) {
         if (!operationAuthority.isCurrent()) return false;
         return commitBundledFrameTypography({
+          authority: storeAuthority,
           document: target!.document,
           page: target!.page,
           frame: target!.frame,

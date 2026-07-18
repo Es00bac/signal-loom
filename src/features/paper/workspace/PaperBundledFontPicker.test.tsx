@@ -58,6 +58,8 @@ vi.mock('../../../lib/bundledFontLibrary', async (importOriginal) => {
 });
 
 vi.mock('../../../store/paperStore', () => ({
+  capturePaperInspectorStoreAuthority: () => ({ generation: 0 }),
+  isPaperInspectorStoreAuthorityCurrent: () => true,
   usePaperStore: (selector: (state: { addImportedFont: typeof mocks.addImportedFont }) => unknown) => selector({ addImportedFont: mocks.addImportedFont }),
 }));
 
