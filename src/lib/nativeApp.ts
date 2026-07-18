@@ -695,6 +695,11 @@ export interface NativeWindowCaptureResult {
 export interface LocalUpscalerStatus {
   installed: boolean;
   running: boolean;
+  /** Managed desktop runtime identity. The persisted local-ai-cpu key is legacy compatibility only. */
+  backend?: 'realesrgan-ncnn-vulkan';
+  accelerator?: 'vulkan';
+  requiresVulkan?: true;
+  cpuFallback?: false;
   endpointUrl?: string;
   authHeader?: string;
   error?: string;

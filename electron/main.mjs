@@ -4277,6 +4277,10 @@ async function getLocalUpscalerStatus() {
   return {
     installed: existsSync(binaryPath),
     running,
+    backend: 'realesrgan-ncnn-vulkan',
+    accelerator: 'vulkan',
+    requiresVulkan: true,
+    cpuFallback: false,
     ...(running ? buildLocalUpscalerEndpoint(meta) : {}),
   };
 }

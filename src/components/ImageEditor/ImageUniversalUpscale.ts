@@ -205,7 +205,7 @@ export async function upscaleImageDocumentUniversal(input: UniversalImageUpscale
 
   if (isLocalCpuUpscalerConfigured(input.providerSettings)) {
     if (!input.localAiCpuUpscale) {
-      throw new Error('Local CPU AI upscaler is not available.');
+      throw new Error('Local Vulkan AI upscaler is not available.');
     }
 
     const documentToDataUrl = input.documentToDataUrl ?? imageDocumentToDataUrl;
@@ -226,11 +226,11 @@ export async function upscaleImageDocumentUniversal(input: UniversalImageUpscale
       document: replaceDocumentWithSingleUpscaledLayer(input.doc, bitmap, target.width, target.height, {
         idSuffix: 'cpu-upscale',
         metadataSourceFormat: 'local-cpu-upscale',
-        statusLabel: 'Local CPU AI',
+        statusLabel: 'Local Vulkan AI',
       }),
       provider: 'local-ai-cpu',
       estimatedCostUsd: 0,
-      statusMessage: `Upscaled "${input.doc.title}" to ${target.width} x ${target.height}px with local CPU AI upscaler.`,
+      statusMessage: `Upscaled "${input.doc.title}" to ${target.width} x ${target.height}px with the local Vulkan AI upscaler.`,
     };
   }
 
@@ -318,7 +318,7 @@ export function describeUniversalImageUpscaleProvider(provider: UniversalImageUp
     return 'Android native image upscaler';
   }
   if (provider === 'local-ai-cpu') {
-    return 'Local CPU AI upscaler';
+    return 'Local Vulkan AI upscaler';
   }
   if (isUniversalImageUpscaleCloudProvider(provider)) {
     return describeUniversalImageUpscaleWorkflow(provider).methodLabel;

@@ -10,7 +10,7 @@ import { buildBackendProxyExecuteRequest, shouldUseBackendProxy } from './backen
  *
  * Forwarding is consumption-based: a field is forwarded only when the flow-execution provider
  * paths actually read it. Fields consumed exclusively by client-side code — the Image-editor
- * generic adapter, the client-side auto-upscaler (local CPU / Android accelerator), the
+ * generic adapter, the client-side auto-upscaler (legacy local route / Android accelerator), the
  * client-native Vertex auth broker, and the client-side retry wrapper that also wraps proxy
  * calls — stay on this device.
  */

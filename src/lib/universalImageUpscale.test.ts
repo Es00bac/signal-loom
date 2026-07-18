@@ -54,6 +54,7 @@ describe('universalImageUpscale', () => {
     expect(describeUniversalImageUpscaleWorkflow('local-ai-cpu')).toMatchObject({
       provider: 'local-ai-cpu',
       family: 'local',
+      methodLabel: 'Local Vulkan AI upscaler',
       costUsd: 0,
       capabilities: {
         aiUpscale: true,
@@ -61,6 +62,7 @@ describe('universalImageUpscale', () => {
         requiresConfiguredEndpoint: true,
         usesCloudProvider: false,
       },
+      notes: ['Managed desktop runtime: Real-ESRGAN ncnn with Vulkan acceleration; no CPU fallback.'],
     });
     expect(describeUniversalImageUpscaleWorkflow('stability-fast')).toMatchObject({
       provider: 'stability-fast',

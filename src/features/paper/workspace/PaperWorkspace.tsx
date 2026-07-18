@@ -2895,7 +2895,7 @@ export function PaperWorkspace() {
           current: 1,
           total: 1,
         });
-        setStatus(`Submitting "${frame.asset!.label}" to the local CPU upscaler for ${request.targetWidthPx} x ${request.targetHeightPx}px @ ${document.page.dpi} DPI...`);
+        setStatus(`Submitting "${frame.asset!.label}" to the local Vulkan AI upscaler for ${request.targetWidthPx} x ${request.targetHeightPx}px @ ${document.page.dpi} DPI...`);
         return localAiBaseUpscale(request);
       }
       : undefined;
@@ -3008,7 +3008,7 @@ export function PaperWorkspace() {
         : result.provider === 'android-accelerator'
           ? 'with Android accelerator plus exact local DPI fit'
           : result.provider === 'local-ai-cpu'
-            ? 'with local CPU AI plus exact local DPI fit'
+            ? 'with local Vulkan AI plus exact local DPI fit'
             : 'with local browser scaling';
       const costLabel = result.estimatedCostUsd === undefined || result.estimatedCostUsd <= 0
         ? ''

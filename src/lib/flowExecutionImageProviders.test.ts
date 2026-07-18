@@ -408,7 +408,7 @@ describe('executeNodeRequest advanced image providers', () => {
     expect(acceptedBlob).toHaveBeenCalledTimes(2);
   });
 
-  it('auto-upscales generated Flow images with local CPU upscaler when configured', async () => {
+  it('auto-upscales generated Flow images with the configured legacy local route', async () => {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL')
       .mockReturnValueOnce('blob:stability-core')
       .mockReturnValueOnce('blob:stability-upscaled');

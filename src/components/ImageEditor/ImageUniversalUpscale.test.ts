@@ -242,7 +242,7 @@ describe('ImageUniversalUpscale', () => {
     expect(describeUniversalImageUpscaleProvider('android-accelerator')).toBe('Android accelerator: NPU/GPU upscaler');
     expect(describeUniversalImageUpscaleProvider('android-native')).toBe('Android native image upscaler');
     expect(describeUniversalImageUpscaleProvider('browser')).toBe('Local image resize');
-    expect(describeUniversalImageUpscaleProvider('local-ai-cpu')).toBe('Local CPU AI upscaler');
+    expect(describeUniversalImageUpscaleProvider('local-ai-cpu')).toBe('Local Vulkan AI upscaler');
     expect(describeUniversalImageUpscaleProvider('stability-fast')).toBe('Stability Fast Upscale');
     expect(describeUniversalImageUpscaleProvider('stability-conservative')).toBe('Stability Conservative Upscale');
     expect(describeUniversalImageUpscaleProvider('vertex-imagen')).toBe('Vertex Imagen Upscale');
@@ -431,7 +431,7 @@ describe('ImageUniversalUpscale', () => {
     expect(result.provider).toBe('browser');
   });
 
-  it('uses local CPU upscaler when configured and callback provided', async () => {
+  it('uses the legacy local route as a Vulkan upscaler when configured and callback provided', async () => {
     const doc = {
       ...createEmptyImageDocument({ id: 'doc-2', title: 'poster.png', width: 128, height: 100 }),
       layers: [makeLayer()],
@@ -477,7 +477,7 @@ describe('ImageUniversalUpscale', () => {
     });
     expect(result.document.layers[0]).toMatchObject({
       id: 'cpu-upscale-doc-2',
-      name: 'Local CPU AI upscale',
+      name: 'Local Vulkan AI upscale',
     });
   });
 

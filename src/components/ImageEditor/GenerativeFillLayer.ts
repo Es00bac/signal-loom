@@ -924,10 +924,10 @@ function describeGenerativeEditUpscaleRoutes(input: GenerativeEditReadinessInput
     {
       route: 'local-ai-cpu',
       available: Boolean(settings.localAiCpuEndpointUrl?.trim()),
-      label: 'Local CPU AI upscaler',
+      label: 'Local Vulkan AI upscaler',
       costLabel: 'Local endpoint route, no cloud cost.',
       blockers: settings.localAiCpuEndpointUrl?.trim() ? [] : ['missing-local-route'],
-      caveats: ['Runs on the configured local CPU upscaler endpoint and may be slow for large documents.'],
+      caveats: ['The managed desktop runtime requires a working Vulkan GPU/driver and has no CPU fallback; custom compatible endpoints may differ.'],
     },
     {
       route: 'cloud',
@@ -993,7 +993,7 @@ function describeGenerativeEditFallbackStates(
       available: localRoute?.available ?? provider.provider === 'localOpen',
       active: provider.routeKind === 'local',
       summary: localRoute?.available
-        ? 'Local CPU AI fallback is available if the Android accelerator route is unavailable or intentionally bypassed.'
+        ? 'Local Vulkan AI fallback is available if the Android accelerator route is unavailable or intentionally bypassed.'
         : 'Local endpoint fallback is not active; configure a Local/Open provider to keep the edit on-device or LAN.',
     },
   ];

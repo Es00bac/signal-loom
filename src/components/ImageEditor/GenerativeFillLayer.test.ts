@@ -678,10 +678,10 @@ describe('GenerativeFillLayer', () => {
       {
         route: 'local-ai-cpu',
         available: true,
-        label: 'Local CPU AI upscaler',
+        label: 'Local Vulkan AI upscaler',
         costLabel: 'Local endpoint route, no cloud cost.',
         blockers: [],
-        caveats: ['Runs on the configured local CPU upscaler endpoint and may be slow for large documents.'],
+        caveats: ['The managed desktop runtime requires a working Vulkan GPU/driver and has no CPU fallback; custom compatible endpoints may differ.'],
       },
       {
         route: 'cloud',
@@ -729,7 +729,7 @@ describe('GenerativeFillLayer', () => {
         routeKind: 'local',
         available: true,
         active: false,
-        summary: 'Local CPU AI fallback is available if the Android accelerator route is unavailable or intentionally bypassed.',
+        summary: 'Local Vulkan AI fallback is available if the Android accelerator route is unavailable or intentionally bypassed.',
       },
       {
         lane: 'cloud-fallback',

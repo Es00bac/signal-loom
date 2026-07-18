@@ -21,6 +21,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import runtimeContract from './runtime-contract.cjs';
+
+const {
+  buildManagedLocalUpscalerCapabilities,
+  classifyLocalUpscalerProcessFailure,
+} = runtimeContract;
 
 const args = parseArgs(process.argv.slice(2), process.env);
 
@@ -39,7 +45,11 @@ if (!args.bin || !existsSync(args.bin)) {
 
 const server = createServer((request, response) => {
   void handle(request, response).catch((error) => {
-    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+    sendJson(response, statusCode, {
+      error: error instanceof Error ? error.message : String(error),
+      ...(typeof error?.code === 'string' ? { code: error.code } : {}),
+    });
   });
 });
 
@@ -59,12 +69,10 @@ async function handle(request, response) {
 
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'GET' && url.pathname === '/v1/capabilities') {
-    sendJson(response, 200, {
-      ok: true,
-      service: 'signal-loom-local-upscaler',
-      device: Number.isFinite(args.gpu) && args.gpu >= 0 ? `gpu-${args.gpu}` : 'auto',
-      models: Object.keys(MODELS),
-    });
+    sendJson(response, 200, buildManagedLocalUpscalerCapabilities(
+      Number.isFinite(args.gpu) && args.gpu >= 0 ? `gpu-${args.gpu}` : 'auto',
+      Object.keys(MODELS),
+    ));
     return;
   }
 
@@ -139,7 +147,11 @@ function runBinary(inputPath, outputPath, modelFile) {
         resolve();
         return;
       }
-      reject(new Error(`realesrgan-ncnn-vulkan exited with code ${code}: ${stderr.slice(-400)}`));
+      const failure = classifyLocalUpscalerProcessFailure(code, stderr);
+      const error = new Error(failure.message);
+      error.code = failure.code;
+      error.statusCode = failure.statusCode;
+      reject(error);
     });
   });
 }

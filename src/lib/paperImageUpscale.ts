@@ -458,7 +458,7 @@ export function resolvePaperPrintUpscalePlan(input: {
         costLabel: 'Free after setup',
         usesLocalFinalFit: true,
         notes: [
-          'Auto will use the local CPU upscaler runtime because it is configured and has no cloud spend.',
+          'Auto will use the configured local Vulkan AI upscaler because it has no cloud spend.',
           'Sloom Studio will still do an exact local fit to the document DPI after the AI pass.',
         ],
       };
@@ -524,12 +524,12 @@ export function resolvePaperPrintUpscalePlan(input: {
       method,
       provider: 'local-ai-cpu',
       canRun: Boolean(input.localAiAvailable),
-      unavailableReason: input.localAiAvailable ? undefined : 'Local CPU AI upscaler runtime is not configured.',
+      unavailableReason: input.localAiAvailable ? undefined : 'Local Vulkan AI upscaler runtime is not configured.',
       estimatedCostUsd: 0,
       costLabel: 'Free after setup',
       usesLocalFinalFit: true,
       notes: [
-        'Runs locally on CPU only when the optional tiled upscaler runtime is installed.',
+        'The managed desktop runtime uses Real-ESRGAN ncnn with Vulkan acceleration and has no CPU fallback.',
         'Sloom Studio will still do an exact local fit to the document DPI after the AI pass.',
       ],
     };
@@ -629,7 +629,7 @@ export function describePaperPrintUpscaleBusyProvider(
   }
 
   if (provider === 'local-ai-cpu') {
-    return 'Local CPU AI upscaler';
+    return 'Local Vulkan AI upscaler';
   }
 
   return 'Preparing print upscaler';

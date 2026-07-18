@@ -351,7 +351,7 @@ describe('paperImageUpscale', () => {
     });
   });
 
-  it('prefers the local CPU upscaler in Auto when configured and Android is not available', () => {
+  it('prefers the configured local Vulkan upscaler in Auto when Android is not available', () => {
     const target = resolvePaperPrintUpscaleTarget(doc(300), frame({
       widthMm: 100,
       heightMm: 50,
@@ -372,6 +372,10 @@ describe('paperImageUpscale', () => {
       canRun: true,
       estimatedCostUsd: 0,
       usesLocalFinalFit: true,
+      notes: [
+        'Auto will use the configured local Vulkan AI upscaler because it has no cloud spend.',
+        'Sloom Studio will still do an exact local fit to the document DPI after the AI pass.',
+      ],
     });
   });
 

@@ -15,7 +15,7 @@ describe('normalizeLocalCpuUpscalerBaseUrl', () => {
 });
 
 describe('isLocalCpuUpscalerConfigured', () => {
-  it('checks if a valid local CPU upscaler URL is present', () => {
+  it('checks if a valid local AI upscaler URL is present', () => {
     expect(isLocalCpuUpscalerConfigured({ localAiCpuEndpointUrl: '' })).toBe(false);
     expect(isLocalCpuUpscalerConfigured({ localAiCpuEndpointUrl: 'http://127.0.0.1:8788/v1/upscale' })).toBe(true);
   });
@@ -45,7 +45,7 @@ describe('runLocalCpuUpscaler', () => {
     expect(result.mimeType).toBe('image/png');
   });
 
-  it('parses JSON base64 responses from local CPU upscalers', async () => {
+  it('parses JSON base64 responses from compatible local AI upscalers', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       image: 'c3VwZXJw',
       mimeType: 'image/png',

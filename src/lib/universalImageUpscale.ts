@@ -247,7 +247,7 @@ const UNIVERSAL_IMAGE_UPSCALE_WORKFLOW_DESCRIPTORS: readonly UniversalImageUpsca
   {
     provider: 'local-ai-cpu',
     family: 'local',
-    methodLabel: 'Local CPU AI upscaler',
+    methodLabel: 'Local Vulkan AI upscaler',
     costUsd: 0,
     costLabel: 'free',
     capabilities: {
@@ -260,7 +260,7 @@ const UNIVERSAL_IMAGE_UPSCALE_WORKFLOW_DESCRIPTORS: readonly UniversalImageUpsca
       runsInAndroidApp: false,
       usesCloudProvider: false,
     },
-    notes: ['Runs AI upscaling with a local CPU runtime endpoint.'],
+    notes: ['Managed desktop runtime: Real-ESRGAN ncnn with Vulkan acceleration; no CPU fallback.'],
     warnings: [FLATTENED_AI_UPSCALE_WARNING],
   },
   {
@@ -490,7 +490,7 @@ export function resolveUniversalConfiguredUpscalePlan(input: {
     return plan(method, 'android-accelerator', hasAndroid ? undefined : 'Android accelerator URL is not configured.');
   }
   if (method === 'local-ai-cpu') {
-    return plan(method, 'local-ai-cpu', hasLocalCpu ? undefined : 'Local CPU AI upscaler runtime is not configured.');
+    return plan(method, 'local-ai-cpu', hasLocalCpu ? undefined : 'Local Vulkan AI upscaler runtime is not configured.');
   }
   return plan(method, 'browser');
 }
@@ -911,7 +911,7 @@ function buildUniversalImageUpscaleBlocker(
     'upscaler-model-missing': 'Bundled upscaler model availability has not been proven.',
     'single-app-runtime-missing': 'The single-app Sloom Studio runtime path has not been proven.',
     'second-app-handoff-required': 'The current Android upscale path still depends on a second-app handoff.',
-    'local-cpu-runtime-missing': 'Local CPU AI upscaler runtime is not configured.',
+    'local-cpu-runtime-missing': 'Local Vulkan AI upscaler runtime is not configured.',
     'cloud-provider-missing': 'No configured cloud image upscaler fallback is available.',
   };
   return {
@@ -1023,7 +1023,7 @@ function plan(
       : provider === 'android-native'
         ? ['Runs inside the Android app with no provider spend.']
       : provider === 'local-ai-cpu'
-        ? ['Runs AI upscaling with a local CPU runtime endpoint.']
+        ? ['Managed desktop runtime: Real-ESRGAN ncnn with Vulkan acceleration; no CPU fallback.']
         : provider === 'browser'
           ? ['Runs as local browser scaling with no provider spend.']
           : [],

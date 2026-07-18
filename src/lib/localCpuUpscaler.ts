@@ -93,7 +93,7 @@ export async function runLocalCpuUpscaler(input: LocalCpuUpscalerInput): Promise
   if (!baseUrl) {
     const rawUrl = (input.baseUrl ?? '').trim();
     throw new Error(
-      `Local CPU AI upscaler URL is not usable: "${rawUrl}". ` +
+      `Local AI upscaler URL is not usable: "${rawUrl}". ` +
       'Use a LAN URL like "http://127.0.0.1:8788" or a port-only fallback ":8788".',
     );
   }
@@ -125,7 +125,7 @@ export async function runLocalCpuUpscaler(input: LocalCpuUpscalerInput): Promise
   } catch (error) {
     if (error instanceof Error && /failed to fetch/i.test(error.message)) {
       throw new Error(
-        `Could not connect to Local CPU AI upscaler at "${baseUrl}". ` +
+        `Could not connect to Local AI upscaler at "${baseUrl}". ` +
         'Confirm the local upscaler service is running and reachable.',
       );
     }
@@ -133,7 +133,7 @@ export async function runLocalCpuUpscaler(input: LocalCpuUpscalerInput): Promise
   }
 
   if (!response.ok) {
-    throw new Error(`Local CPU AI upscaler request failed (${response.status}): ${await response.text()}`);
+    throw new Error(`Local AI upscaler request failed (${response.status}): ${await response.text()}`);
   }
 
   return readLocalCpuUpscalerImageResult(response);
@@ -166,7 +166,7 @@ async function readLocalCpuUpscalerImageResult(response: Response): Promise<Loca
   const mimeType = json.mimeType ?? 'image/png';
   const dataUrl = json.dataUrl ?? (json.image ? `data:${mimeType};base64,${json.image}` : '');
   if (!dataUrl) {
-    throw new Error('Local CPU AI upscaler response missing image data.');
+    throw new Error('Local AI upscaler response missing image data.');
   }
   return {
     dataUrl,
@@ -181,7 +181,7 @@ async function readLocalCpuUpscalerJson<TValue>(response: Response): Promise<TVa
   try {
     return await response.json() as TValue;
   } catch (error) {
-    throw new Error(`Local CPU AI upscaler returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Local AI upscaler returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

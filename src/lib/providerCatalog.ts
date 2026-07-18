@@ -128,7 +128,7 @@ export const PAPER_PRINT_UPSCALE_METHOD_OPTIONS: SelectOption[] = [
   { value: 'stability-fast', label: 'Stability Fast (AI 4x, 2 credits / $0.02, then exact local fit)' },
   { value: 'stability-conservative', label: 'Stability Conservative (AI 4MP, 40 credits / $0.40, then exact local fit)' },
   { value: 'vertex-imagen', label: 'Vertex Imagen upscale when available' },
-  { value: 'local-ai-cpu', label: 'Local AI upscaler (one-click install; runs on this machine)' },
+  { value: 'local-ai-cpu', label: 'Local Vulkan AI upscaler (managed Real-ESRGAN; no CPU fallback)' },
   { value: 'local-browser', label: 'Local browser scaling only (free, no cloud call)' },
 ];
 
