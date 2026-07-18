@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addFrameToPaperPage, createDefaultPaperDocument } from './paperDocument';
 import { composePaperTextFrame, type PaperManagedFontResolver } from './paperTextComposition';
-import type { PaperManagedFontFace, PaperTextRun, PaperTypography } from '../types/paper';
+import type { PaperManagedFontFace, PaperRichParagraph, PaperTextRun, PaperTypography } from '../types/paper';
 import type { BinaryAssetRef } from '../shared/assets/contentAddressedAsset';
 import type { PaperTextShaper } from './paperTextShaper';
 
@@ -66,6 +66,7 @@ function composeFixture(
   typographyPatch: Partial<PaperTypography> = {},
   onShapeFeatures?: (features: Record<string, boolean | number>) => void,
   onShapeRequest?: (request: Parameters<PaperTextShaper['shape']>[0]) => void,
+  paragraphPatch: Omit<Partial<PaperRichParagraph>, 'runs'> = {},
 ) {
   let document = createDefaultPaperDocument({ title: 'Composition fixture' });
   const pageId = document.pages[0].id;
@@ -86,7 +87,7 @@ function composeFixture(
   const frame = {
     ...document.pages[0].frames[0],
     text: runs.map((run) => run.text).join(''),
-    richText: [{ runs }],
+    richText: [{ ...paragraphPatch, runs }],
     typography: {
       ...document.pages[0].frames[0].typography,
       fontFamily: 'Fixture Sans',
@@ -152,6 +153,58 @@ describe('composePaperTextFrame', () => {
     expect(shapedFeatures.every((features) => features.kern === false)).toBe(true);
   });
 
+  it('resolves mixed run kerning and numeric features before managed shaping', async () => {
+    const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
+    await composeFixture([
+      { text: '12', fontKerning: 'none', numericStyle: 'tabular' },
+      { text: '34', fontKerning: 'normal', numericStyle: 'oldstyle' },
+    ], { fontKerning: 'none', numericStyle: 'lining' }, undefined, (request) => requests.push(request));
+
+    const tabular = requests.find((request) => request.text === '12')?.features;
+    const oldstyle = requests.find((request) => request.text === '34')?.features;
+    expect(tabular).toEqual(expect.objectContaining({ kern: false, tnum: true }));
+    expect(tabular).not.toHaveProperty('lnum');
+    expect(oldstyle).toEqual(expect.objectContaining({ kern: true, onum: true }));
+    expect(oldstyle).not.toHaveProperty('lnum');
+  });
+
+  it('uses paragraph and mixed-run leading in measurable shared line geometry', async () => {
+    const paragraphLeading = await composeFixture(
+      [{ text: 'Paragraph leading' }],
+      { leadingPt: 14 },
+      undefined,
+      undefined,
+      { leadingPt: 22 },
+    );
+    const mixedRunLeading = await composeFixture(
+      [{ text: 'Base ' }, { text: 'tall', leadingPt: 31 }],
+      { leadingPt: 14 },
+      undefined,
+      undefined,
+      { leadingPt: 22 },
+    );
+
+    expect(paragraphLeading.lines[0].layoutBounds?.heightPt).toBeCloseTo(22);
+    expect(mixedRunLeading.lines[0].layoutBounds?.heightPt).toBeCloseTo(31);
+    expect(mixedRunLeading.lines[0].originYPt).toBeGreaterThan(paragraphLeading.lines[0].originYPt);
+  });
+
+  it('uses paragraph alignLast for the final line of justified managed text', async () => {
+    const composed = await composeFixture(
+      [{ text: 'Centered final line' }],
+      { align: 'justify', alignLast: 'left' },
+      undefined,
+      undefined,
+      { alignLast: 'center' },
+    );
+
+    expect(composed.lines).toHaveLength(1);
+    expect(composed.lines[0].originXPt).toBeGreaterThan(composed.bounds.xPt);
+    expect(composed.lines[0].originXPt - composed.bounds.xPt).toBeCloseTo(
+      (composed.bounds.widthPt - composed.lines[0].widthPt) / 2,
+    );
+  });
+
   it('passes retained optical-size coordinates through deterministic HarfBuzz measurement and shaping', async () => {
     const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
     await composeFixture([{ text: 'Optical proof', fontVariationSettings: { opsz: 18 } }], {}, undefined, (request) => requests.push(request));
@@ -191,6 +244,45 @@ describe('composePaperTextFrame', () => {
     expect(composed.lines.length).toBeGreaterThanOrEqual(2);
     expect(composed.lines[1].originXPt).toBeLessThan(composed.lines[0].originXPt);
     expect(composed.lines.every((line) => !/^[、。」]/.test(line.text))).toBe(true);
+  });
+
+  it('lets paragraph strictness override the frame for managed Japanese line breaking', async () => {
+    let document = createDefaultPaperDocument({ title: 'Paragraph kinsoku fixture' });
+    const pageId = document.pages[0].id;
+    const added = addFrameToPaperPage(document, pageId, {
+      id: 'paragraph-kinsoku-frame',
+      kind: 'text',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 30,
+      heightMm: 8,
+    });
+    document = { ...added.document, importedFonts: [face(400)] };
+    const text = '花花花花、記';
+    const base = {
+      ...document.pages[0].frames[0],
+      text,
+      typography: {
+        ...document.pages[0].frames[0].typography,
+        fontFamily: 'Fixture Sans',
+        fontSizePt: 10,
+        leadingPt: 11,
+        writingMode: 'vertical-rl' as const,
+      },
+    };
+    const relaxed = await composePaperTextFrame({
+      ...base,
+      typography: { ...base.typography, lineBreakStrict: true },
+      richText: [{ runs: [{ text }], lineBreakStrict: false }],
+    }, document, async () => fixtureShaper());
+    const strict = await composePaperTextFrame({
+      ...base,
+      typography: { ...base.typography, lineBreakStrict: false },
+      richText: [{ runs: [{ text }], lineBreakStrict: true }],
+    }, document, async () => fixtureShaper());
+
+    expect(relaxed.lines.some((line) => line.text.startsWith('、'))).toBe(true);
+    expect(strict.lines.every((line) => !line.text.startsWith('、'))).toBe(true);
   });
 
   it('records a missing exact face instead of substituting a browser font', async () => {

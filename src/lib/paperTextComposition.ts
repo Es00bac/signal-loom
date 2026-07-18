@@ -134,6 +134,7 @@ interface ResolvedStyle {
   face: PaperManagedFontFace;
   shaper: PaperTextShaper;
   fontSizePt: number;
+  leadingPt: number;
   trackingPt: number;
   color: PaperPrintPaintSource;
   direction: 'ltr' | 'rtl' | 'ttb';
@@ -182,6 +183,8 @@ interface CompositionParagraph {
   shading?: string;
   dropCapLines: number;
   alignLast: PaperTextAlignLast;
+  leadingPt: number;
+  lineBreakStrict: boolean;
 }
 
 interface ShapedGroup {
@@ -270,11 +273,12 @@ function hasStrongScript(text: string): boolean {
 }
 
 function paperFeatures(typography: PaperTypography, run: PaperTextRun, vertical: boolean): Record<string, boolean | number> {
-  const features: Record<string, boolean | number> = { kern: typography.fontKerning !== 'none', liga: true };
+  const features: Record<string, boolean | number> = { kern: (run.fontKerning ?? typography.fontKerning) !== 'none', liga: true };
+  const numericStyle = run.numericStyle ?? typography.numericStyle;
   if (typography.smallCaps || run.smallCaps) features.smcp = true;
-  if (typography.numericStyle === 'oldstyle') features.onum = true;
-  if (typography.numericStyle === 'lining') features.lnum = true;
-  if (typography.numericStyle === 'tabular') features.tnum = true;
+  if (numericStyle === 'oldstyle') features.onum = true;
+  if (numericStyle === 'lining') features.lnum = true;
+  if (numericStyle === 'tabular') features.tnum = true;
   if (vertical) {
     features.vert = true;
     features.vrt2 = true;
@@ -286,6 +290,7 @@ function styleKey(input: Omit<ResolvedStyle, 'key'>): string {
   return [
     input.face.id,
     input.fontSizePt,
+    input.leadingPt,
     input.trackingPt,
     input.color.color,
     input.color.swatchId ?? '',
@@ -337,7 +342,9 @@ function sourcePaint(typography: PaperTypography, run: PaperTextRun): PaperPrint
 }
 
 function lineHeightFor(units: readonly CompositionUnit[], fallback: number): number {
-  const largest = units.reduce((largestSize, unit) => Math.max(largestSize, unit.dropCap ? 0 : unit.style.fontSizePt), 0);
+  const largest = units.reduce((largestSize, unit) => (
+    Math.max(largestSize, unit.dropCap ? 0 : unit.style.fontSizePt, unit.dropCap ? 0 : unit.style.leadingPt)
+  ), 0);
   return Math.max(fallback, largest || fallback);
 }
 
@@ -866,6 +873,7 @@ function emptyResult(
 async function resolveStyle(
   typography: PaperTypography,
   run: PaperTextRun,
+  paragraphLeadingPt: number,
   vertical: boolean,
   importedFonts: readonly PaperManagedFontFace[] | undefined,
   fontResolver: PaperManagedFontResolver,
@@ -909,6 +917,7 @@ async function resolveStyle(
     face: selection.face,
     shaper,
     fontSizePt,
+    leadingPt: finitePositive(run.leadingPt, paragraphLeadingPt),
     trackingPt: fontSizePt * (run.tracking ?? typography.tracking ?? 0) / 1000,
     color: sourcePaint(typography, run),
     direction: script.direction,
@@ -943,6 +952,10 @@ async function buildParagraphs(
       // stores a tab at the same UTF-16 width, so caret/source offsets remain stable while geometry matches.
       ? [{ text: `${paragraph.listMarker}\u2003` } as PaperTextRun, ...paragraph.runs]
       : paragraph.runs;
+    const paragraphLeadingPt = finitePositive(
+      paragraph.leadingPt,
+      finitePositive(frame.typography.leadingPt, frame.typography.fontSizePt),
+    );
     for (const run of effectiveRuns) {
       const runStart = sourceOffset;
       const runEnd = sourceOffset + run.text.length;
@@ -950,7 +963,16 @@ async function buildParagraphs(
         sourceOffset = runEnd;
         continue;
       }
-      const resolved = await resolveStyle(frame.typography, run, vertical, importedFonts, fontResolver, runStart, runEnd);
+      const resolved = await resolveStyle(
+        frame.typography,
+        run,
+        paragraphLeadingPt,
+        vertical,
+        importedFonts,
+        fontResolver,
+        runStart,
+        runEnd,
+      );
       if (!resolved.style) {
         if (resolved.missing) missingFaces.push(resolved.missing);
         sourceOffset = runEnd;
@@ -1014,7 +1036,9 @@ async function buildParagraphs(
       borders: paragraph.borders,
       shading: paragraph.shading,
       dropCapLines,
-      alignLast: frame.typography.alignLast ?? 'auto',
+      alignLast: paragraph.alignLast ?? frame.typography.alignLast ?? 'auto',
+      leadingPt: paragraphLeadingPt,
+      lineBreakStrict: paragraph.lineBreakStrict ?? frame.typography.lineBreakStrict ?? vertical,
     });
     sourceOffset += 1;
   }
@@ -1051,15 +1075,14 @@ export async function composePaperTextFrame(
   const lines: PaperComposedTextLine[] = [];
   const missingGlyphs: Array<{ codePoint: number; faceId: string }> = [];
   const emphasisMarks: PaperComposedEmphasisMark[] = [];
-  const strict = frame.typography.lineBreakStrict ?? writingMode === 'vertical-rl';
   let overset = false;
 
   if (writingMode === 'vertical-rl') {
     let originXPt = bounds.xPt + bounds.widthPt - finitePositive(frame.typography.fontSizePt, 10);
     for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
-      const draftLines = wrapUnits(paragraph.units, bounds.heightPt, unitMeasure, strict, true);
+      const draftLines = wrapUnits(paragraph.units, bounds.heightPt, unitMeasure, paragraph.lineBreakStrict, true);
       for (const [index, units] of draftLines.entries()) {
-        const lineHeight = lineHeightFor(units, finitePositive(frame.typography.leadingPt, frame.typography.fontSizePt));
+        const lineHeight = lineHeightFor(units, paragraph.leadingPt);
         if (originXPt < bounds.xPt - lineHeight) overset = true;
         const line = positionVerticalLine({ units, paragraph, isParagraphEnd: index === draftLines.length - 1 }, originXPt, bounds.yPt + paragraph.spaceBeforePt, caretMap);
         line.paragraphIndex = paragraphIndex;
@@ -1085,13 +1108,13 @@ export async function composePaperTextFrame(
         paragraph.units,
         (lineIndex) => Math.max(0, baseWidth - lineOffsetPt(paragraph, lineIndex, dropCapReserve)),
         unitMeasure,
-        strict,
+        paragraph.lineBreakStrict,
       );
       for (const [index, units] of provisional.entries()) {
         const offsetPt = lineOffsetPt(paragraph, index, dropCapReserve);
         const insetPt = paragraph.leftIndentPt + offsetPt;
         const availablePt = Math.max(0, baseWidth - offsetPt);
-        const lineHeight = lineHeightFor(units, finitePositive(frame.typography.leadingPt, frame.typography.fontSizePt));
+        const lineHeight = lineHeightFor(units, paragraph.leadingPt);
         const isLastLine = index === provisional.length - 1;
         const bottomPadding = isLastLine ? paragraph.borderPaddingPt : 0;
         if (cursorYPt + lineHeight + bottomPadding > bounds.yPt + bounds.heightPt && lines.length > 0) {
