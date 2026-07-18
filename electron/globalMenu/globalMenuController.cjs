@@ -136,8 +136,8 @@ function createGlobalMenuController(options = {}) {
     try { entry.iface.LayoutUpdated(revision >>> 0, 0); } catch (err) { log('global-menu: LayoutUpdated threw', String(err)); }
   }
 
-  /** Rebuild every window's menu (e.g. after the user remapped keyboard shortcuts). */
-  function refreshShortcuts() {
+  /** Rebuild every window's menu after any process-owned menu input changes. */
+  function refresh() {
     revision += 1;
     for (const xid of windows.keys()) emitLayoutUpdated(xid);
   }
@@ -174,7 +174,9 @@ function createGlobalMenuController(options = {}) {
     registerWindow,
     unregisterWindow,
     setWindowWorkspace,
-    refreshShortcuts,
+    refresh,
+    // Compatibility alias for existing shortcut-only callers.
+    refreshShortcuts: refresh,
     stop,
     getState: () => ({
       supported,

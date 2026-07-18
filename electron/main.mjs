@@ -23,6 +23,7 @@ import globalMenuControllerModule from './globalMenu/globalMenuController.cjs';
 import x11WindowIdModule from './globalMenu/x11WindowId.cjs';
 import panelMenuServiceModule from './globalMenu/panelMenuService.cjs';
 import bundledFontLibraryModule from './bundled-font-library.cjs';
+import interfaceLocaleAuthorityModule from './interface-locale-authority.cjs';
 
 const { createApplicationMenuTemplate, SIGNAL_LOOM_MENU_COMMANDS } = menuModule;
 const {
@@ -110,6 +111,7 @@ const { createGlobalMenuController } = globalMenuControllerModule;
 const { resolveX11WindowId } = x11WindowIdModule;
 const { createPanelMenuService } = panelMenuServiceModule;
 const { resolveBundledFontLibraryRoot, resolveBundledFontResourcePath } = bundledFontLibraryModule;
+const { createInterfaceLocaleAuthority } = interfaceLocaleAuthorityModule;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(__dirname, '..');
@@ -146,10 +148,6 @@ let resolvedBundledFontLibraryRoot;
 const rendererAuthorityEpochs = new Map();
 let activeWorkspace = 'flow';
 let keyboardShortcuts = {};
-// Interface language for menu labels (mirrors the renderer's settingsStore.locale, pushed over IPC).
-// The native in-window menu, the KDE global menu, and the panel menu all read this so their labels
-// track the app's language setting; defaults to English until the renderer reports its locale.
-let appLocale = 'en';
 // Lazily-created KDE Plasma global-menu controller (opt-in; null when unsupported/disabled). It
 // exports each workspace window's menu over DBus, fully decoupled from the GPU/render process.
 let globalMenuController = null;
@@ -157,6 +155,11 @@ let globalMenuController = null;
 // null when unsupported). Unlike the global-menu controller it needs no X11 window id, so it does NOT
 // force XWayland — the app keeps its native-Wayland GPU surface while the menu shows in the panel.
 let panelMenuService = null;
+// Electron owns the one application-wide interface preference. Renderers seed/update it through a
+// revision-checked protocol and all adopt its broadcast; window focus/close never transfers it.
+const interfaceLocaleAuthority = createInterfaceLocaleAuthority({
+  onChange: publishInterfaceLocaleChange,
+});
 let sourceLibraryVersion = 0;
 let sourceLibrarySnapshot = createEmptySourceLibrarySnapshot();
 const nativeAssetCapabilityRegistry = createNativeAssetCapabilityRegistry();
@@ -528,6 +531,26 @@ function broadcastProjectAuthorityChanged(event) {
   }
   // Legacy display listeners keep receiving the bare path alongside the versioned event.
   broadcastProjectPathChanged();
+}
+
+function broadcastInterfaceLocaleChanged(state) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      try { window.webContents.send('signal-loom:interface-locale-changed', state); } catch {}
+    }
+  }
+}
+
+function publishInterfaceLocaleChange(state, change) {
+  // This is the only locale-driven menu rebuild path. Choosing the already-visible language still
+  // broadcasts `localeChosen` so every first-run gate converges, but it does not rebuild identical
+  // menu trees. Idempotent/stale requests never reach this callback at all.
+  if (change?.localeChanged) {
+    installApplicationMenu();
+    globalMenuController?.refresh();
+    panelMenuService?.refresh();
+  }
+  broadcastInterfaceLocaleChanged(state);
 }
 
 function getRendererAuthorityEpoch(webContentsId) {
@@ -1369,7 +1392,7 @@ function menuForWorkspace(workspace) {
     isMac: process.platform === 'darwin',
     activeWorkspace: workspace,
     keyboardShortcuts,
-    locale: appLocale,
+    locale: interfaceLocaleAuthority.getCurrent().locale,
     sendCommand: sendRendererCommand,
   }));
 }
@@ -1427,7 +1450,7 @@ function getGlobalMenuController() {
       sendRendererCommand(command);
     },
     getKeyboardShortcuts: () => keyboardShortcuts,
-    getLocale: () => appLocale,
+    getLocale: () => interfaceLocaleAuthority.getCurrent().locale,
     isMac: process.platform === 'darwin',
     // The controller only runs when the global menu is explicitly opted in, so always surface its
     // lifecycle (bus connect, registrar round-trip, Plasma adoption) — not just in dev builds.
@@ -1452,7 +1475,7 @@ function getPanelMenuService() {
     },
     getActiveWorkspace: () => activeWorkspace,
     getKeyboardShortcuts: () => keyboardShortcuts,
-    getLocale: () => appLocale,
+    getLocale: () => interfaceLocaleAuthority.getCurrent().locale,
     isMac: process.platform === 'darwin',
     // Best-effort identity hints for the applet (StartupWMClass varies between our two .desktop files).
     appIdHints: ['signal-loom', 'Sloom Studio', 'signalloom', 'studio.sloom.signalloom'],
@@ -3239,6 +3262,7 @@ function installIpcHandlers() {
       startupProject,
       startupProjectRecovery,
       reopenLastProjectOnStartup,
+      interfaceLocale: interfaceLocaleAuthority.getCurrent(),
       workspace: window ? getWorkspaceForWindow(window) ?? activeWorkspace : activeWorkspace,
       platform: process.platform,
       isDev,
@@ -4079,16 +4103,8 @@ function installIpcHandlers() {
     return { ok: true };
   });
 
-  ipcMain.handle('signal-loom:set-locale', async (_event, locale) => {
-    // Mirror the renderer's interface-language setting into the native + KDE menus. Rebuilding the
-    // in-window menu is immediate; the global/panel menus re-read their model on the next fetch, so a
-    // revision bump + re-emit (refresh) is all Plasma needs to pick up the new labels. No-op when off.
-    appLocale = locale === 'ja' ? 'ja' : 'en';
-    installApplicationMenu();
-    globalMenuController?.refreshShortcuts();
-    panelMenuService?.refresh();
-
-    return { ok: true };
+  ipcMain.handle('signal-loom:set-locale', async (_event, request) => {
+    return interfaceLocaleAuthority.update(request);
   });
 
   ipcMain.handle('signal-loom:source-library-get-snapshot', async (event, request) => {

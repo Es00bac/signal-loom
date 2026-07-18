@@ -10,7 +10,11 @@ import type { CSSProperties, ChangeEvent, MouseEvent as ReactMouseEvent } from '
 import '@xyflow/react/dist/style.css';
 
 import { useCatalogStore } from './store/catalogStore';
-import { installLicenseCrossWindowSync, useSettingsStore } from './store/settingsStore';
+import {
+  installLicenseCrossWindowSync,
+  subscribeSettingsLocaleIntent,
+  useSettingsStore,
+} from './store/settingsStore';
 import { describeLicenseEdition } from './lib/licenseKey';
 import { useConfirmationStore } from './store/confirmationStore';
 import { showAlertDialog } from './store/alertDialogStore';
@@ -269,6 +273,7 @@ import {
 } from './store/mobileInterfaceStore';
 import { useMobilePhoneInterfaceDescriptor } from './lib/mobilePhoneInterface';
 import { shouldShowSharedWorkspacePanels } from './lib/sharedWorkspacePanelVisibility';
+import { createNativeLocaleSyncController } from './lib/nativeLocaleSync';
 
 import './index.css';
 
@@ -409,6 +414,30 @@ function FlowApp() {
   // AUD-015: a license removal/activation/import in another window rehydrates and re-verifies
   // this renderer too, so every window fail-closes — or unlocks — together.
   useEffect(() => installLicenseCrossWindowSync(), []);
+  const settingsHydrated = useSettingsStore((state) => state.settingsHydrated);
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    const bridge = getSignalLoomNativeBridge();
+    if (!bridge?.setLocale || !bridge.onInterfaceLocaleChanged) return;
+
+    const controller = createNativeLocaleSyncController({
+      bridge: {
+        getNativeState: bridge.getNativeState,
+        setLocale: bridge.setLocale,
+        onInterfaceLocaleChanged: bridge.onInterfaceLocaleChanged,
+      },
+      getLocalPreference: () => {
+        const state = useSettingsStore.getState();
+        return { locale: state.locale, localeChosen: state.localeChosen };
+      },
+      applyAuthoritativePreference: (preference) => {
+        useSettingsStore.setState(preference);
+      },
+      subscribeLocalIntent: subscribeSettingsLocaleIntent,
+    });
+    void controller.start();
+    return () => controller.stop();
+  }, [settingsHydrated]);
   const defaultModels = useSettingsStore((state) => state.defaultModels);
   const providerSettings = useSettingsStore((state) => state.providerSettings);
   const interfaceThemeId = useSettingsStore((state) => state.interfaceThemeId);
@@ -2750,13 +2779,6 @@ function FlowApp() {
     if (!bridge?.setKeyboardShortcuts) return;
     void bridge.setKeyboardShortcuts(keyboardShortcuts);
   }, [keyboardShortcuts]);
-
-  useEffect(() => {
-    const bridge = getSignalLoomNativeBridge();
-    if (!bridge?.setLocale) return;
-    // Keep the native + KDE menus' language in sync with the interface-language setting.
-    void bridge.setLocale(locale);
-  }, [locale]);
 
   const placeSourceBinItemOnFlow = useCallback((item: SourceBinLibraryItem, position: { x: number; y: number }) => {
     const type = getFlowNodeTypeForSourceBinItem(item);

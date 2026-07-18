@@ -383,6 +383,31 @@ interface SettingsState {
   settingsHydrated: boolean;
 }
 
+export interface SettingsLocaleIntent {
+  locale: AppLocale;
+  localeChosen: boolean;
+}
+
+const settingsLocaleIntentListeners = new Set<(intent: SettingsLocaleIntent) => void>();
+
+function publishSettingsLocaleIntent(intent: SettingsLocaleIntent): void {
+  for (const listener of settingsLocaleIntentListeners) {
+    try {
+      listener({ ...intent });
+    } catch {
+      // A renderer integration listener cannot make a settings action fail.
+    }
+  }
+}
+
+/** Explicit user/import locale intents only. Hydration and native adoption do not emit here. */
+export function subscribeSettingsLocaleIntent(
+  listener: (intent: SettingsLocaleIntent) => void,
+): () => void {
+  settingsLocaleIntentListeners.add(listener);
+  return () => settingsLocaleIntentListeners.delete(listener);
+}
+
 type PortableSettingsBackupField = keyof Omit<SettingsBackupData, 'schemaVersion'>;
 
 /**
@@ -1113,7 +1138,11 @@ export const useSettingsStore = create<SettingsState>()(
         set({ appMenuStyle: style === 'menubar' ? 'menubar' : 'compact' }),
       setInterfaceDensity: (density) =>
         set({ interfaceDensity: density === 'comfortable' ? 'comfortable' : 'compact' }),
-      setLocale: (locale) => set({ locale: normalizeLocale(locale), localeChosen: true }),
+      setLocale: (locale) => {
+        const intent = { locale: normalizeLocale(locale), localeChosen: true };
+        set(intent);
+        publishSettingsLocaleIntent(intent);
+      },
       setKeyboardShortcut: (command, shortcut) =>
         set((state) => ({
           keyboardShortcuts: sanitizeKeyboardShortcutMap({
@@ -1221,6 +1250,9 @@ export const useSettingsStore = create<SettingsState>()(
         const generation = claimLicenseIdentityGeneration();
         armLicenseSyncBroadcast();
         set((current) => mergeSettingsBackupData(current, data));
+        if (hasOwnField(data, 'locale') || hasOwnField(data, 'localeChosen')) {
+          publishSettingsLocaleIntent({ locale: get().locale, localeChosen: get().localeChosen });
+        }
         await get().revalidateLicense();
         if (!isCurrentLicenseIdentityGeneration(generation)) {
           return { licensed: false, status: 'superseded', reason: 'A newer settings operation superseded this import.' };

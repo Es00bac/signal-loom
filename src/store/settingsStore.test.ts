@@ -11,6 +11,7 @@ import {
   redactApiKeysForExport,
   redactApiKeysForUi,
   sanitizePersistedApiKeys,
+  subscribeSettingsLocaleIntent,
   useSettingsStore,
 } from './settingsStore';
 
@@ -356,6 +357,17 @@ describe('settingsStore interface language', () => {
 
     useSettingsStore.getState().setLocale('bogus' as never);
     expect(useSettingsStore.getState().locale).toBe(fallback);
+  });
+
+  it('publishes explicit locale actions but not authoritative direct-store adoption', () => {
+    const intents: Array<{ locale: string; localeChosen: boolean }> = [];
+    const unsubscribe = subscribeSettingsLocaleIntent((intent) => intents.push(intent));
+
+    useSettingsStore.getState().setLocale('ja');
+    useSettingsStore.setState({ locale: 'en', localeChosen: true });
+    unsubscribe();
+
+    expect(intents).toEqual([{ locale: 'ja', localeChosen: true }]);
   });
 
   it('rehydrates only known locales through the persist merge', () => {

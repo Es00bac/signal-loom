@@ -263,6 +263,8 @@ export interface NativeState {
   startupProjectRecovery?: NativeStartupProjectRecovery;
   /** Opt-in only: a normal desktop launch starts with a blank project. */
   reopenLastProjectOnStartup?: boolean;
+  /** Electron-process-owned interface language adopted by every desktop renderer (FBL-033). */
+  interfaceLocale?: NativeInterfaceLocaleState;
   workspace?: WorkspaceWindowView;
   platform: string;
   isDev: boolean;
@@ -270,6 +272,26 @@ export interface NativeState {
   projectAuthority?: NativeProjectAuthorityDescriptor;
   /** This window's own webContents id, used to ignore self-initiated authority broadcasts. */
   webContentsId?: number;
+}
+
+export interface NativeInterfaceLocaleState {
+  owner: 'electron-main';
+  locale: 'en' | 'ja';
+  localeChosen: boolean;
+  revision: number;
+}
+
+export interface NativeInterfaceLocaleUpdateRequest {
+  locale: NativeInterfaceLocaleState['locale'];
+  localeChosen: boolean;
+  expectedRevision: number;
+}
+
+export interface NativeInterfaceLocaleUpdateResult {
+  ok: boolean;
+  changed: boolean;
+  rejected?: 'invalid-request' | 'stale-revision';
+  current: NativeInterfaceLocaleState;
 }
 
 export type NativeStartupProjectFailureCode =
@@ -812,8 +834,8 @@ export interface SignalLoomNativeBridge {
   openWorkspaceWindow: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean; workspace?: WorkspaceWindowView; error?: string }>;
   setActiveWorkspace: (workspace: WorkspaceWindowView) => Promise<{ ok?: boolean }>;
   setKeyboardShortcuts: (shortcuts: Partial<Record<NativeMenuCommand, string>>) => Promise<{ ok?: boolean }>;
-  // Push the interface language ('en' | 'ja') so the native + KDE menus translate their labels.
-  setLocale?: (locale: string) => Promise<{ ok?: boolean }>;
+  // Propose a revision-checked interface preference to the Electron process owner (FBL-033).
+  setLocale?: (request: NativeInterfaceLocaleUpdateRequest) => Promise<NativeInterfaceLocaleUpdateResult>;
   getSourceLibrarySnapshot: (request: { claim: NativeProjectAuthorityDescriptor }) => Promise<SourceLibraryNativeSnapshotResponse>;
   syncSourceLibrarySnapshot: (request: { snapshot: SourceLibraryNativeSnapshotResult['snapshot']; claim: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
   applySourceLibraryChange: (request: { change: SourceLibraryNativeChange; claim: NativeProjectAuthorityDescriptor }) => Promise<{ ok?: boolean; version?: number; error?: string }>;
@@ -837,6 +859,8 @@ export interface SignalLoomNativeBridge {
   onProjectPathChanged: (callback: (filePath: string | undefined) => void) => () => void;
   /** Versioned project identity changes; drives adoption/stale-marking in every window. */
   onProjectAuthorityChanged?: (callback: (event: NativeProjectAuthorityChangedEvent) => void) => () => void;
+  /** Process-owned locale changes; every desktop renderer adopts the same revision. */
+  onInterfaceLocaleChanged?: (callback: (state: NativeInterfaceLocaleState) => void) => () => void;
   onSourceLibraryChanged: (callback: (event: SourceLibraryNativeEvent) => void) => () => void;
 }
 
