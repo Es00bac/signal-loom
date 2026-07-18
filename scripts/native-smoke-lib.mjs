@@ -975,6 +975,9 @@ export function buildNativeRealProjectSmokePaths(rootDir, projectPath) {
 export function buildNativeRealProjectStartupState(projectPath, { now = new Date().toISOString() } = {}) {
   return `${JSON.stringify({
     currentProjectPath: projectPath,
+    // The real-project harness explicitly tests startup restoration. Production remains blank by
+    // default; this isolated profile opts in so the harness exercises the intended branch.
+    reopenLastProjectOnStartup: true,
     updatedAt: now,
   }, null, 2)}\n`;
 }

@@ -68,12 +68,22 @@ describe('Electron main process source guards', () => {
     expect(source).toMatch(/async function writeProjectDocument[\s\S]*buildProjectOverwriteBackupPath\(filePath\)[\s\S]*writeFileSync\(candidate, previousTarget\)[\s\S]*renameSync\(stagedTarget, filePath\)/);
   });
 
-  it('clears stale remembered startup paths that cannot be resolved', () => {
+  it('preserves remembered startup paths and exposes recovery without forcing normal auto-open', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+    const preload = readFileSync(join(process.cwd(), 'electron/preload.cjs'), 'utf8');
 
     expect(source).toMatch(/const rememberedPath = parseStartupProjectState\(contents\)/);
     expect(source).toMatch(/const resolvedPath = resolveStartupProjectPath\(rememberedPath, existsSync\)/);
-    expect(source).toMatch(/if \(rememberedPath && !resolvedPath\)[\s\S]*await forgetRememberedProjectPath\(\)/);
+    expect(source).not.toMatch(/if \(rememberedPath && !resolvedPath\)[\s\S]{0,120}forgetRememberedProjectPath\(\)/);
+    expect(source).toMatch(/prepareRememberedStartupProject\([\s\S]*startupProjectRecovery = outcome\.recovery/);
+    const startupLoader = source.match(/async function loadRememberedStartupProject\(\)[\s\S]*?\n}/)?.[0] ?? '';
+    expect(startupLoader).not.toContain('forgetRememberedProjectPath()');
+    expect(source).toContain("ipcMain.handle('signal-loom:startup-project-retry'");
+    expect(source).toContain("ipcMain.handle('signal-loom:startup-project-recover-backup'");
+    expect(source).toMatch(/signal-loom:startup-project-dismiss[\s\S]*startupProjectRecovery = undefined[\s\S]*return \{ ok: true \}/);
+    expect(preload).toContain("retryStartupProject: (request) => ipcRenderer.invoke('signal-loom:startup-project-retry', request)");
+    expect(preload).toContain("recoverStartupProjectBackup: (request) => ipcRenderer.invoke('signal-loom:startup-project-recover-backup', request)");
+    expect(preload).toContain("dismissStartupProjectRecovery: () => ipcRenderer.invoke('signal-loom:startup-project-dismiss')");
   });
 
   it('starts blank by default and exposes an opt-in last-project startup preference', () => {

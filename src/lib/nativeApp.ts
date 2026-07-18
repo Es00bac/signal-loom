@@ -260,6 +260,7 @@ export interface NativeState {
   currentProjectPath?: string;
   currentScratchDirectoryPath?: string;
   startupProject?: NativeProjectFileResult;
+  startupProjectRecovery?: NativeStartupProjectRecovery;
   /** Opt-in only: a normal desktop launch starts with a blank project. */
   reopenLastProjectOnStartup?: boolean;
   workspace?: WorkspaceWindowView;
@@ -269,6 +270,28 @@ export interface NativeState {
   projectAuthority?: NativeProjectAuthorityDescriptor;
   /** This window's own webContents id, used to ignore self-initiated authority broadcasts. */
   webContentsId?: number;
+}
+
+export type NativeStartupProjectFailureCode =
+  | 'missing'
+  | 'unreadable'
+  | 'corrupt'
+  | 'invalid-project'
+  | 'preparation-failed';
+
+export interface NativeStartupProjectBackup {
+  filePath: string;
+  modifiedAtMs: number;
+}
+
+export interface NativeStartupProjectRecovery {
+  /** Persisted original path; failures and Continue Blank never remove it. */
+  filePath: string;
+  failure: {
+    code: NativeStartupProjectFailureCode;
+    message: string;
+  };
+  backups: NativeStartupProjectBackup[];
 }
 
 /**
@@ -398,6 +421,8 @@ export interface NativePreparedProjectSwitchResult extends NativeProjectFileResu
   transactionId?: string;
   kind?: 'open' | 'clear';
   baseAuthority?: NativeProjectAuthorityDescriptor;
+  /** Refreshed typed failure returned when a startup Retry/backup preparation still fails. */
+  startupProjectRecovery?: NativeStartupProjectRecovery;
 }
 
 export interface NativeProjectSavePayload {
@@ -715,6 +740,13 @@ export interface SignalLoomNativeBridge {
   setReopenLastProjectOnStartup?: (
     enabled: boolean,
   ) => Promise<{ reopenLastProjectOnStartup: boolean }>;
+  retryStartupProject?: (
+    request: { claim?: NativeProjectAuthorityDescriptor },
+  ) => Promise<NativePreparedProjectSwitchResult>;
+  recoverStartupProjectBackup?: (
+    request: { filePath: string; claim?: NativeProjectAuthorityDescriptor },
+  ) => Promise<NativePreparedProjectSwitchResult>;
+  dismissStartupProjectRecovery?: () => Promise<{ ok: boolean }>;
   /**
    * Dedicated signal-loom-font:// transport capability (FBL-025). A complete bridge is installed
    * even when the main process found no bundled-font-library root, in which case every

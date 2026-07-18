@@ -198,6 +198,7 @@ describe('native smoke helpers', () => {
     expect(env.WAYLAND_DISPLAY).toBeUndefined();
     expect(state).toEqual({
       currentProjectPath: '/projects/Chronicle-restored.sloom',
+      reopenLastProjectOnStartup: true,
       updatedAt: '2026-05-24T00:00:00.000Z',
     });
   });

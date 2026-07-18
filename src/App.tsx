@@ -21,6 +21,7 @@ import { BrandWordmark } from './components/Layout/BrandWordmark';
 import { ConfirmationDialog } from './components/Common/ConfirmationDialog';
 import { TextInputDialog } from './components/Common/TextInputDialog';
 import { AlertDialog } from './components/Common/AlertDialog';
+import { StartupProjectRecoveryDialog } from './components/Common/StartupProjectRecoveryDialog';
 import { TopNavbar } from './components/Layout/TopNavbar';
 import { EditBatonReadOnlyOverlay } from './components/Layout/EditBatonReadOnlyOverlay';
 import { CommandPalette } from './components/Common/CommandPalette';
@@ -159,8 +160,14 @@ import {
   isCurrentProjectAuthorityStateScope,
   setCurrentProjectAuthorityClaim,
   type NativeMenuCommand,
+  type NativePreparedProjectSwitchResult,
   type NativeProjectAdoptResult,
+  type NativeStartupProjectRecovery,
 } from './lib/nativeApp';
+import {
+  requestStartupProjectRecoveryAction,
+  type StartupProjectRecoveryAction,
+} from './lib/startupProjectRecovery';
 import { registerNativeExternalOpenConsumer } from './lib/nativeExternalOpen';
 import {
   createProjectAuthorityClient,
@@ -484,6 +491,8 @@ function FlowApp() {
   // Flips once the native startup restore settles; external-open draining waits for it so an
   // externally opened document always applies after — never racing — the startup project.
   const [nativeStartupSettled, setNativeStartupSettled] = useState(false);
+  const [startupProjectRecovery, setStartupProjectRecovery] = useState<NativeStartupProjectRecovery | undefined>(undefined);
+  const [startupRecoveryBusyAction, setStartupRecoveryBusyAction] = useState<StartupProjectRecoveryAction | undefined>(undefined);
   const [flowContextMenu, setFlowContextMenu] = useState<{
     x: number;
     y: number;
@@ -1481,6 +1490,68 @@ function FlowApp() {
     imageReplacementAuthorizationRef.current = authorizeDirtyImageReplacement;
   }, [authorizeDirtyImageReplacement, saveCurrentProjectForPaperLossPrevention]);
 
+  const applyPreparedNativeProjectOpen = useCallback(async (
+    result: NativePreparedProjectSwitchResult,
+    authorizationKey: string,
+  ): Promise<boolean> => {
+    const bridge = getSignalLoomNativeBridge();
+    if (!bridge) throw new Error('The desktop project bridge is unavailable.');
+    if (result.rejected) throw new Error(result.rejected.message);
+    if (result.canceled) return false;
+    if (!result.document || !result.transactionId) {
+      throw new Error('The selected project was not prepared, so the blank workspace was left unchanged.');
+    }
+
+    const replacementAuthorization = await requestProjectReplacementAuthorization({
+      key: authorizationKey,
+      save: saveCurrentProjectForPaperLossPrevention,
+      authorizeDirtyImageReplacement,
+    });
+    if (!replacementAuthorization || projectSwitchInProgressRef.current) {
+      await bridge.cancelProjectSwitch({ transactionId: result.transactionId });
+      return false;
+    }
+
+    projectSwitchInProgressRef.current = true;
+    const authorityClient = getProjectAuthorityClient();
+    let rendererTransaction: Awaited<ReturnType<typeof prepareProjectDocumentTransaction>> | undefined;
+    let endAuthorityTransition: (() => void) | undefined;
+    try {
+      rendererTransaction = await prepareProjectDocumentTransaction(result.document, {
+        imageAuthorization: replacementAuthorization.image,
+        paperAuthorization: replacementAuthorization.paper,
+        transactionBookkeeping: 'reset-source-library-native-sync',
+      });
+      rendererTransaction.assertCanCommit();
+      endAuthorityTransition = beginProjectAuthorityTransition();
+      rendererTransaction.commit();
+      const commitResult = await bridge.commitProjectSwitch({ transactionId: result.transactionId });
+      if (commitResult.rejected || !commitResult.authority) {
+        await rendererTransaction.rollback();
+        throw new Error(commitResult.rejected?.message ?? 'The prepared project could not commit.');
+      }
+      await authorityClient.adoptSnapshot({
+        authority: commitResult.authority,
+        filePath: commitResult.filePath,
+      });
+      setNativeScratchDirectoryPath(commitResult.scratchDirectoryPath);
+      rendererTransaction.finalize();
+      return true;
+    } catch (error) {
+      await rendererTransaction?.rollback();
+      await bridge.cancelProjectSwitch({ transactionId: result.transactionId }).catch(() => undefined);
+      throw error;
+    } finally {
+      endAuthorityTransition?.();
+      projectSwitchInProgressRef.current = false;
+    }
+  }, [
+    authorizeDirtyImageReplacement,
+    getProjectAuthorityClient,
+    saveCurrentProjectForPaperLossPrevention,
+    setNativeScratchDirectoryPath,
+  ]);
+
   const handleAppMenuCommand = useCallback(async (command: NativeMenuCommand, source: ActivityTrailSource = 'menu') => {
     recordCommandActivity(command, source);
     const bridge = getSignalLoomNativeBridge();
@@ -1577,53 +1648,7 @@ function FlowApp() {
           }
           const authorityClient = getProjectAuthorityClient();
           const result = await bridge.openProjectFile({ claim: authorityClient.getClaim() });
-
-          if (result.rejected) throw new Error(result.rejected.message);
-          if (!result.canceled && result.document && result.transactionId) {
-            // Dirty Paper tabs get the loss-prevention policy (save / discard-with-recovery /
-            // cancel) and dirty Image documents their own discard confirmation; the minted
-            // capability is revalidated inside the closed renderer transaction below.
-            const replacementAuthorization = await requestProjectReplacementAuthorization({
-              key: 'app:open-project',
-              save: saveCurrentProjectForPaperLossPrevention,
-              authorizeDirtyImageReplacement,
-            });
-            if (!replacementAuthorization || projectSwitchInProgressRef.current) {
-              await bridge.cancelProjectSwitch({ transactionId: result.transactionId });
-              return;
-            }
-            projectSwitchInProgressRef.current = true;
-            let rendererTransaction: Awaited<ReturnType<typeof prepareProjectDocumentTransaction>> | undefined;
-            let endAuthorityTransition: (() => void) | undefined;
-            try {
-              rendererTransaction = await prepareProjectDocumentTransaction(result.document, {
-                imageAuthorization: replacementAuthorization.image,
-                paperAuthorization: replacementAuthorization.paper,
-                transactionBookkeeping: 'reset-source-library-native-sync',
-              });
-              rendererTransaction.assertCanCommit();
-              endAuthorityTransition = beginProjectAuthorityTransition();
-              rendererTransaction.commit();
-              const commitResult = await bridge.commitProjectSwitch({ transactionId: result.transactionId });
-              if (commitResult.rejected || !commitResult.authority) {
-                await rendererTransaction.rollback();
-                throw new Error(commitResult.rejected?.message ?? 'The prepared project could not commit.');
-              }
-              await authorityClient.adoptSnapshot({
-                authority: commitResult.authority,
-                filePath: commitResult.filePath,
-              });
-              setNativeScratchDirectoryPath(commitResult.scratchDirectoryPath);
-              rendererTransaction.finalize();
-            } catch (error) {
-              await rendererTransaction?.rollback();
-              await bridge.cancelProjectSwitch({ transactionId: result.transactionId }).catch(() => undefined);
-              throw error;
-            } finally {
-              endAuthorityTransition?.();
-              projectSwitchInProgressRef.current = false;
-            }
-          }
+          await applyPreparedNativeProjectOpen(result, 'app:open-project');
         } catch (error) {
           await showAlertDialog({
             title: 'Open Project Failed',
@@ -2203,6 +2228,7 @@ function FlowApp() {
     }
   }, [
     applySourceLibraryChangeToRenderer,
+    applyPreparedNativeProjectOpen,
     downloadCurrentProjectDocument,
     confirmStaleProjectReload,
     copyFlowSelection,
@@ -2228,13 +2254,57 @@ function FlowApp() {
     projectSaveBlockedByAuthority,
     resetSourceLibraryNativeSyncTracking,
     recordCommandActivity,
-    authorizeDirtyImageReplacement,
     saveCurrentProjectForPaperLossPrevention,
     selectAllFlowNodes,
     setNativeScratchDirectoryPath,
     setPanelVisibility,
     sourceBinVisible,
     nodes,
+  ]);
+
+  const handleStartupProjectRecoveryAction = useCallback(async (
+    action: StartupProjectRecoveryAction,
+    backupPath?: string,
+  ) => {
+    const bridge = getSignalLoomNativeBridge();
+    if (!bridge || startupRecoveryBusyAction) return;
+    setStartupRecoveryBusyAction(action);
+    try {
+      const actionResult = await requestStartupProjectRecoveryAction({
+        action,
+        bridge,
+        claim: getProjectAuthorityClient().getClaim(),
+        backupPath,
+      });
+      if (actionResult.status === 'dismissed') {
+        setStartupProjectRecovery(undefined);
+        return;
+      }
+
+      const prepared = actionResult.result;
+      if (prepared.rejected) {
+        if (prepared.startupProjectRecovery) {
+          setStartupProjectRecovery(prepared.startupProjectRecovery);
+          return;
+        }
+        throw new Error(prepared.rejected.message);
+      }
+      if (prepared.canceled) return;
+      const opened = await applyPreparedNativeProjectOpen(prepared, `startup-recovery:${action}`);
+      if (opened) setStartupProjectRecovery(undefined);
+    } catch (error) {
+      await showAlertDialog({
+        title: 'Project Recovery Failed',
+        message: error instanceof Error ? error.message : 'The blank workspace was left unchanged.',
+        tone: 'danger',
+      });
+    } finally {
+      setStartupRecoveryBusyAction(undefined);
+    }
+  }, [
+    applyPreparedNativeProjectOpen,
+    getProjectAuthorityClient,
+    startupRecoveryBusyAction,
   ]);
 
   const handleAppMenuCommandRef = useRef(handleAppMenuCommand);
@@ -2483,6 +2553,13 @@ function FlowApp() {
                 authority: state.projectAuthority,
                 filePath: state.currentProjectPath,
               });
+            }
+            if (
+              state.startupProjectRecovery
+              && (!windowWorkspaceView || windowWorkspaceView === 'flow')
+              && isStartupRequestCurrent()
+            ) {
+              setStartupProjectRecovery(state.startupProjectRecovery);
             }
           }
           if (isStartupRequestCurrent() && !windowWorkspaceView && state.workspace) {
@@ -3035,6 +3112,13 @@ function FlowApp() {
       <PaperLossPreventionDialog />
       <TextInputDialog />
       <AlertDialog />
+      {startupProjectRecovery ? (
+        <StartupProjectRecoveryDialog
+          busyAction={startupRecoveryBusyAction}
+          onAction={(action, backupPath) => void handleStartupProjectRecoveryAction(action, backupPath)}
+          recovery={startupProjectRecovery}
+        />
+      ) : null}
       {activeHelpSectionId ? (
         <AppHelpModal
           activeSectionId={activeHelpSectionId}

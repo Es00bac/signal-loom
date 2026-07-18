@@ -65,9 +65,12 @@ const {
 const { createProjectAuthority, normalizeProjectSavePayload } = projectAuthorityModule;
 const { getElectronDialogFilterGroups } = mediaFormatRegistryModule;
 const {
+  buildStartupProjectRecovery,
   buildStartupProjectStatePath,
+  discoverStartupProjectBackups,
   parseStartupProjectReopenPreference,
   parseStartupProjectState,
+  prepareRememberedStartupProject,
   resolveStartupProjectPath,
   serializeStartupProjectState,
 } = startupProjectModule;
@@ -131,6 +134,7 @@ let currentProjectPath = undefined;
 let currentScratchDirectoryPath = undefined;
 let currentAssetCapabilityRootPaths = [];
 let startupProject = undefined;
+let startupProjectRecovery = undefined;
 // Reopening is opt-in. Keep the last path separately so a blank startup can still offer the
 // preference without binding this window to that project's authority or source state.
 let rememberedProjectPath = undefined;
@@ -1071,9 +1075,6 @@ async function readRememberedProjectPath() {
     reopenLastProjectOnStartup = parseStartupProjectReopenPreference(contents);
     const rememberedPath = parseStartupProjectState(contents);
     const resolvedPath = resolveStartupProjectPath(rememberedPath, existsSync);
-    if (rememberedPath && !resolvedPath) {
-      await forgetRememberedProjectPath();
-    }
     rememberedProjectPath = resolvedPath;
     return resolvedPath;
   } catch {
@@ -1118,13 +1119,21 @@ async function loadRememberedStartupProject() {
   if (!reopenLastProjectOnStartup || !filePath) {
     setCurrentProjectAssetRoots(undefined, undefined, undefined);
     startupProject = undefined;
+    startupProjectRecovery = undefined;
     await resetSourceLibrarySnapshot();
     return;
   }
 
-  try {
-    const contents = await readFile(filePath, 'utf8');
-    const prepared = await prepareProjectDocumentForNativeOpen(filePath, parseProjectDocumentJson(contents));
+  const outcome = await prepareRememberedStartupProject({
+    filePath,
+    reopenLastProjectOnStartup,
+    readProject: (rememberedPath) => readFile(rememberedPath, 'utf8'),
+    parseProject: parseProjectDocumentJson,
+    prepareProject: prepareProjectDocumentForNativeOpen,
+    discoverBackups: discoverStartupProjectBackups,
+  });
+  if (outcome.status === 'project') {
+    const prepared = outcome.prepared;
     setCurrentProjectAssetRoots(filePath, prepared.document, prepared.scratchDirectoryPath);
     startupProject = {
       canceled: false,
@@ -1132,13 +1141,48 @@ async function loadRememberedStartupProject() {
       scratchDirectoryPath: currentScratchDirectoryPath,
       document: prepared.document,
     };
+    startupProjectRecovery = undefined;
     await syncSourceLibraryFromDocument(prepared.document);
-  } catch {
-    setCurrentProjectAssetRoots(undefined, undefined, undefined);
-    startupProject = undefined;
-    await resetSourceLibrarySnapshot();
-    await forgetRememberedProjectPath();
+    return;
   }
+
+  // Keep the path and typed failure. The canonical project is blank until the Flow renderer
+  // explicitly chooses Retry, Open Another, Recover Backup, or Continue Blank.
+  setCurrentProjectAssetRoots(undefined, undefined, undefined);
+  startupProject = undefined;
+  startupProjectRecovery = outcome.recovery;
+  await resetSourceLibrarySnapshot();
+}
+
+async function prepareStartupRecoveryProjectOpen(event, filePath, request) {
+  const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
+  const isSenderLive = () => isLiveAuthoritySender(event.sender, rendererEpoch);
+  let preparationError;
+  const result = await projectAuthority.prepareOpenProject({
+    senderId: event.sender.id,
+    rendererEpoch,
+    isSenderLive,
+    claim: request?.claim,
+    load: async () => {
+      try {
+        return await openProjectDocumentFromPath(filePath, isSenderLive);
+      } catch (error) {
+        preparationError = error;
+        throw error;
+      }
+    },
+  });
+
+  if (result.rejected?.code === 'prepare-failed' && preparationError && startupProjectRecovery) {
+    startupProjectRecovery = await buildStartupProjectRecovery(
+      startupProjectRecovery.filePath,
+      preparationError,
+      'prepare',
+      { discoverBackups: discoverStartupProjectBackups },
+    );
+    return { ...result, startupProjectRecovery };
+  }
+  return result;
 }
 
 function sendRendererCommand(command) {
@@ -1731,6 +1775,7 @@ function publishCommittedProjectSnapshot(snapshot) {
     currentScratchDirectoryPath,
     currentAssetCapabilityRootPaths: [...currentAssetCapabilityRootPaths],
     startupProject,
+    startupProjectRecovery,
     sourceLibrarySnapshot,
     sourceLibraryVersion,
     capabilityPaths: nativeAssetCapabilityRegistry.list(),
@@ -1747,6 +1792,7 @@ function publishCommittedProjectSnapshot(snapshot) {
         document: snapshot.document,
       }
       : undefined;
+    startupProjectRecovery = undefined;
     const preparedPublication = snapshot.preparedPublication;
     sourceLibrarySnapshot = normalizeSourceLibrarySnapshot(
       preparedPublication?.sourceLibrarySnapshot ?? snapshot.document?.sourceBin,
@@ -1759,6 +1805,7 @@ function publishCommittedProjectSnapshot(snapshot) {
     currentScratchDirectoryPath = previous.currentScratchDirectoryPath;
     currentAssetCapabilityRootPaths = previous.currentAssetCapabilityRootPaths;
     startupProject = previous.startupProject;
+    startupProjectRecovery = previous.startupProjectRecovery;
     sourceLibrarySnapshot = previous.sourceLibrarySnapshot;
     sourceLibraryVersion = previous.sourceLibraryVersion;
     commitNativeAssetCapabilities({
@@ -3190,6 +3237,7 @@ function installIpcHandlers() {
       currentProjectPath,
       currentScratchDirectoryPath,
       startupProject,
+      startupProjectRecovery,
       reopenLastProjectOnStartup,
       workspace: window ? getWorkspaceForWindow(window) ?? activeWorkspace : activeWorkspace,
       platform: process.platform,
@@ -3202,6 +3250,29 @@ function installIpcHandlers() {
   ipcMain.handle('signal-loom:set-reopen-last-project-on-startup', async (_event, enabled) => ({
     reopenLastProjectOnStartup: await setReopenLastProjectOnStartup(enabled === true),
   }));
+
+  ipcMain.handle('signal-loom:startup-project-retry', async (event, request) => {
+    if (!startupProjectRecovery?.filePath) {
+      return { canceled: false, rejected: { code: 'prepare-failed', message: 'There is no remembered project waiting for recovery.', current: projectAuthority.getCurrent() } };
+    }
+    return prepareStartupRecoveryProjectOpen(event, startupProjectRecovery.filePath, request);
+  });
+
+  ipcMain.handle('signal-loom:startup-project-recover-backup', async (event, request) => {
+    const backupPath = request?.filePath;
+    const allowedBackup = startupProjectRecovery?.backups?.some((backup) => backup.filePath === backupPath);
+    if (!allowedBackup) {
+      return { canceled: false, rejected: { code: 'prepare-failed', message: 'That project backup is no longer available from the recovery list.', current: projectAuthority.getCurrent() } };
+    }
+    return prepareStartupRecoveryProjectOpen(event, backupPath, request);
+  });
+
+  ipcMain.handle('signal-loom:startup-project-dismiss', () => {
+    // Continue Blank is session-only. The remembered path and opt-in preference remain on disk so
+    // a temporary drive problem can be retried on the next launch.
+    startupProjectRecovery = undefined;
+    return { ok: true };
+  });
 
   ipcMain.handle('signal-loom:clear-project-path', async (event, request) => {
     const rendererEpoch = getRendererAuthorityEpoch(event.sender.id);
