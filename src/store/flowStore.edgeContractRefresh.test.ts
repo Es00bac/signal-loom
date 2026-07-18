@@ -191,4 +191,100 @@ describe('Flow edge contract refresh after node configuration patches (FBL-027)'
     expect(useFlowStore.getState().nodes.find((candidate) => candidate.id === 'composition')?.data.compositionAudioTrackCount)
       .toBe(3);
   });
+
+  it('refreshes a transitive Portal edge without letting hidden plumbing mask the current type reason', () => {
+    useFlowStore.setState({
+      nodes: [
+        node('source', 'javascriptNode', { declaredOutputType: 'text' }),
+        node('entry', 'portal', { portalRole: 'entry', portalPairId: 'pair-1' }),
+        node('exit', 'portal', { portalRole: 'exit', portalPairId: 'pair-1' }),
+        node('regex', 'regexReplaceNode'),
+      ],
+      edges: [
+        edge('source-entry', 'source', 'entry'),
+        edge('exit-regex', 'exit', 'regex'),
+      ],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    expect(flowContract('exit-regex')).toMatchObject({
+      valid: true,
+      carriedType: { kind: 'text' },
+      acceptedTypes: [{ kind: 'text' }],
+    });
+    expect(useFlowStore.getState().edges.filter((candidate) => candidate.data?.portalSynthetic)).toHaveLength(1);
+
+    useFlowStore.getState().patchNodeData('source', { declaredOutputType: 'number' });
+
+    expect(flowContract('exit-regex')).toMatchObject({
+      valid: false,
+      carriedType: { kind: 'number' },
+      acceptedTypes: [{ kind: 'text' }],
+      reason: expect.stringContaining('number cannot connect to text'),
+    });
+    expect(useFlowStore.getState().edges.filter((candidate) => candidate.data?.portalSynthetic)).toHaveLength(1);
+  });
+
+  it('uses the Function runtime media family for a routed Composition contract', () => {
+    const functionNode = {
+      schemaVersion: 1 as const,
+      title: 'Audio function',
+      description: '',
+      contract: {
+        id: 'audio-function',
+        title: 'Audio function',
+        inputPorts: [],
+        outputPorts: [{
+          id: 'audio-out',
+          key: 'audio',
+          label: 'Audio',
+          resultType: 'audio' as const,
+          required: true,
+          order: 0,
+        }],
+        version: 1,
+      },
+      graph: { version: 1 as const, nodes: [], edges: [] },
+      inputBindings: [],
+      outputBindings: [],
+    };
+    useFlowStore.setState({
+      nodes: [
+        node('function', 'functionNode', { functionNode, resultType: 'audio' }),
+        node('composition', 'composition', { compositionAudioTrackCount: 1 }),
+      ],
+      edges: [edge(
+        'function-composition',
+        'function',
+        'composition',
+        'audio-out',
+        'composition-audio-1',
+      )],
+    });
+    useFlowStore.getState().hydratePersistedState();
+
+    expect(flowContract('function-composition')).toMatchObject({
+      valid: true,
+      carriedType: { kind: 'audio' },
+      acceptedTypes: [{ kind: 'audio' }],
+    });
+
+    useFlowStore.getState().patchNodeData('function', { resultType: 'video' });
+
+    expect(flowContract('function-composition')).toMatchObject({
+      valid: false,
+      carriedType: { kind: 'video' },
+      acceptedTypes: [{ kind: 'audio' }],
+      reason: expect.stringContaining('video cannot connect to audio'),
+    });
+    expect(useFlowStore.getState().edges.find((candidate) => candidate.id === 'function-composition')?.targetHandle)
+      .toBe('composition-audio-1');
+
+    useFlowStore.getState().patchNodeData('function', { resultType: 'audio' });
+    expect(flowContract('function-composition')).toMatchObject({
+      valid: true,
+      carriedType: { kind: 'audio' },
+      acceptedTypes: [{ kind: 'audio' }],
+    });
+  });
 });

@@ -79,6 +79,27 @@ describe('validateFlowConnection', () => {
     expect(result.reason).toContain('already has its maximum');
   });
 
+  it('does not count Portal synthetic plumbing as a second public connection', () => {
+    const nodes = [node('source', 'textNode'), node('other', 'textNode'), node('target', 'regexReplaceNode')];
+    const syntheticEdge: Edge = {
+      id: 'portal-synthetic',
+      source: 'other',
+      target: 'target',
+      hidden: true,
+      data: { portalSynthetic: true },
+    };
+
+    expect(validateFlowConnection(connection(), { nodes, edges: [syntheticEdge] }))
+      .toMatchObject({ valid: true, carriedType: { kind: 'text' } });
+    expect(validateFlowConnection(syntheticEdge, {
+      nodes,
+      edges: [{ id: 'visible', source: 'source', target: 'target' }, syntheticEdge],
+    })).toMatchObject({ valid: true, carriedType: { kind: 'text' } });
+
+    // The existing visible-edge cardinality test above remains the authority for real capacity:
+    // only the hidden Portal projection is exempt from consuming or being blocked by that slot.
+  });
+
   it('accepts explicit package extraction on Image source ports', () => {
     const nodes = [
       node('source', 'packageNode'),

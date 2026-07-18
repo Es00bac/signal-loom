@@ -9,8 +9,15 @@ import {
 import {
   flowDataTypeEquals,
   isFlowTypeAccepted,
+  runtimeTypeFromResultType,
   type FlowDataType,
 } from './flowPortTypes';
+import { isFlowResultKind } from './flowValueTypes';
+import {
+  COMPOSITION_VIDEO_HANDLE,
+  isCompositionAudioHandle,
+} from './compositionTracks';
+import { isPortalSyntheticEdge } from './portalNodes';
 
 export interface FlowGraphContractContext {
   nodes: readonly AppNode[];
@@ -72,17 +79,25 @@ export function validateFlowConnection(
   if (!sourcePort) return invalid(`The source handle ${formatHandle(sourceHandle)} is not available on this node.`);
   if (!targetPort) return invalid(`The target handle ${formatHandle(targetHandle)} is not available on this node.`);
 
-  const carriedType = resolveFlowOutputType(sourceNode.id, sourceHandle, context);
+  const declaredCarriedType = resolveFlowOutputType(sourceNode.id, sourceHandle, context);
+  const carriedType = resolveFunctionCompositionRuntimeType(
+    sourceNode,
+    targetNode,
+    targetHandle,
+  ) ?? declaredCarriedType;
   const acceptedTypes = resolveAcceptedTargetTypes(targetNode, targetPort, candidate, context);
   const common = { sourcePort, targetPort, carriedType, acceptedTypes };
 
   if (sourcePort.disabledReason) return invalid(sourcePort.disabledReason, common);
   if (targetPort.disabledReason) return invalid(targetPort.disabledReason, common);
 
-  if (targetPort.maxConnections !== null) {
+  const portalSyntheticCandidate = isPortalSyntheticConnectable(candidate);
+
+  if (targetPort.maxConnections !== null && !portalSyntheticCandidate) {
     const candidateId = 'id' in candidate ? candidate.id : undefined;
     const existingCount = context.edges.filter((edge) =>
       edge.id !== candidateId
+      && !isPortalSyntheticEdge(edge)
       && edge.target === targetNode.id
       && normalizeFlowHandle(edge.targetHandle) === targetHandle
     ).length;
@@ -92,12 +107,13 @@ export function validateFlowConnection(
     }
   }
 
-  for (const group of targetPort.connectionGroups ?? []) {
+  for (const group of portalSyntheticCandidate ? [] : targetPort.connectionGroups ?? []) {
     if (!isFlowTypeAccepted(carriedType, group.types).compatible) continue;
     const candidateId = 'id' in candidate ? candidate.id : undefined;
     const existingCount = context.edges.filter((edge) => {
       if (
         edge.id === candidateId
+        || isPortalSyntheticEdge(edge)
         || edge.target !== targetNode.id
         || normalizeFlowHandle(edge.targetHandle) !== targetHandle
       ) {
@@ -124,6 +140,29 @@ export function validateFlowConnection(
   }
 
   return { valid: true, ...common };
+}
+
+function resolveFunctionCompositionRuntimeType(
+  sourceNode: AppNode,
+  targetNode: AppNode,
+  targetHandle: string | null,
+): FlowDataType | undefined {
+  if (sourceNode.type !== 'functionNode' || targetNode.type !== 'composition') {
+    return undefined;
+  }
+  const isMediaLane = targetHandle === COMPOSITION_VIDEO_HANDLE
+    || isCompositionAudioHandle(targetHandle);
+  if (!isMediaLane) {
+    return undefined;
+  }
+  const resultType = sourceNode.data.resultType;
+  return isFlowResultKind(resultType)
+    ? runtimeTypeFromResultType(resultType)
+    : unknownType;
+}
+
+function isPortalSyntheticConnectable(candidate: Connectable): boolean {
+  return 'id' in candidate && isPortalSyntheticEdge(candidate);
 }
 
 export function annotateFlowEdge(edge: Edge, context: FlowGraphContractContext): Edge {
