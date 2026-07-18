@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderRateLimiter } from './providerRateLimiter';
+import {
+  PROVIDER_START_POLICY_MIN_DELAYS_MS,
+  ProviderRateLimiter,
+  providerLimiters,
+} from './providerRateLimiter';
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -106,5 +110,16 @@ describe('ProviderRateLimiter start admission', () => {
 
     await expect(second).resolves.toBe('recovered');
     expect(starts).toEqual(['first', 'second']);
+  });
+
+  it('instantiates every declared policy with its own limiter object', () => {
+    const policies = Object.keys(PROVIDER_START_POLICY_MIN_DELAYS_MS);
+    const entries = Object.entries(providerLimiters);
+
+    expect(entries.map(([policy]) => policy).sort()).toEqual([...policies].sort());
+    expect(new Set(entries.map(([, limiter]) => limiter)).size).toBe(entries.length);
+    for (const [policy, minDelayMs] of Object.entries(PROVIDER_START_POLICY_MIN_DELAYS_MS)) {
+      expect(providerLimiters[policy as keyof typeof providerLimiters].minDelayMs).toBe(minDelayMs);
+    }
   });
 });

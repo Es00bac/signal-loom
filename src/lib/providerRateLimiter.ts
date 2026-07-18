@@ -96,25 +96,13 @@ export class ProviderRateLimiter {
   }
 }
 
-export const providerLimiters: Record<string, ProviderRateLimiter> = {
-  bfl: new ProviderRateLimiter(2500),
-  gemini: new ProviderRateLimiter(1500),
-  openai: new ProviderRateLimiter(1500),
-  stability: new ProviderRateLimiter(2000),
-  huggingface: new ProviderRateLimiter(2000),
-  elevenlabs: new ProviderRateLimiter(2000),
-  atlas: new ProviderRateLimiter(1500),
-  byteplus: new ProviderRateLimiter(1500),
-  localOpen: new ProviderRateLimiter(0),
-  android: new ProviderRateLimiter(0),
-  local: new ProviderRateLimiter(0),
-  default: new ProviderRateLimiter(1500),
-};
-
-// A configured backend proxy is a distinct transport/credential route from a
-// direct browser request. Keep each upstream provider's existing spacing while
-// preventing a proxied Atlas job, for example, from sharing direct Atlas state.
-for (const [provider, minDelayMs] of Object.entries({
+/**
+ * Every supported Flow start policy, including each real backend-proxy route.
+ * Keep this declaration exhaustive and instantiate every entry independently:
+ * falling through to `default` or reusing one limiter object would couple
+ * otherwise unrelated transports.
+ */
+export const PROVIDER_START_POLICY_MIN_DELAYS_MS = {
   bfl: 2500,
   gemini: 1500,
   openai: 1500,
@@ -123,10 +111,35 @@ for (const [provider, minDelayMs] of Object.entries({
   elevenlabs: 2000,
   atlas: 1500,
   byteplus: 1500,
-})) {
-  providerLimiters[`backend-proxy:${provider}`] = new ProviderRateLimiter(minDelayMs);
-}
+  localOpen: 0,
+  android: 0,
+  local: 0,
+  'backend-proxy:bfl': 2500,
+  'backend-proxy:gemini': 1500,
+  'backend-proxy:openai': 1500,
+  'backend-proxy:stability': 2000,
+  'backend-proxy:huggingface': 2000,
+  'backend-proxy:elevenlabs': 2000,
+  'backend-proxy:atlas': 1500,
+  'backend-proxy:byteplus': 1500,
+  // Local/Open is deliberately proxy-capable: its sanitized endpoint and
+  // model are part of the proxy DTO, while any proxy-side credentials remain
+  // owned by that service. It does not share a remote-provider quota.
+  'backend-proxy:localOpen': 0,
+  default: 1500,
+} as const;
+
+export type ProviderStartPolicyKey = keyof typeof PROVIDER_START_POLICY_MIN_DELAYS_MS;
+
+export const providerLimiters = Object.fromEntries(
+  Object.entries(PROVIDER_START_POLICY_MIN_DELAYS_MS).map(([policy, minDelayMs]) => [
+    policy,
+    new ProviderRateLimiter(minDelayMs),
+  ]),
+) as Record<ProviderStartPolicyKey, ProviderRateLimiter>;
 
 export function getProviderLimiter(provider: string): ProviderRateLimiter {
-  return providerLimiters[provider] || providerLimiters.default;
+  return Object.prototype.hasOwnProperty.call(providerLimiters, provider)
+    ? providerLimiters[provider as ProviderStartPolicyKey]
+    : providerLimiters.default;
 }

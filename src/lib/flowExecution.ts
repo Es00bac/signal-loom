@@ -1302,7 +1302,7 @@ export function resolveProviderStartPolicyKey(
   let provider: string;
   switch (node.type) {
     case 'textNode':
-      provider = node.data.mode === 'prompt'
+      provider = (node.data.mode ?? 'prompt') === 'prompt'
         ? 'local'
         : ((node.data.provider as TextProvider | undefined) ?? 'gemini');
       break;
@@ -1332,13 +1332,24 @@ export function resolveProviderStartPolicyKey(
 }
 
 function shouldProxyNodeExecution(node: AppNode, settings: RuntimeSettingsSnapshot): boolean {
-  return shouldUseBackendProxy(settings.providerSettings) && (
-    node.type === 'textNode' ||
-    node.type === 'imageGen' ||
-    node.type === 'videoGen' ||
+  if (!shouldUseBackendProxy(settings.providerSettings)) return false;
+
+  if (node.type === 'textNode') {
+    // Prompt mode only publishes its saved text. It has no provider start and
+    // must stay on-device even when generated-text routes use the proxy.
+    return (node.data.mode ?? 'prompt') !== 'prompt';
+  }
+
+  if (node.type === 'imageGen') {
+    // Android generation needs the paired device address/token that the proxy
+    // DTO intentionally withholds. Local/Open remains proxy-capable because
+    // its sanitized endpoint and selected model are explicitly forwarded.
+    return ((node.data.provider as ImageProvider | undefined) ?? 'gemini') !== 'android';
+  }
+
+  return node.type === 'videoGen' ||
     node.type === 'audioGen' ||
-    node.type === 'visionVerifyNode'
-  );
+    node.type === 'visionVerifyNode';
 }
 
 async function executeNodeViaBackendProxy(

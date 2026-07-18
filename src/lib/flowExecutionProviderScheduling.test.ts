@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppNode, RuntimeSettingsSnapshot } from '../types/flow';
 import { executeNodeRequest, resolveProviderStartPolicyKey } from './flowExecution';
-import { getProviderLimiter } from './providerRateLimiter';
+import {
+  getProviderLimiter,
+  providerLimiters,
+  type ProviderStartPolicyKey,
+} from './providerRateLimiter';
 import {
   DEFAULT_EXECUTION_CONFIG,
   DEFAULT_MODELS,
@@ -29,6 +33,15 @@ function imageNode(provider: string, modelId: string): AppNode {
     type: 'imageGen',
     position: { x: 0, y: 0 },
     data: { provider, modelId },
+  } as AppNode;
+}
+
+function routeNode(type: AppNode['type'], data: Record<string, unknown> = {}): AppNode {
+  return {
+    id: `${type}-${String(data.provider ?? data.mode ?? 'default')}`,
+    type,
+    position: { x: 0, y: 0 },
+    data,
   } as AppNode;
 }
 
@@ -73,18 +86,7 @@ describe('Flow provider start scheduling', () => {
     vi.restoreAllMocks();
   });
 
-  it('assigns independent provider and route policy keys without a shared default', () => {
-    expect(resolveProviderStartPolicyKey(imageNode('atlas', 'black-forest-labs/flux-schnell'), settings)).toBe('atlas');
-    expect(resolveProviderStartPolicyKey(imageNode('byteplus', 'seedream-5-0-260128'), settings)).toBe('byteplus');
-    expect(resolveProviderStartPolicyKey(imageNode('localOpen', 'Qwen/Qwen-Image-Edit'), settings)).toBe('localOpen');
-    expect(resolveProviderStartPolicyKey(imageNode('android', 'local-dream-active'), settings)).toBe('android');
-    expect(resolveProviderStartPolicyKey({
-      id: 'local-prompt',
-      type: 'textNode',
-      position: { x: 0, y: 0 },
-      data: { mode: 'prompt', prompt: 'local text' },
-    } as AppNode, settings)).toBe('local');
-
+  it('maps every supported execution route to a registered independent direct or proxy policy', () => {
     const proxySettings: RuntimeSettingsSnapshot = {
       ...settings,
       providerSettings: {
@@ -93,14 +95,163 @@ describe('Flow provider start scheduling', () => {
         backendProxyBaseUrl: 'https://proxy.example.test',
       },
     };
-    expect(resolveProviderStartPolicyKey(
-      imageNode('atlas', 'black-forest-labs/flux-schnell'),
-      proxySettings,
-    )).toBe('backend-proxy:atlas');
 
-    expect(getProviderLimiter('atlas')).not.toBe(getProviderLimiter('byteplus'));
-    expect(getProviderLimiter('atlas')).not.toBe(getProviderLimiter('default'));
-    expect(getProviderLimiter('backend-proxy:atlas')).not.toBe(getProviderLimiter('atlas'));
+    const routes: Array<{
+      label: string;
+      node: AppNode;
+      direct: ProviderStartPolicyKey;
+      proxyConfigured: ProviderStartPolicyKey;
+    }> = [
+      { label: 'prompt text', node: routeNode('textNode', { mode: 'prompt', prompt: 'local text' }), direct: 'local', proxyConfigured: 'local' },
+      { label: 'legacy prompt text default', node: routeNode('textNode', { prompt: 'local text' }), direct: 'local', proxyConfigured: 'local' },
+      { label: 'generated text default', node: routeNode('textNode', { mode: 'generate' }), direct: 'gemini', proxyConfigured: 'backend-proxy:gemini' },
+      ...(['gemini', 'openai', 'huggingface'] as const).map((provider) => ({
+        label: `generated text ${provider}`,
+        node: routeNode('textNode', { mode: 'generate', provider }),
+        direct: provider,
+        proxyConfigured: `backend-proxy:${provider}` as ProviderStartPolicyKey,
+      })),
+      { label: 'image default', node: routeNode('imageGen'), direct: 'gemini', proxyConfigured: 'backend-proxy:gemini' },
+      ...(['gemini', 'openai', 'huggingface', 'bfl', 'stability', 'localOpen', 'android', 'atlas', 'byteplus'] as const).map((provider) => ({
+        label: `image ${provider}`,
+        node: routeNode('imageGen', { provider }),
+        direct: provider,
+        proxyConfigured: provider === 'android' ? 'android' as const : `backend-proxy:${provider}` as ProviderStartPolicyKey,
+      })),
+      { label: 'video default', node: routeNode('videoGen'), direct: 'gemini', proxyConfigured: 'backend-proxy:gemini' },
+      ...(['gemini', 'huggingface', 'atlas'] as const).map((provider) => ({
+        label: `video ${provider}`,
+        node: routeNode('videoGen', { provider }),
+        direct: provider,
+        proxyConfigured: `backend-proxy:${provider}` as ProviderStartPolicyKey,
+      })),
+      { label: 'audio default', node: routeNode('audioGen'), direct: 'elevenlabs', proxyConfigured: 'backend-proxy:elevenlabs' },
+      ...(['gemini', 'elevenlabs', 'huggingface'] as const).map((provider) => ({
+        label: `audio ${provider}`,
+        node: routeNode('audioGen', { provider }),
+        direct: provider,
+        proxyConfigured: `backend-proxy:${provider}` as ProviderStartPolicyKey,
+      })),
+      { label: 'Vision Verify', node: routeNode('visionVerifyNode'), direct: 'gemini', proxyConfigured: 'backend-proxy:gemini' },
+      { label: 'local crop', node: routeNode('cropImageNode'), direct: 'local', proxyConfigured: 'local' },
+    ];
+
+    const usedPolicies = new Set<ProviderStartPolicyKey>();
+    for (const route of routes) {
+      for (const [mode, runtimeSettings, expected] of [
+        ['direct', settings, route.direct],
+        ['proxy configured', proxySettings, route.proxyConfigured],
+      ] as const) {
+        const actual = resolveProviderStartPolicyKey(route.node, runtimeSettings);
+        expect(actual, `${route.label} (${mode})`).toBe(expected);
+        expect(providerLimiters[expected], `${route.label} (${mode}) has no registered policy`).toBeDefined();
+        expect(getProviderLimiter(actual), `${route.label} (${mode}) fell through to default`).toBe(providerLimiters[expected]);
+        expect(getProviderLimiter(actual), `${route.label} (${mode}) shares default`).not.toBe(providerLimiters.default);
+        usedPolicies.add(expected);
+      }
+    }
+
+    const usedLimiters = [...usedPolicies].map((policy) => providerLimiters[policy]);
+    expect(new Set(usedLimiters).size).toBe(usedPolicies.size);
+    expect(usedPolicies).toContain('backend-proxy:localOpen');
+    expect(usedPolicies).not.toContain('backend-proxy:local' as ProviderStartPolicyKey);
+    expect(usedPolicies).not.toContain('backend-proxy:android' as ProviderStartPolicyKey);
+  });
+
+  it('keeps prompt pass-through and Android generation on this device when proxy mode is configured', async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url === 'http://192.168.1.42:8788/v1/capabilities') {
+        return jsonResponse({
+          ok: true,
+          models: [{ id: 'local-dream-active' }],
+          upscalers: [],
+        });
+      }
+      if (url === 'http://192.168.1.42:8788/v1/generate') {
+        return jsonResponse({
+          dataUrl: 'data:image/png;base64,QU5EUk9JRA==',
+          mimeType: 'image/png',
+          modelUsed: 'local-dream-active',
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+    const proxySettings: RuntimeSettingsSnapshot = {
+      ...settings,
+      providerSettings: {
+        ...settings.providerSettings,
+        backendProxyEnabled: true,
+        backendProxyBaseUrl: 'https://proxy.example.test',
+        androidAcceleratorBaseUrl: 'http://192.168.1.42:8788',
+        androidAcceleratorAuthToken: 'pair-token',
+      },
+    };
+
+    await expect(executeNodeRequest(
+      routeNode('textNode', { mode: 'prompt', prompt: 'local text' }),
+      { ...context, prompt: '' },
+      proxySettings,
+    )).resolves.toMatchObject({ result: 'local text', resultType: 'text' });
+    await expect(executeNodeRequest(
+      imageNode('android', 'local-dream-active'),
+      context,
+      proxySettings,
+    )).resolves.toMatchObject({
+      result: 'data:image/png;base64,QU5EUk9JRA==',
+      resultType: 'image',
+    });
+
+    expect(requestedUrls).toEqual([
+      'http://192.168.1.42:8788/v1/capabilities',
+      'http://192.168.1.42:8788/v1/generate',
+    ]);
+    expect(requestedUrls).not.toContain('https://proxy.example.test/api/flow/execute-node');
+  });
+
+  it('routes Local/Open through its registered proxy policy when proxy mode is configured', async () => {
+    let submittedBody: BodyInit | null | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url !== 'https://proxy.example.test/api/flow/execute-node') {
+        throw new Error(`Unexpected request: ${url}`);
+      }
+      submittedBody = init?.body;
+      return jsonResponse({
+        result: 'data:image/png;base64,TE9DQUwtT1BFTg==',
+        resultType: 'image',
+        statusMessage: 'Edited through configured proxy',
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const proxySettings: RuntimeSettingsSnapshot = {
+      ...settings,
+      providerSettings: {
+        ...settings.providerSettings,
+        backendProxyEnabled: true,
+        backendProxyBaseUrl: 'https://proxy.example.test',
+        localOpenImageEndpointUrl: 'http://127.0.0.1:9000/v1/edit',
+      },
+    };
+
+    await expect(executeNodeRequest(
+      imageNode('localOpen', 'Qwen/Qwen-Image-Edit'),
+      context,
+      proxySettings,
+    )).resolves.toMatchObject({
+      result: 'data:image/png;base64,TE9DQUwtT1BFTg==',
+      resultType: 'image',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(String(submittedBody)) as {
+      node: { data: { provider: string } };
+      settings: { providerSettings: Record<string, unknown> };
+    };
+    expect(requestBody.node.data.provider).toBe('localOpen');
+    expect(requestBody.settings.providerSettings.localOpenImageEndpointUrl).toBe('http://127.0.0.1:9000/v1/edit');
   });
 
   it('does not let a polling Atlas job serialize an unrelated BytePlus start', async () => {
