@@ -19,9 +19,13 @@ function resetPaperStore(): void {
   usePaperStore.getState().restoreSnapshot({ document, tool: 'select', zoom: 0.8 });
 }
 
-function importedDocument(record: BinaryAssetRecord): PaperDocument {
-  let document = createDefaultPaperDocument({ title: 'Imported standalone layout' });
-  document.id = 'standalone-paper';
+function importedDocument(
+  record: BinaryAssetRecord,
+  id = 'standalone-paper',
+  title = 'Imported standalone layout',
+): PaperDocument {
+  let document = createDefaultPaperDocument({ title });
+  document.id = id;
   document = addFrameToPaperPage(document, document.pages[0].id, {
     id: 'standalone-image',
     kind: 'image',
@@ -51,23 +55,29 @@ function heldLock(holder: EditLockDevice, revision: number, expiresAt = Date.now
   };
 }
 
-async function standaloneFixture(): Promise<{
+async function standaloneFixture(options: {
+  recordBytes?: readonly number[];
+  documentId?: string;
+  title?: string;
+  fileName?: string;
+} = {}): Promise<{
   bytes: Uint8Array;
   document: PaperDocument;
   record: BinaryAssetRecord;
 }> {
   const source = new MemoryPaperAssetRepository();
-  const record = await createBinaryAssetRecord(new Uint8Array([1, 3, 5, 7]), {
+  const record = await createBinaryAssetRecord(new Uint8Array(options.recordBytes ?? [1, 3, 5, 7]), {
     mimeType: 'image/png',
-    fileName: 'cover.png',
+    fileName: options.fileName ?? 'cover.png',
   });
   await source.put(record);
-  const document = importedDocument(record);
+  const document = importedDocument(record, options.documentId, options.title);
   return { bytes: await serializeSlppr(document, source), document, record };
 }
 
 class DelayedReadRepository implements PaperAssetRepository {
   readonly inner = new MemoryPaperAssetRepository();
+  readCount = 0;
   private releaseRead: (() => void) | undefined;
   readonly readStarted = new Promise<void>((resolve) => {
     this.releaseRead = resolve;
@@ -75,6 +85,10 @@ class DelayedReadRepository implements PaperAssetRepository {
   private continueRead: (() => void) | undefined;
   private readonly readCanContinue = new Promise<void>((resolve) => {
     this.continueRead = resolve;
+  });
+  private notifySecondRead: (() => void) | undefined;
+  readonly secondReadStarted = new Promise<void>((resolve) => {
+    this.notifySecondRead = resolve;
   });
   private delayed = false;
 
@@ -91,6 +105,8 @@ class DelayedReadRepository implements PaperAssetRepository {
   }
 
   async get(id: BinaryAssetRecord['ref']['id']) {
+    this.readCount += 1;
+    if (this.readCount === 2) this.notifySecondRead?.();
     if (!this.delayed) {
       this.delayed = true;
       this.releaseRead?.();
@@ -109,6 +125,18 @@ class DelayedReadRepository implements PaperAssetRepository {
 
   listRefs() {
     return this.inner.listRefs();
+  }
+}
+
+class FailFirstAtomicRepository extends MemoryPaperAssetRepository {
+  private shouldFail = true;
+
+  override async putAllAtomic(records: readonly BinaryAssetRecord[]) {
+    if (this.shouldFail) {
+      this.shouldFail = false;
+      throw new Error('injected first publication failure');
+    }
+    return super.putAllAtomic(records);
   }
 }
 
@@ -261,6 +289,95 @@ describe('standalone .slppr ownership transaction (FBL-031)', () => {
     ]);
     expect(usePaperStore.getState().isDocumentDirty(first)).toBe(false);
     expect(usePaperStore.getState().isDocumentDirty(second)).toBe(false);
+  });
+
+  it('serializes concurrent same-record opens so a successful tab always retains its shared managed record', async () => {
+    const { bytes, record } = await standaloneFixture();
+    const target = new DelayedReadRepository();
+
+    const first = openStandaloneSlpprDocument(bytes, {
+      repository: target,
+      path: '/layouts/concurrent-first.slppr',
+    });
+    await target.readStarted;
+    const second = openStandaloneSlpprDocument(bytes, {
+      repository: target,
+      path: '/layouts/concurrent-second.slppr',
+    });
+
+    const secondEnteredBeforeRelease = await Promise.race([
+      target.secondReadStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    expect(secondEnteredBeforeRelease).toBe(false);
+    expect(target.readCount).toBe(1);
+
+    target.release();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      'standalone-paper',
+      'standalone-paper-2',
+    ]);
+    expect(await target.get(record.ref.id)).toEqual(record);
+    expect(usePaperStore.getState().documents.slice(-2).map(({ persistence }) => persistence?.path))
+      .toEqual(['/layouts/concurrent-first.slppr', '/layouts/concurrent-second.slppr']);
+  });
+
+  it('settles concurrent different-record opens without losing either package asset', async () => {
+    const firstFixture = await standaloneFixture();
+    const secondFixture = await standaloneFixture({
+      recordBytes: [2, 4, 6, 8],
+      documentId: 'second-standalone-paper',
+      title: 'Second standalone layout',
+      fileName: 'second-cover.png',
+    });
+    const target = new MemoryPaperAssetRepository();
+
+    await expect(Promise.all([
+      openStandaloneSlpprDocument(firstFixture.bytes, { repository: target }),
+      openStandaloneSlpprDocument(secondFixture.bytes, { repository: target }),
+    ])).resolves.toEqual(['standalone-paper', 'second-standalone-paper']);
+
+    expect(await target.get(firstFixture.record.ref.id)).toEqual(firstFixture.record);
+    expect(await target.get(secondFixture.record.ref.id)).toEqual(secondFixture.record);
+  });
+
+  it('continues the queue after a publication failure and commits the following request', async () => {
+    const failedFixture = await standaloneFixture();
+    const successfulFixture = await standaloneFixture({
+      recordBytes: [8, 6, 4, 2],
+      documentId: 'recovered-standalone-paper',
+      title: 'Recovered standalone layout',
+      fileName: 'recovered-cover.png',
+    });
+    const target = new FailFirstAtomicRepository();
+
+    const failed = openStandaloneSlpprDocument(failedFixture.bytes, { repository: target });
+    const recovered = openStandaloneSlpprDocument(successfulFixture.bytes, { repository: target });
+
+    await expect(failed).rejects.toThrow(/injected first publication failure/i);
+    await expect(recovered).resolves.toBe('recovered-standalone-paper');
+    expect(await target.get(failedFixture.record.ref.id)).toBeUndefined();
+    expect(await target.get(successfulFixture.record.ref.id)).toEqual(successfulFixture.record);
+  });
+
+  it('rechecks queued project authority before staging while preserving the preceding winner', async () => {
+    const { bytes, record } = await standaloneFixture();
+    const target = new DelayedReadRepository();
+    let queuedAuthorityCurrent = true;
+
+    const winner = openStandaloneSlpprDocument(bytes, { repository: target });
+    await target.readStarted;
+    const stale = openStandaloneSlpprDocument(bytes, {
+      repository: target,
+      isProjectAuthorityCurrent: () => queuedAuthorityCurrent,
+    });
+    queuedAuthorityCurrent = false;
+    target.release();
+
+    await expect(winner).resolves.toBe('standalone-paper');
+    await expect(stale).rejects.toThrow(/does not hold current project authority/i);
+    expect(await target.get(record.ref.id)).toEqual(record);
+    expect(usePaperStore.getState().documents).toHaveLength(2);
   });
 
   it('keeps committed managed bytes when a Paper store observer throws after the tab assignment', async () => {

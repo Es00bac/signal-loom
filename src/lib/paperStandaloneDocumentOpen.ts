@@ -27,6 +27,21 @@ export interface StandaloneSlpprOpenOptions {
   isProjectAuthorityCurrent?: () => boolean;
 }
 
+// Standalone packages can contain the same content-addressed record. Their rollback snapshots are
+// only exclusive while the complete prepare/publish/tab-commit transaction is exclusive too: two
+// prepares that both observe an absent digest cannot safely decide which later write they own.
+// Keep this queue local to standalone opens; unrelated Paper and project work remains concurrent.
+let standaloneOpenTail: Promise<void> = Promise.resolve();
+
+function enqueueStandaloneOpen<T>(open: () => Promise<T>): Promise<T> {
+  const result = standaloneOpenTail.then(open, open);
+  standaloneOpenTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 function stableBatonOwnershipSignature(): string {
   const lock = useEditLockStore.getState().lock;
   // Heartbeats intentionally advance revision/expiry while ownership stays unchanged. Binding to
@@ -83,7 +98,7 @@ function assertOwnershipCurrent(
  * bytes are validated and staged first; managed records and the tab become live only while the
  * original Paper workspace, edit baton, and optional desktop project authority are still current.
  */
-export async function openStandaloneSlpprDocument(
+async function runStandaloneSlpprOpen(
   bytes: Uint8Array,
   options: StandaloneSlpprOpenOptions = {},
 ): Promise<string> {
@@ -114,4 +129,21 @@ export async function openStandaloneSlpprDocument(
     await prepared.rollbackAssets();
     throw error;
   }
+}
+
+export async function openStandaloneSlpprDocument(
+  bytes: Uint8Array,
+  options: StandaloneSlpprOpenOptions = {},
+): Promise<string> {
+  // Own the mutable request bytes and option values at submission time. Workspace/baton/project
+  // authority is deliberately captured only when this request reaches the head of the queue.
+  const ownedBytes = new Uint8Array(bytes);
+  const ownedOptions: StandaloneSlpprOpenOptions = {
+    ...(options.repository ? { repository: options.repository } : {}),
+    ...(options.path ? { path: options.path } : {}),
+    ...(options.isProjectAuthorityCurrent
+      ? { isProjectAuthorityCurrent: options.isProjectAuthorityCurrent }
+      : {}),
+  };
+  return enqueueStandaloneOpen(() => runStandaloneSlpprOpen(ownedBytes, ownedOptions));
 }
