@@ -1404,7 +1404,9 @@ function renderPrintFrameInlineText(frame: PaperFrame, vertical: boolean): strin
     return renderPrintRichParagraphs(frame, vertical);
   }
   const content = paperInlineTextToHtml(frame.text ?? frame.asset?.text ?? '', vertical, escapeHtml);
-  const dropCapLines = normalizedPrintDropCapLines(frame.typography.dropCapLines);
+  const dropCapLines = paperFrameOwnsStoryOpening(frame)
+    ? normalizedPrintDropCapLines(frame.typography.dropCapLines)
+    : 0;
   return dropCapLines
     ? `<div class="paper-dropcap" style="--sl-dropcap-lines: ${dropCapLines}">${content}</div>`
     : content;
@@ -1412,6 +1414,10 @@ function renderPrintFrameInlineText(frame: PaperFrame, vertical: boolean): strin
 
 function normalizedPrintDropCapLines(value: number | undefined): number {
   return value && value >= 2 ? Math.min(8, Math.round(value)) : 0;
+}
+
+function paperFrameOwnsStoryOpening(frame: PaperFrame): boolean {
+  return !frame.threadId || (frame.threadOrder ?? 1) <= 1;
 }
 
 const MM_PER_PT = 25.4 / 72;
@@ -1470,9 +1476,12 @@ function renderPrintRichParagraphs(frame: PaperFrame, vertical: boolean): string
   return paragraphs.map((paragraph, index) => {
     const isFirstPara = index === 0;
     const isLastPara = index === paragraphs.length - 1;
-    // Match the live Paper view: an explicit paragraph setting wins, otherwise the frame-level
-    // typography setting is inherited. Plain frames use the same frame-level setting above.
-    const dropCapLines = normalizedPrintDropCapLines(paragraph.dropCapLines ?? frame.typography.dropCapLines);
+    // A frame-level drop cap is an opening treatment, not a command to capitalize every paragraph.
+    // Later paragraphs may still opt in explicitly, including inside a threaded continuation.
+    const inheritedDropCapLines = isFirstPara && paperFrameOwnsStoryOpening(frame)
+      ? frame.typography.dropCapLines
+      : 0;
+    const dropCapLines = normalizedPrintDropCapLines(paragraph.dropCapLines ?? inheritedDropCapLines);
     const leftIndentMm = Math.max(0, paragraph.leftIndentMm ?? 0);
     const rightIndentMm = Math.max(0, paragraph.rightIndentMm ?? 0);
     const hangingMm = Math.max(0, paragraph.hangingIndentMm ?? 0);

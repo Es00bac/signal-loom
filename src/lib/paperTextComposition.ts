@@ -35,6 +35,11 @@ import type { PaperShapedGlyph, PaperTextShaper } from './paperTextShaper';
 
 const PT_PER_MM = 72 / 25.4;
 const DEFAULT_UNITS_PER_EM = 1000;
+// Keep managed composition geometrically aligned with `.paper-dropcap::first-letter` in the live
+// fallback and print HTML. The configured value scales the glyph; the float's rendered line box is
+// shorter, so the number of body lines that wrap beside it must come from this height, not the raw
+// scale factor.
+const DROP_CAP_FLOAT_LINE_HEIGHT = 0.78;
 
 /** A source paint held before Task 12 resolves it to a typed CMYK/spot paint. */
 export interface PaperPrintPaintSource {
@@ -803,7 +808,7 @@ function firstLineOffsetPt(paragraph: CompositionParagraph): number {
 
 function dropCapReservePt(paragraph: CompositionParagraph): number {
   const dropCap = paragraph.units.find((unit) => unit.dropCap);
-  if (!dropCap || paragraph.dropCapLines < 2) return 0;
+  if (!dropCap || paragraph.dropCapLines < 1) return 0;
   // Mirrors the editor's small right-side drop-cap breathing room (`padding-right: 0.08em`).
   return unitMeasure(dropCap) + dropCap.style.fontSizePt * 0.08;
 }
@@ -1010,7 +1015,7 @@ async function buildParagraphs(
   const output: CompositionParagraph[] = [];
   const missingFaces: PaperMissingManagedFace[] = [];
   let sourceOffset = 0;
-  for (const paragraph of paragraphs) {
+  for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
     const units: CompositionUnit[] = [];
     const ruby: RubyAnnotation[] = [];
     const effectiveRuns = paragraph.listMarker
@@ -1076,13 +1081,24 @@ async function buildParagraphs(
       }
       sourceOffset = runEnd;
     }
-    const dropCapLines = Math.min(8, Math.max(0, Math.round(paragraph.dropCapLines ?? frame.typography.dropCapLines ?? 0)));
+    // Frame typography supplies one story-opening cap. It must not be inherited by every plain-text
+    // paragraph synthesized above. A paragraph-level value remains an explicit per-paragraph opt-in.
+    const frameOpeningDropCapLines = paragraphIndex === 0
+      && (!frame.threadId || (frame.threadOrder ?? 1) <= 1)
+      ? frame.typography.dropCapLines
+      : 0;
+    const dropCapLines = Math.min(8, Math.max(0, Math.round(paragraph.dropCapLines ?? frameOpeningDropCapLines ?? 0)));
+    let dropCapLaneLines = 0;
     if (dropCapLines >= 2) {
       const dropCapIndex = units.findIndex((unit) => !isWhitespace(unit));
       const dropCap = units[dropCapIndex];
       if (dropCap) {
         dropCap.style = scaleStyle(dropCap.style, dropCapLines);
         dropCap.dropCap = true;
+        dropCapLaneLines = Math.max(
+          1,
+          Math.ceil((dropCap.style.fontSizePt * DROP_CAP_FLOAT_LINE_HEIGHT) / paragraphLeadingPt),
+        );
       }
     }
     const firstLineIndentPt = (paragraph.firstLineIndentMm ?? frame.typography.firstLineIndentMm ?? 0) * PT_PER_MM;
@@ -1103,7 +1119,7 @@ async function buildParagraphs(
       sourceEnd: sourceOffset,
       borders: paragraph.borders,
       shading: paragraph.shading,
-      dropCapLines,
+      dropCapLines: dropCapLaneLines,
       alignLast: paragraph.alignLast ?? frame.typography.alignLast ?? 'auto',
       leadingPt: paragraphLeadingPt,
       lineBreakStrict: paragraph.lineBreakStrict ?? frame.typography.lineBreakStrict ?? vertical,

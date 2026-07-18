@@ -9376,7 +9376,8 @@ function PaperInlineText({
     );
   }
 
-  const dropCapLines = frame.typography.dropCapLines && frame.typography.dropCapLines >= 2
+  const frameOwnsStoryOpening = !frame.threadId || (frame.threadOrder ?? 1) <= 1;
+  const dropCapLines = frameOwnsStoryOpening && frame.typography.dropCapLines && frame.typography.dropCapLines >= 2
     ? Math.min(8, Math.round(frame.typography.dropCapLines))
     : 0;
   const spaceBeforePx = Math.max(0, frame.typography.spaceBeforeMm ?? 0) * PX_PER_MM * zoom;
@@ -9527,7 +9528,11 @@ function PaperRichTextView({
         const isLastPara = index === paragraphs.length - 1;
         const ownsParagraphStart = !isPaperRichParagraphFragment(paragraph) || paragraph.ownsParagraphStart;
         const ownsParagraphEnd = !isPaperRichParagraphFragment(paragraph) || paragraph.ownsParagraphEnd;
-        const inheritedDropCapLines = paragraph.dropCapLines ?? frame.typography.dropCapLines;
+        const frameOpeningDropCapLines = isFirstPara
+          && (!frame.threadId || (frame.threadOrder ?? 1) <= 1)
+          ? frame.typography.dropCapLines
+          : 0;
+        const inheritedDropCapLines = paragraph.dropCapLines ?? frameOpeningDropCapLines;
         const dropCapLines = ownsParagraphStart && inheritedDropCapLines && inheritedDropCapLines >= 2 ? Math.min(8, Math.round(inheritedDropCapLines)) : 0;
         const spaceBefore = ownsParagraphStart ? Math.max(0, paragraph.spaceBeforeMm ?? frame.typography.spaceBeforeMm ?? 0) * PX_PER_MM * zoom : 0;
         const spaceAfter = ownsParagraphEnd ? Math.max(0, paragraph.spaceAfterMm ?? frame.typography.spaceAfterMm ?? 0) * PX_PER_MM * zoom : 0;

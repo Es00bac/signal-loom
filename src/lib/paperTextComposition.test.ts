@@ -502,6 +502,82 @@ describe('composePaperTextFrame', () => {
     expect(composed.lines[1].originXPt).toBeGreaterThan(composed.lines[0].originXPt);
   });
 
+  it('uses one frame-opening cap and derives its wrap lane from the exported float height', async () => {
+    let document = createDefaultPaperDocument({ title: 'Frame opening drop cap fixture' });
+    const pageId = document.pages[0].id;
+    const added = addFrameToPaperPage(document, pageId, {
+      id: 'frame-opening-drop-cap',
+      kind: 'text',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 35,
+      heightMm: 100,
+    });
+    document = { ...added.document, importedFonts: [face(400)] };
+    const frame = {
+      ...document.pages[0].frames[0],
+      text: 'The opening paragraph is long enough to wrap across several deterministic lines beside its capital.\nThe second paragraph remains ordinary body text.',
+      typography: {
+        ...document.pages[0].frames[0].typography,
+        fontFamily: 'Fixture Sans',
+        fontSizePt: 9.2,
+        leadingPt: 12.4,
+        dropCapLines: 3,
+      },
+    };
+
+    const composed = await composePaperTextFrame(frame, document, async () => fixtureShaper());
+    const openingLines = composed.lines.filter((line) => line.paragraphIndex === 0);
+    const secondParagraphLines = composed.lines.filter((line) => line.paragraphIndex === 1);
+
+    expect(openingLines.length).toBeGreaterThanOrEqual(3);
+    expect(openingLines[0].runs[0].fontSizePt).toBeCloseTo(27.6);
+    expect(openingLines[1].originXPt).toBeGreaterThan(openingLines[0].originXPt);
+    expect(openingLines[2].originXPt).toBeCloseTo(openingLines[0].originXPt);
+    expect(Math.max(...secondParagraphLines.flatMap((line) => line.runs.map((run) => run.fontSizePt)))).toBeCloseTo(9.2);
+  });
+
+  it('keeps an explicit later paragraph drop cap without inheriting the frame cap everywhere', async () => {
+    let document = createDefaultPaperDocument({ title: 'Explicit paragraph drop cap fixture' });
+    const pageId = document.pages[0].id;
+    const added = addFrameToPaperPage(document, pageId, {
+      id: 'explicit-paragraph-drop-cap',
+      kind: 'text',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 70,
+      heightMm: 100,
+    });
+    document = { ...added.document, importedFonts: [face(400)] };
+    const frame = {
+      ...document.pages[0].frames[0],
+      text: 'Opening\nOrdinary\nExplicit',
+      richText: [
+        { runs: [{ text: 'Opening' }] },
+        { runs: [{ text: 'Ordinary' }] },
+        { runs: [{ text: 'Explicit' }], dropCapLines: 2 },
+      ],
+      typography: {
+        ...document.pages[0].frames[0].typography,
+        fontFamily: 'Fixture Sans',
+        fontSizePt: 9.2,
+        leadingPt: 12.4,
+        dropCapLines: 3,
+      },
+    };
+
+    const composed = await composePaperTextFrame(frame, document, async () => fixtureShaper());
+    const largestSize = (paragraphIndex: number) => Math.max(
+      ...composed.lines
+        .filter((line) => line.paragraphIndex === paragraphIndex)
+        .flatMap((line) => line.runs.map((run) => run.fontSizePt)),
+    );
+
+    expect(largestSize(0)).toBeCloseTo(27.6);
+    expect(largestSize(1)).toBeCloseTo(9.2);
+    expect(largestSize(2)).toBeCloseTo(18.4);
+  });
+
   it('applies bubble vertical alignment to managed glyph coordinates', async () => {
     let document = createDefaultPaperDocument({ title: 'Bubble alignment fixture' });
     const pageId = document.pages[0].id;

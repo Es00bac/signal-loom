@@ -1024,6 +1024,29 @@ describe('paperDocument', () => {
     expect(html).toContain('<div class="paper-dropcap" style="--sl-dropcap-lines: 3">The opening letter spans three lines.</div>');
   });
 
+  it('inherits a frame drop cap only into the opening rich paragraph', () => {
+    const doc = createDefaultPaperDocument({ title: 'Rich Opening Drop Cap', preset: 'us-letter' });
+    const { document: withFrame } = addFrameToPaperPage(doc, doc.pages[0].id, {
+      kind: 'text',
+      xMm: 18,
+      yMm: 18,
+      widthMm: 90,
+      heightMm: 80,
+      typography: { dropCapLines: 3 },
+      richText: [
+        { runs: [{ text: 'The story opening inherits the frame treatment.' }] },
+        { runs: [{ text: 'This ordinary paragraph must not inherit it.' }] },
+        { runs: [{ text: 'An explicitly styled later paragraph may still opt in.' }], dropCapLines: 2 },
+      ],
+    });
+
+    const html = exportPaperDocumentToPrintHtml(withFrame);
+
+    expect(html.match(/class="paper-dropcap"/g)).toHaveLength(2);
+    expect(html).toContain('--sl-dropcap-lines: 3');
+    expect(html).toContain('--sl-dropcap-lines: 2');
+  });
+
   it('exports image content inside the same padded frame-content box used by the live canvas', () => {
     const doc = createDefaultPaperDocument({ title: 'Image Frame Export' });
     const pageId = doc.pages[0].id;
