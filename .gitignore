@@ -63,6 +63,7 @@ docs/superpowers
 /release/
 /test-results/
 /build/font-library/
+/build/font-pack-source/
 
 # Generated dev-dashboard snapshots
 ops/dev-dashboard/artifacts/

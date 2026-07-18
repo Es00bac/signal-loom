@@ -38,7 +38,10 @@
     "gate:release": "node scripts/release-gate.mjs release",
     "android:prepare-localdream-runtime": "node scripts/prepare-android-localdream-runtime.mjs",
     "generate:oss-licenses": "node scripts/generate-oss-licenses.mjs",
+    "acquire:font-library": "bash scripts/acquire-bundled-font-library.sh",
     "prepare:font-library": "node scripts/prepare-bundled-font-library.mjs",
+    "verify:font-library": "node scripts/verify-bundled-font-library.mjs",
+    "smoke:packaged-font-library": "node scripts/package-font-library-smoke.mjs",
     "sync:catalog": "node scripts/sync-provider-catalog.mjs",
     "sync:catalog:check": "node scripts/sync-provider-catalog.mjs --check",
     "sync:android": "npm run build && cap sync android",
@@ -116,6 +119,8 @@
     "productName": "Sloom Studio",
     "artifactName": "SloomStudio-${version}-${arch}.${ext}",
     "asar": true,
+    "beforePack": "scripts/electron-builder-before-pack.cjs",
+    "afterPack": "scripts/electron-builder-after-pack.cjs",
     "directories": {
       "output": "release"
     },
@@ -146,6 +151,7 @@
         "filter": [
           "README.md",
           "DISTRIBUTION.md",
+          "source-artifact.json",
           "catalog/**/*",
           "inventory/README.md",
           "inventory/SHA256SUMS",
