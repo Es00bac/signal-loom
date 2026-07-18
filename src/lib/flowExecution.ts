@@ -452,11 +452,13 @@ function retryExistingAsyncJobPhase<T>(input: {
   settings: RuntimeSettingsSnapshot;
   onStatus?: (statusMessage: string) => void;
   abortSignal?: AbortSignal;
+  maxRetries?: number;
+  baseDelayMs?: number;
 }): Promise<T> {
   return withExponentialBackoff({
     operation: input.operation,
-    maxRetries: input.settings.providerSettings.batchMaxRetries ?? 10,
-    baseDelayMs: input.settings.providerSettings.batchRetryBaseDelayMs ?? 30000,
+    maxRetries: input.maxRetries ?? input.settings.providerSettings.batchMaxRetries ?? 10,
+    baseDelayMs: input.baseDelayMs ?? input.settings.providerSettings.batchRetryBaseDelayMs ?? 30000,
     maxElapsedMs: FLOW_PROVIDER_RETRY_BUDGET_MS,
     abortSignal: input.abortSignal,
     onRetry: (attempt, max, delay, error) => {
@@ -2729,6 +2731,11 @@ async function materializeAcceptedProviderResult(input: {
       settings: input.settings,
       onStatus: input.onStatus,
       abortSignal: input.abortSignal,
+      // One immediate retry distinguishes a transient accepted-response read
+      // from an unavailable renderer/native materialization path without
+      // stalling the established URL fallback or ever repeating submission.
+      maxRetries: 1,
+      baseDelayMs: 0,
     });
   } catch (error) {
     if (isAbortError(error) || input.abortSignal?.aborted) {
