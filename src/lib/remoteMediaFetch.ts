@@ -46,6 +46,11 @@ export interface DownstreamMediaBlob {
   mimeType: string;
 }
 
+interface NativeRemoteMediaAttempt {
+  media?: RemoteMediaBytes;
+  failure?: string;
+}
+
 let nativeDownloadSequence = 0;
 
 function createNativeDownloadCancellationId(): string {
@@ -112,62 +117,7 @@ export async function fetchRemoteMediaAsDataUrl(
   runtime: RemoteMediaFetchRuntime = resolveDefaultRuntime(),
   signal?: AbortSignal,
 ): Promise<RemoteMediaBytes | undefined> {
-  throwIfAborted(signal);
-  if (!/^https?:\/\//i.test(url)) {
-    return undefined;
-  }
-
-  if (runtime.electronDownload) {
-    const cancellationId = signal && runtime.electronCancelDownload
-      ? createNativeDownloadCancellationId()
-      : undefined;
-    let cancellationSent = false;
-    const cancelNativeDownload = () => {
-      if (!cancellationId || cancellationSent) return;
-      cancellationSent = true;
-      void runtime.electronCancelDownload?.(cancellationId).catch(() => undefined);
-    };
-    signal?.addEventListener('abort', cancelNativeDownload, { once: true });
-    try {
-      const result = await raceWithAbort(
-        cancellationId
-          ? runtime.electronDownload(url, cancellationId)
-          : runtime.electronDownload(url),
-        signal,
-      );
-      if (result && result.base64 && !result.error) {
-        const mimeType = normalizeMimeType(result.mimeType);
-        return { dataUrl: `data:${mimeType};base64,${result.base64}`, mimeType };
-      }
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      if (signal?.aborted) throw createAbortError();
-      // Fall through to other strategies.
-    } finally {
-      signal?.removeEventListener('abort', cancelNativeDownload);
-    }
-  }
-
-  if (runtime.isAndroidNative && runtime.capacitorHttp) {
-    try {
-      const response = await raceWithAbort(runtime.capacitorHttp.get({ url, responseType: 'blob' }), signal);
-      if (
-        response.status >= 200 &&
-        response.status < 300 &&
-        typeof response.data === 'string' &&
-        response.data.length > 0
-      ) {
-        const mimeType = normalizeMimeType(headerValue(response.headers, 'content-type'));
-        return { dataUrl: `data:${mimeType};base64,${response.data}`, mimeType };
-      }
-    } catch (error) {
-      if (isAbortError(error)) throw error;
-      if (signal?.aborted) throw createAbortError();
-      // Fall through.
-    }
-  }
-
-  return undefined;
+  return (await fetchRemoteMediaNativeAttempt(url, runtime, signal)).media;
 }
 
 function base64DataUrlToBlob(dataUrl: string, fallbackMimeType = 'application/octet-stream'): Blob {
@@ -216,10 +166,100 @@ function remoteMediaIdentity(url: string): string {
   }
 }
 
-function errorSummary(error: unknown): string {
-  if (!(error instanceof Error)) return 'unknown failure';
-  const message = error.message.trim().replace(/\s+/g, ' ');
-  return message.slice(0, 200) || error.name;
+function sanitizedUrlIdentity(value: string): string {
+  const trailing = value.match(/[),.;!?]+$/)?.[0] ?? '';
+  const candidate = trailing ? value.slice(0, -trailing.length) : value;
+  try {
+    const parsed = new URL(candidate);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}${trailing}`;
+  } catch {
+    return `remote URL${trailing}`;
+  }
+}
+
+function sanitizeFailureSummary(error: unknown): string {
+  const raw = error instanceof Error
+    ? error.message || error.name
+    : typeof error === 'string'
+      ? error
+      : 'unknown failure';
+  const sanitized = raw
+    .replace(/data:[^\s<>"']+/gi, 'data URL')
+    .replace(/blob:[^\s<>"']+/gi, 'local blob URL')
+    .replace(/https?:\/\/[^\s<>"']+/gi, sanitizedUrlIdentity)
+    .replace(/(bearer\s+)[^\s,;]+/gi, '$1[redacted]')
+    .replace(/((?:api[_-]?key|access[_-]?token|auth(?:orization)?|credential|password|secret|signature|signed|token)\s*[:=]\s*)[^\s,;&]+/gi, '$1[redacted]')
+    .replace(/\b(?:sk|pk|eyJ)[A-Za-z0-9._-]{16,}\b/g, '[redacted]')
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]')
+    .trim()
+    .replace(/\s+/g, ' ');
+  return sanitized.slice(0, 240) || (error instanceof Error ? error.name : 'unknown failure');
+}
+
+async function fetchRemoteMediaNativeAttempt(
+  url: string,
+  runtime: RemoteMediaFetchRuntime = resolveDefaultRuntime(),
+  signal?: AbortSignal,
+): Promise<NativeRemoteMediaAttempt> {
+  throwIfAborted(signal);
+  if (!/^https?:\/\//i.test(url)) {
+    return { failure: 'native download supports only remote HTTP media' };
+  }
+
+  const failures: string[] = [];
+  if (runtime.electronDownload) {
+    const cancellationId = signal && runtime.electronCancelDownload
+      ? createNativeDownloadCancellationId()
+      : undefined;
+    let cancellationSent = false;
+    const cancelNativeDownload = () => {
+      if (!cancellationId || cancellationSent) return;
+      cancellationSent = true;
+      void runtime.electronCancelDownload?.(cancellationId).catch(() => undefined);
+    };
+    signal?.addEventListener('abort', cancelNativeDownload, { once: true });
+    try {
+      const result = await raceWithAbort(
+        cancellationId
+          ? runtime.electronDownload(url, cancellationId)
+          : runtime.electronDownload(url),
+        signal,
+      );
+      if (result?.base64 && !result.error) {
+        const mimeType = normalizeMimeType(result.mimeType);
+        return { media: { dataUrl: `data:${mimeType};base64,${result.base64}`, mimeType } };
+      }
+      failures.push(result?.error
+        ? `Electron native download reported ${sanitizeFailureSummary(result.error)}`
+        : 'Electron native download returned no media bytes');
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      if (signal?.aborted) throw createAbortError();
+      failures.push(`Electron native download failed: ${sanitizeFailureSummary(error)}`);
+    } finally {
+      signal?.removeEventListener('abort', cancelNativeDownload);
+    }
+  }
+
+  if (runtime.isAndroidNative && runtime.capacitorHttp) {
+    try {
+      const response = await raceWithAbort(runtime.capacitorHttp.get({ url, responseType: 'blob' }), signal);
+      if (response.status < 200 || response.status >= 300) {
+        failures.push(`Android native download returned HTTP ${response.status}`);
+      } else if (typeof response.data !== 'string' || response.data.length === 0) {
+        failures.push('Android native download returned no media bytes');
+      } else {
+        const mimeType = normalizeMimeType(headerValue(response.headers, 'content-type'));
+        return { media: { dataUrl: `data:${mimeType};base64,${response.data}`, mimeType } };
+      }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      if (signal?.aborted) throw createAbortError();
+      failures.push(`Android native download failed: ${sanitizeFailureSummary(error)}`);
+    }
+  }
+
+  return { failure: failures.join('; ') || 'native download was unavailable' };
 }
 
 function assertBoundedMediaBlob(
@@ -282,6 +322,20 @@ export async function fetchDownstreamMediaBlob(
     throw new Error(`${options.errorLabel}: invalid downstream media byte limit.`);
   }
   const strictOptions = { kind: options.kind, errorLabel: options.errorLabel, maxBytes };
+
+  if (/^data:/i.test(url) && /;base64,/i.test(url.slice(0, Math.min(url.length, 1_024)))) {
+    const analysis = analyzeBase64DataUrl(url, maxBytes);
+    if (!analysis) {
+      throw new Error(`${options.errorLabel} (${remoteMediaIdentity(url)}): inline media is invalid or exceeds the ${maxBytes}-byte downstream limit.`);
+    }
+    return assertBoundedMediaBlob(
+      base64DataUrlToBlob(url, analysis.mimeType),
+      analysis.mimeType,
+      strictOptions,
+      'inline media',
+    );
+  }
+
   let rendererFailure = 'renderer download was unavailable';
 
   try {
@@ -291,16 +345,17 @@ export async function fetchDownstreamMediaBlob(
     if (isAbortError(error) || signal?.aborted) {
       throw isAbortError(error) ? error : createAbortError();
     }
-    rendererFailure = errorSummary(error);
+    rendererFailure = sanitizeFailureSummary(error);
   }
 
   let nativeFailure = 'native download was unavailable';
   if (/^https?:\/\//i.test(url)) {
     try {
-      const native = options.runtime
-        ? await fetchRemoteMediaAsDataUrl(url, options.runtime, signal)
-        : await fetchRemoteMediaAsDataUrl(url, undefined, signal);
+      const attempt = options.runtime
+        ? await fetchRemoteMediaNativeAttempt(url, options.runtime, signal)
+        : await fetchRemoteMediaNativeAttempt(url, undefined, signal);
       throwIfAborted(signal);
+      const native = attempt.media;
       if (native) {
         const analysis = analyzeBase64DataUrl(native.dataUrl, maxBytes);
         if (!analysis) {
@@ -309,11 +364,12 @@ export async function fetchDownstreamMediaBlob(
         const blob = base64DataUrlToBlob(native.dataUrl, native.mimeType);
         return assertBoundedMediaBlob(blob, native.mimeType ?? analysis.mimeType, strictOptions, 'native download');
       }
+      nativeFailure = attempt.failure ?? nativeFailure;
     } catch (error) {
       if (isAbortError(error) || signal?.aborted) {
         throw isAbortError(error) ? error : createAbortError();
       }
-      nativeFailure = errorSummary(error);
+      nativeFailure = sanitizeFailureSummary(error);
     }
   }
 

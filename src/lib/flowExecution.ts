@@ -3810,10 +3810,6 @@ function formDataFromFields(fields: Record<string, string | number>): FormData {
 
 async function normalizeRemoteImageInput(imageInput: string, signal?: AbortSignal): Promise<string> {
   throwIfAborted(signal);
-  if (imageInput.startsWith('data:')) {
-    return imageInput;
-  }
-
   const inline = await dataUrlToInlineData(imageInput, 'image/png', undefined, signal);
   return `data:${inline.mimeType};base64,${inline.data}`;
 }
@@ -5731,23 +5727,12 @@ async function dataUrlToInlineData(
   signal?: AbortSignal,
 ): Promise<{ mimeType: string; data: string }> {
   throwIfAborted(signal);
-  if (dataUrl.startsWith('data:')) {
-    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-
-    if (!match) {
-      throw new Error(dataUrlError);
-    }
-
-    return {
-      mimeType: match[1],
-      data: match[2],
-    };
-  }
-
   const expectedKind = downstreamMediaKindForMime(fallbackMimeType);
   const { blob, mimeType } = await fetchDownstreamMediaBlob(dataUrl, {
     kind: expectedKind,
-    errorLabel: `Downstream ${expectedKind} reference could not be materialized`,
+    errorLabel: dataUrl.startsWith('data:') && dataUrlError
+      ? dataUrlError.replace(/\.$/, '')
+      : `Downstream ${expectedKind} reference could not be materialized`,
   }, signal);
   const base64 = await blobToBase64(blob, signal);
 
@@ -5777,12 +5762,10 @@ async function dataUrlToGeminiVideo(dataUrl: string, signal?: AbortSignal): Prom
 
 async function dataUrlToFile(dataUrl: string, filename: string, signal?: AbortSignal): Promise<File> {
   throwIfAborted(signal);
-  const blob = dataUrl.startsWith('data:')
-    ? await (await fetch(dataUrl, { signal })).blob()
-    : (await fetchDownstreamMediaBlob(dataUrl, {
-        kind: 'image',
-        errorLabel: 'Downstream image reference could not be materialized',
-      }, signal)).blob;
+  const blob = (await fetchDownstreamMediaBlob(dataUrl, {
+    kind: 'image',
+    errorLabel: 'Downstream image reference could not be materialized',
+  }, signal)).blob;
   throwIfAborted(signal);
   const mimeType = blob.type || 'image/png';
 

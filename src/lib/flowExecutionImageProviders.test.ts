@@ -1132,4 +1132,32 @@ describe('executeNodeRequest advanced image providers', () => {
       confidence: 'unknown',
     });
   });
+
+  it.each([
+    { provider: 'bfl', modelId: 'flux-2-pro', data: {} },
+    { provider: 'stability', modelId: 'stable-image-edit-search-replace', data: { imageSearchPrompt: 'subject' } },
+    { provider: 'openai', modelId: 'gpt-image-2', data: {} },
+    { provider: 'gemini', modelId: 'gemini-3-pro-image-preview', data: {} },
+  ] as const)('rejects wrong-family inline media before $provider provider submission', async ({ provider, modelId, data }) => {
+    openAiCapture.editArgs = undefined;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(executeNodeRequest(
+      createImageNode(provider, modelId, data),
+      {
+        prompt: 'Edit the connected image.',
+        editImageInput: 'data:text/html;base64,PGh0bWw+ZXhwaXJlZDwvaHRtbD4=',
+        config: DEFAULT_EXECUTION_CONFIG,
+      },
+      {
+        ...baseSettings,
+        apiKeys: { ...baseSettings.apiKeys, openai: 'openai-key', gemini: 'gemini-key' },
+        providerSettings: { ...baseSettings.providerSettings, batchMaxRetries: 0 },
+      },
+    )).rejects.toThrow(/text\/html; expected image media/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(openAiCapture.editArgs).toBeUndefined();
+  });
 });

@@ -173,6 +173,36 @@ describe('fetchDownstreamMediaBlob (AUD-029)', () => {
     expect(result.blob.size).toBe(3);
   });
 
+  it('validates inline data and blob URLs through the same bounded MIME-family gate', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(new Blob(['PNG'], { type: 'image/png' }), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }))
+      .mockResolvedValueOnce(new Response('<html>not an image</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const inline = await fetchDownstreamMediaBlob('data:image/png;base64,UE5H', {
+      kind: 'image', errorLabel: 'Image reference failed', runtime: {},
+    });
+    const localBlob = await fetchDownstreamMediaBlob('blob:valid-image', {
+      kind: 'image', errorLabel: 'Image reference failed', runtime: {},
+    });
+
+    expect(await inline.blob.text()).toBe('PNG');
+    expect(localBlob.mimeType).toBe('image/png');
+    await expect(fetchDownstreamMediaBlob('data:text/html;base64,PGh0bWw+', {
+      kind: 'image', errorLabel: 'Image reference failed', runtime: {},
+    })).rejects.toThrow(/text\/html; expected image media/i);
+    await expect(fetchDownstreamMediaBlob('blob:wrong-family', {
+      kind: 'image', errorLabel: 'Image reference failed', runtime: {},
+    })).rejects.toThrow(/text\/html; expected image media/i);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('uses native bytes after a renderer transport failure', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('renderer transport unavailable')));
     const electronDownload = vi.fn().mockResolvedValue({ base64: 'V0VCUA==', mimeType: 'image/webp' });
@@ -226,8 +256,34 @@ describe('fetchDownstreamMediaBlob (AUD-029)', () => {
       kind: 'image',
       errorLabel: 'Image reference failed',
       runtime: { isAndroidNative: true, capacitorHttp: { get } },
-    })).rejects.toThrow(/renderer transport unavailable.*native download was unavailable/i);
+    })).rejects.toThrow(/renderer transport unavailable.*Android native download returned HTTP 403/i);
     expect(get).toHaveBeenCalledOnce();
+  });
+
+  it('preserves actionable native status while redacting signed transport details', async () => {
+    const signedUrl = `${ATLAS_URL}?Signature=renderer-secret#fragment-secret`;
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError(
+      `Failed to fetch ${signedUrl}; token=renderer-token; Bearer renderer-bearer`,
+    )));
+    const electronDownload = vi.fn().mockResolvedValue({
+      error: `HTTP 403 for ${signedUrl}; access_token=native-token`,
+    });
+
+    let message = '';
+    try {
+      await fetchDownstreamMediaBlob(signedUrl, {
+        kind: 'image', errorLabel: 'Image reference failed', runtime: { electronDownload },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain('HTTP 403');
+    expect(message).toContain('atlas-media.oss-us-west-1.aliyuncs.com/flux/generated.png');
+    expect(message).toContain('token=[redacted]');
+    expect(message).not.toMatch(/renderer-secret|fragment-secret|renderer-token|renderer-bearer|native-token/);
+    expect(message).not.toContain('?Signature=');
+    expect(message).not.toContain('#fragment');
   });
 
   it('rejects a native response with the wrong media MIME family', async () => {
