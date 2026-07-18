@@ -79,6 +79,8 @@ export interface PaperTextFlowSourceMetrics {
   protectedSpans?: PaperTextFlowProtectedSpan[];
   styleSpans?: PaperTextFlowStyleSpan[];
   paragraphs?: PaperTextFlowParagraphMetrics[];
+  /** Exact source ranges inserted between structural rich paragraphs; authored run delimiters are excluded. */
+  structuralDelimiters?: PaperTextFlowProtectedSpan[];
 }
 
 export interface PaperTextFlowPoint {
@@ -663,9 +665,9 @@ export function flowPaperText(
       }
     }
 
-    // Ownership follows every consumed token plus the separators leading into it. A single ordinary delimiter
-    // is omitted only at a direct nonempty→nonempty frame boundary; consecutive/edge/blank-only delimiters stay
-    // owned by exactly one range. This keeps source and rich slices byte-for-byte identical without duplicates.
+    // Ownership follows every consumed token plus the separators leading into it. Plain source has no derived
+    // delimiters, so every authored byte remains owned by a frame or overset. Rich presentation may omit only a
+    // mapped structural paragraph delimiter. Consecutive/edge/blank-only delimiters stay owned exactly once.
     const consumed = index > frameStartIndex;
     const hasWords = tokens.slice(frameStartIndex, index).some((token) => token.kind === 'word');
     const rawSourceStart = frameStartIndex === 0 ? 0 : tokens[frameStartIndex - 1].end;
@@ -673,7 +675,7 @@ export function flowPaperText(
       ? (index >= tokens.length ? text.length : tokens[index - 1].end)
       : rawSourceStart;
     const skippedDelimiterLength = consumed && previousFrameHasWords && hasWords
-      ? ordinaryDelimiterLengthAt(text, rawSourceStart)
+      ? presentationDelimiterLengthAt(text, rawSourceStart, sourceMetrics)
       : 0;
     const sourceStart = skippedDelimiterLength > 0
       ? rawSourceStart + skippedDelimiterLength
@@ -690,7 +692,7 @@ export function flowPaperText(
     const rawOversetStart = index === 0 ? 0 : tokens[index - 1].end;
     const oversetHasWords = tokens.slice(index).some((token) => token.kind === 'word');
     const skippedDelimiterLength = previousFrameHasWords && oversetHasWords
-      ? ordinaryDelimiterLengthAt(text, rawOversetStart)
+      ? presentationDelimiterLengthAt(text, rawOversetStart, sourceMetrics)
       : 0;
     const oversetStart = skippedDelimiterLength > 0
       ? rawOversetStart + skippedDelimiterLength
@@ -700,9 +702,20 @@ export function flowPaperText(
   return { frames: frameResults, overset, fits: index >= tokens.length };
 }
 
-function ordinaryDelimiterLengthAt(text: string, offset: number): number {
-  if (offset < 0 || offset >= text.length || !/\s/u.test(text[offset])) return 0;
-  return text[offset] === '\r' && text[offset + 1] === '\n' ? 2 : 1;
+function presentationDelimiterLengthAt(
+  text: string,
+  offset: number,
+  sourceMetrics: PaperTextFlowSourceMetrics | undefined,
+): number {
+  // Plain flow has no structural source metadata, so every delimiter is authored and must remain owned. Rich
+  // flow has authoritative provenance and may hide only an exact structural paragraph range; the character
+  // value alone never makes an authored run delimiter structural.
+  if (!sourceMetrics) return 0;
+  const structural = sourceMetrics.structuralDelimiters?.find((span) => span.start === offset);
+  if (!structural) return 0;
+  const start = Math.max(0, Math.min(text.length, Math.floor(structural.start)));
+  const end = Math.max(start, Math.min(text.length, Math.floor(structural.end)));
+  return start === offset && end === start + 1 && text.slice(start, end) === '\n' ? 1 : 0;
 }
 
 function paragraphStartAdvanceMm(

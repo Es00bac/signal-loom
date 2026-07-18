@@ -1,6 +1,10 @@
 import type { PaperFrame, PaperRichParagraph, PaperTypography } from '../types/paper';
 import { resolvePaperTextColumns } from './paperColumns';
-import { flattenPaperRichText, slicePaperRichTextRange, type PaperRichParagraphFragment } from './paperRichText';
+import {
+  flattenPaperRichTextSource,
+  slicePaperRichTextRange,
+  type PaperRichParagraphFragment,
+} from './paperRichText';
 import {
   flowPaperText,
   type PaperTextFlowSourceMetrics,
@@ -50,7 +54,10 @@ const PT_TO_MM = 25.4 / 72;
 
 /** Source-coordinate metrics for rich flow. Run overrides remain partial so unset values inherit the typography
  * of the destination frame, not the head. List prefixes are protected as one marker+tab source atom. */
-function paperRichTextFlowMetrics(paragraphs: readonly PaperRichParagraph[]): PaperTextFlowSourceMetrics {
+function paperRichTextFlowMetrics(
+  paragraphs: readonly PaperRichParagraph[],
+  structuralDelimiters: NonNullable<PaperTextFlowSourceMetrics['structuralDelimiters']>,
+): PaperTextFlowSourceMetrics {
   const protectedSpans: NonNullable<PaperTextFlowSourceMetrics['protectedSpans']> = [];
   const styleSpans: PaperTextFlowStyleSpan[] = [];
   const paragraphMetrics: NonNullable<PaperTextFlowSourceMetrics['paragraphs']> = [];
@@ -99,7 +106,7 @@ function paperRichTextFlowMetrics(paragraphs: readonly PaperRichParagraph[]): Pa
     });
   });
 
-  return { protectedSpans, styleSpans, paragraphs: paragraphMetrics };
+  return { protectedSpans, styleSpans, paragraphs: paragraphMetrics, structuralDelimiters };
 }
 
 /**
@@ -127,9 +134,12 @@ export function computePaperThreadSlices(
     const headRichText = head.richText && head.richText.length > 0 ? head.richText : undefined;
     // When the head is rich, flow over the flatten of its authoritative richText so the offsets index the exact
     // string the rich slicer flattens — keeping displayText and the rich slice perfectly consistent. Otherwise
-    // flow the head's plain text (unchanged plain-thread behavior).
-    const story = headRichText ? flattenPaperRichText(headRichText) : (head.text ?? '');
-    const richMetrics = headRichText ? paperRichTextFlowMetrics(headRichText) : undefined;
+    // flow the head's plain text while retaining every authored plain-source byte in frame/overset ownership.
+    const richSource = headRichText ? flattenPaperRichTextSource(headRichText) : undefined;
+    const story = richSource?.text ?? (head.text ?? '');
+    const richMetrics = headRichText && richSource
+      ? paperRichTextFlowMetrics(headRichText, richSource.structuralDelimiters)
+      : undefined;
 
     const flow = flowPaperText(
       story,

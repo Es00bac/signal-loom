@@ -135,11 +135,51 @@ function normalizeVariationSettings(value: unknown): NormalizedRequestedValue {
   };
 }
 
-function safePropertyPresence(target: object, property: CanvasTextProperty): boolean | undefined {
+function safePropertyPresence(target: object, property: PropertyKey): boolean | undefined {
   try {
     return property in target;
   } catch {
     return undefined;
+  }
+}
+
+function canonicalizeFontShorthand(ownerDocument: Document, value: string): string | undefined {
+  try {
+    const probe = ownerDocument.createElement('span');
+    const style = probe.style;
+    if (!style || safePropertyPresence(style, 'font') !== true) return undefined;
+    if (!Reflect.set(style, 'font', '')) return undefined;
+    if (!Reflect.set(style, 'font', value)) return undefined;
+    const canonical = Reflect.get(style, 'font');
+    if (typeof canonical !== 'string' || !canonical.trim()) return undefined;
+    // A second detached CSSOM round trip makes the accepted equivalence contract explicit: both inputs must
+    // converge to the same stable browser serialization, not merely to a one-off adapter transformation.
+    if (!Reflect.set(style, 'font', '')) return undefined;
+    if (!Reflect.set(style, 'font', canonical)) return undefined;
+    return Reflect.get(style, 'font') === canonical ? canonical : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function verifyNativeFontShorthand(
+  context: CanvasRenderingContext2D,
+  ownerDocument: Document,
+  requestedFont: string,
+): boolean {
+  if (safePropertyPresence(context, 'font') !== true) return false;
+  try {
+    if (!Reflect.set(context, 'font', requestedFont)) return false;
+    const observedFont = Reflect.get(context, 'font');
+    if (typeof observedFont !== 'string' || !observedFont.trim()) return false;
+    if (observedFont === requestedFont) return true;
+    const requestedCanonical = canonicalizeFontShorthand(ownerDocument, requestedFont);
+    const observedCanonical = canonicalizeFontShorthand(ownerDocument, observedFont);
+    return requestedCanonical != null
+      && observedCanonical != null
+      && requestedCanonical === observedCanonical;
+  } catch {
+    return false;
   }
 }
 
@@ -345,10 +385,9 @@ export function createPaperCanvasMeasurer(pxPerMm = PAPER_SCREEN_PX_PER_MM): Pap
     const extended = ctx as ExtendedCanvasTextContext;
     const stylePrefix = fontStyle !== 'normal' ? `${fontStyle} ` : '';
     const stretchPrefix = spec.fontStretch != null ? `${stretch.css} ` : '';
-    try {
-      ctx.font = `${stylePrefix}${fontWeight} ${stretchPrefix}${fontSizePx}px ${fontFamily}`;
-    } catch {
-      fallbackModes.push('font-shorthand-exception');
+    const requestedFont = `${stylePrefix}${fontWeight} ${stretchPrefix}${fontSizePx}px ${fontFamily}`;
+    if (!contextDocument || !verifyNativeFontShorthand(ctx, contextDocument, requestedFont)) {
+      fallbackModes.push('font-shorthand-rejected');
     }
 
     if (!stretch.valid) {

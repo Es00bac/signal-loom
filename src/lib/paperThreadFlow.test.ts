@@ -37,7 +37,7 @@ describe('computePaperThreadSlices', () => {
     const slices = computePaperThreadSlices(frames, measure);
     expect(slices.get('head')?.sourceText).toBe('aa bb');
     expect(slices.get('head')?.isHead).toBe(true);
-    expect(slices.get('tail')?.sourceText).toBe('cc dd');
+    expect(slices.get('tail')?.sourceText).toBe(' cc dd');
     expect(slices.get('tail')?.isHead).toBe(false);
     expect(slices.get('tail')?.isOverset).toBe(false);
   });
@@ -67,6 +67,38 @@ describe('computePaperThreadSlices', () => {
     expect(slices.get('head')?.richText).toBeUndefined();
     expect(slices.get('tail')?.richText).toBeUndefined();
   });
+
+  it.each([
+    { delimiter: '\n', widthMm: 100 },
+    { delimiter: '\r', widthMm: 2 },
+    { delimiter: '\r\n', widthMm: 100 },
+  ])(
+    'conserves a plain authored $delimiter across threaded and overset boundaries',
+    ({ delimiter, widthMm }) => {
+      const story = `A${delimiter}B`;
+      const frames = [
+        textFrame({ id: 'head', threadId: 'plain-delimiter', threadOrder: 1, widthMm, text: story }),
+        textFrame({ id: 'tail', threadId: 'plain-delimiter', threadOrder: 2, widthMm: 100 }),
+      ];
+      const slices = computePaperThreadSlices(frames, measure);
+      const head = slices.get('head')!;
+      const tail = slices.get('tail')!;
+
+      expect([head.sourceText, tail.sourceText]).toEqual(['A', `${delimiter}B`]);
+      expect(head.sourceEnd).toBe(tail.sourceStart);
+      expect(head.sourceText + tail.sourceText).toBe(story);
+
+      const oversetFrames = frames.slice(0, 1);
+      const oversetSlice = computePaperThreadSlices([
+        ...oversetFrames,
+        textFrame({
+          id: 'blocked-tail', threadId: 'plain-delimiter', threadOrder: 2, widthMm: 100, heightMm: 0,
+        }),
+      ], measure).get('blocked-tail')!;
+      expect(story.slice(oversetSlice.sourceEnd)).toBe(`${delimiter}B`);
+      expect(oversetSlice.isOverset).toBe(true);
+    },
+  );
 });
 
 describe('computePaperThreadSlices — rich (formatted) stories', () => {
@@ -128,6 +160,130 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
     expect(frames[0].richText).toBe(inlineNewlineStory);
   });
 
+  it.each([
+    { delimiter: '\n', widthMm: 100 },
+    { delimiter: '\r', widthMm: 2 },
+    { delimiter: '\r\n', widthMm: 100 },
+  ])('owns an inline $delimiter exactly once when a rich run splits at its boundary', ({ delimiter, widthMm }) => {
+    const richText: PaperRichParagraph[] = [{
+      id: 'inline-paragraph',
+      runs: [{ id: 'inline-run', text: `A${delimiter}B`, fontWeight: '700', link: 'https://example.test' }],
+    }];
+    const story = flattenPaperRichText(richText);
+    const snapshot = structuredClone(richText);
+    const frames = [
+      textFrame({
+        id: 'head', threadId: 'inline-boundary', threadOrder: 1, widthMm, heightMm: 5,
+        richText, text: story,
+      }),
+      textFrame({ id: 'tail', threadId: 'inline-boundary', threadOrder: 2, widthMm: 100, heightMm: 5 }),
+    ];
+
+    const slices = computePaperThreadSlices(frames, measure);
+    const head = slices.get('head')!;
+    const tail = slices.get('tail')!;
+    expect([head.sourceStart, head.sourceEnd, head.sourceText]).toEqual([0, 1, 'A']);
+    expect([tail.sourceStart, tail.sourceEnd, tail.sourceText]).toEqual([1, story.length, `${delimiter}B`]);
+    expect(flattenPaperRichText(head.richText) + flattenPaperRichText(tail.richText)).toBe(story);
+    expect(tail.richText?.[0].runs).toEqual([{
+      id: 'inline-run', text: `${delimiter}B`, fontWeight: '700', link: 'https://example.test',
+    }]);
+    expect(richText).toEqual(snapshot);
+    expect(frames[0].richText).toBe(richText);
+  });
+
+  it('owns consecutive inline delimiters at frame start/end without treating them as blank paragraphs', () => {
+    const richText: PaperRichParagraph[] = [{
+      id: 'inline-consecutive',
+      runs: [{ id: 'inline-consecutive-run', text: 'A\n\nB', fontStyle: 'italic' }],
+    }];
+    const story = flattenPaperRichText(richText);
+    const frames = Array.from({ length: 3 }, (_, index) => textFrame({
+      id: `inline-${index}`,
+      threadId: 'inline-consecutive',
+      threadOrder: index + 1,
+      widthMm: 100,
+      heightMm: 5,
+      ...(index === 0 ? { richText, text: story } : {}),
+    }));
+    const slices = computePaperThreadSlices(frames, measure);
+    const ordered = frames.map((entry) => slices.get(entry.id)!);
+
+    expect(ordered.map((entry) => entry.sourceText)).toEqual(['A', '\n', '\nB']);
+    expect(ordered.map((entry) => flattenPaperRichText(entry.richText)).join('')).toBe(story);
+    expect(ordered.map((entry) => [entry.sourceStart, entry.sourceEnd])).toEqual([[0, 1], [1, 2], [2, 4]]);
+  });
+
+  it('distinguishes an inline newline adjacent to an equal structural paragraph separator', () => {
+    const richText: PaperRichParagraph[] = [
+      { id: 'inline-source', runs: [{ id: 'inline-source-run', text: 'A\nB', fontWeight: '700' }] },
+      { id: 'structural-tail', runs: [{ id: 'structural-tail-run', text: 'C', fontStyle: 'italic' }] },
+    ];
+    const story = flattenPaperRichText(richText);
+    const frames = [
+      textFrame({
+        id: 'head', threadId: 'adjacent', threadOrder: 1, widthMm: 100, heightMm: 9,
+        richText, text: story,
+      }),
+      textFrame({ id: 'tail', threadId: 'adjacent', threadOrder: 2, widthMm: 100, heightMm: 5 }),
+    ];
+    const slices = computePaperThreadSlices(frames, measure);
+    const head = slices.get('head')!;
+    const tail = slices.get('tail')!;
+
+    expect(head.sourceText).toBe('A\nB');
+    expect(flattenPaperRichText(head.richText)).toBe('A\nB');
+    expect(tail.sourceText).toBe('C');
+    expect(story.slice(head.sourceEnd, tail.sourceStart)).toBe('\n');
+    expect(head.sourceEnd).toBe(3);
+    expect(tail.sourceStart).toBe(4);
+  });
+
+  it('conserves styled multi-run source ranges and the exact overset tail without mutating the story', () => {
+    const richText: PaperRichParagraph[] = [
+      {
+        id: 'p-one',
+        runs: [
+          { id: 'r-bold', text: 'A\nB', fontWeight: '700' },
+          { id: 'r-italic', text: '\rC', fontStyle: 'italic' },
+        ],
+      },
+      { id: 'p-blank', runs: [{ id: 'r-blank', text: '' }] },
+      {
+        id: 'p-list',
+        listMarker: '•',
+        runs: [{ id: 'r-link', text: 'D\r\nE', link: 'https://example.test' }],
+      },
+    ];
+    const story = flattenPaperRichText(richText);
+    const snapshot = structuredClone(richText);
+    const frames = Array.from({ length: 4 }, (_, index) => textFrame({
+      id: `styled-${index}`,
+      threadId: 'styled-overset',
+      threadOrder: index + 1,
+      widthMm: 100,
+      heightMm: 5,
+      ...(index === 0 ? { richText, text: story } : {}),
+    }));
+    const slices = computePaperThreadSlices(frames, measure);
+    const ordered = frames.map((entry) => slices.get(entry.id)!);
+    const overset = story.slice(ordered.at(-1)!.sourceEnd);
+
+    for (const slice of ordered) {
+      expect(flattenPaperRichText(slice.richText)).toBe(story.slice(slice.sourceStart, slice.sourceEnd));
+    }
+    expect(ordered[0].sourceStart).toBe(0);
+    for (let index = 0; index < ordered.length - 1; index += 1) {
+      expect(ordered[index].sourceEnd).toBe(ordered[index + 1].sourceStart);
+    }
+    expect(ordered.map((entry) => entry.sourceText).join('') + overset).toBe(story);
+    expect(overset).toBe('\r\nE');
+    expect(ordered.at(-1)?.isOverset).toBe(true);
+    expect(ordered.some((entry) => entry.richText?.some((paragraph) => paragraph.listMarker === '•'))).toBe(true);
+    expect(richText).toEqual(snapshot);
+    expect(frames[0].richText).toBe(richText);
+  });
+
   it('flattens the non-overset slices back to the whole story with no duplication or loss', () => {
     const frames = [
       wideLine({ id: 'head', threadId: 't', threadOrder: 1, richText: richHeadStory, text: flattenPaperRichText(richHeadStory) }),
@@ -162,12 +318,12 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
     ];
     const slices = computePaperThreadSlices(frames, measure);
     expect(slices.get('head')?.richText).toEqual([fragment({ runs: [{ text: 'aa ' }, { text: 'bb', fontWeight: '700' }] }, true, false)]);
-    expect(slices.get('tail')?.richText).toEqual([fragment({ runs: [{ text: 'cc', fontWeight: '700' }] }, false, true)]);
-    // No duplication: the space at the split belongs to neither frame.
+    expect(slices.get('tail')?.richText).toEqual([fragment({ runs: [{ text: ' cc', fontWeight: '700' }] }, false, true)]);
+    // Rich source ownership is conservative: the authored word separator belongs to the continuation range.
     const story = flattenPaperRichText(midRunStory);
     const head = slices.get('head')!;
     const tail = slices.get('tail')!;
-    expect(story.slice(head.sourceEnd, tail.sourceStart)).toBe(' ');
+    expect(story.slice(head.sourceEnd, tail.sourceStart)).toBe('');
   });
 
   it('never mutates or fragments the stored head richText while computing slices', () => {
@@ -256,10 +412,10 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
     const ordered = frames.map((frame) => slices.get(frame.id)!);
 
     expect(ordered[0].sourceText).toBe('small');
-    expect(ordered[1].sourceText).toBe('GIANT');
-    expect(ordered[2].sourceText).toBe('tail');
+    expect(ordered[1].sourceText).toBe(' GIANT');
+    expect(ordered[2].sourceText).toBe(' tail');
     expect(ordered[2].sourceEnd).toBe(story.length);
-    expect(ordered.map((slice) => flattenPaperRichText(slice.richText)).join(' ')).toBe('small GIANT tail');
+    expect(ordered.map((slice) => flattenPaperRichText(slice.richText)).join('')).toBe('small GIANT tail');
   });
 
   it('reflows unset rich runs using each continuation frame typography', () => {
@@ -273,8 +429,8 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
     ];
     const slices = computePaperThreadSlices(frames, sizeAwareMeasure);
     expect(slices.get('head')?.sourceText).toBe('one');
-    expect(slices.get('large-dest')?.sourceText).toBe('two');
-    expect(slices.get('tail')?.sourceText).toBe('three');
+    expect(slices.get('large-dest')?.sourceText).toBe(' two');
+    expect(slices.get('tail')?.sourceText).toBe(' three');
     expect(slices.get('tail')?.sourceEnd).toBe(story.length);
   });
 
@@ -306,7 +462,7 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
           textFrame({ id: 'indent-head', threadId: 'paragraph', threadOrder: 1, widthMm: 10, heightMm: 5 }),
           textFrame({ id: 'indent-tail', threadId: 'paragraph', threadOrder: 2, widthMm: 10, heightMm: 5 }),
         ],
-        expected: ['aa', 'bb'],
+        expected: ['aa', ' bb'],
       },
     ];
 
@@ -362,7 +518,7 @@ describe('computePaperThreadSlices — rich (formatted) stories', () => {
       textFrame({ id: 'tail', threadId: 'width-metrics', threadOrder: 3, widthMm: 9, heightMm: 5 }),
     ];
     const slices = computePaperThreadSlices(frames, metricAwareMeasure);
-    expect(frames.map((entry) => slices.get(entry.id)?.sourceText)).toEqual(['aa', 'bb', 'cc']);
+    expect(frames.map((entry) => slices.get(entry.id)?.sourceText)).toEqual(['aa', ' bb', ' cc']);
     expect(seen).toContainEqual(expect.objectContaining({ stretch: '150%' }));
     expect(seen).toContainEqual(expect.objectContaining({ variations: { wdth: 75, wght: 620 } }));
     expect(seen).toContainEqual(expect.objectContaining({ kerning: 'none' }));

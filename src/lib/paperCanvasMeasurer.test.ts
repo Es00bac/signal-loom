@@ -439,4 +439,176 @@ describe('createPaperCanvasMeasurer rich width metrics', () => {
     expect(layouts).toHaveBeenCalledOnce();
     expect(context.measureText).not.toHaveBeenCalled();
   });
+
+  it('uses CSS after a requested font shorthand is silently rejected instead of returning stale native width', () => {
+    let acceptedFont = '';
+    const measureText = vi.fn(() => ({ width: 100 }));
+    const context = { measureText };
+    Object.defineProperty(context, 'font', {
+      configurable: true,
+      get: () => acceptedFont,
+      set: (value: string) => {
+        if (value.includes('Old')) acceptedFont = value;
+      },
+    });
+    const layouts = vi.fn(() => ({ width: 45 }));
+    vi.stubGlobal('document', {
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn((tag: string) => tag === 'canvas'
+        ? { getContext: () => context }
+        : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+    });
+    const measure = createPaperCanvasMeasurer(5);
+    const base = { fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left' as const };
+
+    expect(measure('native', { ...base, fontFamily: 'Old' })).toBe(20);
+    expect(measure('fallback', { ...base, fontFamily: 'New' })).toBe(9);
+    expect(measureText).toHaveBeenCalledOnce();
+    expect(layouts).toHaveBeenCalledOnce();
+  });
+
+  it('accepts equivalent browser-normalized serialization of the complete current font on the native path', () => {
+    const canonicalize = (value: string) => value.replace(/^400\s+/, '');
+    let acceptedFont = '';
+    const context = { measureText: vi.fn(() => ({ width: 30 })) };
+    Object.defineProperty(context, 'font', {
+      configurable: true,
+      get: () => acceptedFont,
+      set: (value: string) => { acceptedFont = canonicalize(value); },
+    });
+    const appendChild = vi.fn();
+    vi.stubGlobal('document', {
+      body: { appendChild },
+      createElement: vi.fn((tag: string) => {
+        if (tag === 'canvas') return { getContext: () => context };
+        let font = '';
+        const style = {};
+        Object.defineProperty(style, 'font', {
+          configurable: true,
+          get: () => font,
+          set: (value: string) => { font = canonicalize(value); },
+        });
+        return { style, textContent: '', getBoundingClientRect: vi.fn(() => ({ width: 999 })), remove: vi.fn() };
+      }),
+    });
+
+    const width = createPaperCanvasMeasurer(5)('current', {
+      fontFamily: 'Current Sans', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left', fontWeight: '400',
+    });
+    expect(width).toBe(6);
+    expect(context.measureText).toHaveBeenCalledOnce();
+    expect(appendChild).not.toHaveBeenCalled();
+  });
+
+  it.each(['absent', 'throwing-getter', 'throwing-setter', 'unobservable-getter'] as const)(
+    'routes a %s font property safely through CSS without native stale-state measurement',
+    (mode) => {
+      const context: { measureText: ReturnType<typeof vi.fn>; font?: string } = {
+        measureText: vi.fn(() => ({ width: 500 })),
+      };
+      if (mode !== 'absent') {
+        let accepted = '10px Old';
+        Object.defineProperty(context, 'font', {
+          configurable: true,
+          get: () => {
+            if (mode === 'throwing-getter') throw new Error('font getter failed');
+            if (mode === 'unobservable-getter') return undefined;
+            return accepted;
+          },
+          set: (value: string) => {
+            if (mode === 'throwing-setter') throw new Error('font setter failed');
+            accepted = value;
+          },
+        });
+      }
+      const layouts = vi.fn(() => ({ width: 35 }));
+      vi.stubGlobal('document', {
+        body: { appendChild: vi.fn() },
+        createElement: vi.fn((tag: string) => tag === 'canvas'
+          ? { getContext: () => context }
+          : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+      });
+
+      const width = createPaperCanvasMeasurer(5)('safe', {
+        fontFamily: 'Requested', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left',
+      });
+      expect(width).toBe(7);
+      expect(context.measureText).not.toHaveBeenCalled();
+      expect(layouts).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('cannot bypass CSS or poison fallback cache when shorthand rejection accompanies rich font properties', () => {
+    let acceptedFont = '';
+    const context = {
+      fontStretch: 'normal',
+      fontVariationSettings: 'normal',
+      fontKerning: 'auto',
+      measureText: vi.fn(() => ({ width: 500 })),
+    };
+    Object.defineProperty(context, 'font', {
+      configurable: true,
+      get: () => acceptedFont,
+      set: (value: string) => {
+        if (value.includes('Old')) acceptedFont = value;
+      },
+    });
+    const layouts = vi.fn(() => ({ width: 55 }));
+    vi.stubGlobal('document', {
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn((tag: string) => tag === 'canvas'
+        ? { getContext: () => context }
+        : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+    });
+    const measure = createPaperCanvasMeasurer(5);
+    const rich = {
+      fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left' as const,
+      fontStretch: 'condensed', fontVariationSettings: { wdth: 82.5 }, fontKerning: 'none' as const,
+    };
+
+    expect(measure('old', { ...rich, fontFamily: 'Old' })).toBe(100);
+    expect(measure('new', { ...rich, fontFamily: 'New' })).toBe(11);
+    expect(measure('new', { ...rich, fontFamily: 'New' })).toBe(11);
+    expect(context.measureText).toHaveBeenCalledOnce();
+    expect(layouts).toHaveBeenCalledOnce();
+  });
+
+  it('does not reuse a rejected-font fallback across document replacement', () => {
+    const createDocument = (cssWidth: number) => {
+      let acceptedFont = '16px Old';
+      const context = { measureText: vi.fn(() => ({ width: 500 })) };
+      Object.defineProperty(context, 'font', {
+        configurable: true,
+        get: () => acceptedFont,
+        set: (value: string) => {
+          if (value.includes('Old')) acceptedFont = value;
+        },
+      });
+      const layouts = vi.fn(() => ({ width: cssWidth }));
+      return {
+        context,
+        layouts,
+        document: {
+          body: { appendChild: vi.fn() },
+          createElement: vi.fn((tag: string) => tag === 'canvas'
+            ? { getContext: () => context }
+            : { style: {}, textContent: '', getBoundingClientRect: layouts, remove: vi.fn() }),
+        },
+      };
+    };
+    const first = createDocument(40);
+    const second = createDocument(60);
+    vi.stubGlobal('document', first.document);
+    const measure = createPaperCanvasMeasurer(5);
+    const spec = { fontFamily: 'New', fontSizePt: 12, leadingPt: 14, tracking: 0, align: 'left' as const };
+
+    expect(measure('same', spec)).toBe(8);
+    expect(measure('same', spec)).toBe(8);
+    expect(first.layouts).toHaveBeenCalledOnce();
+    vi.stubGlobal('document', second.document);
+    expect(measure('same', spec)).toBe(12);
+    expect(second.layouts).toHaveBeenCalledOnce();
+    expect(first.context.measureText).not.toHaveBeenCalled();
+    expect(second.context.measureText).not.toHaveBeenCalled();
+  });
 });

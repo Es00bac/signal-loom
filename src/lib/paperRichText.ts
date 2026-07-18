@@ -159,12 +159,45 @@ export function normalizePaperRichText(input: unknown): PaperRichParagraph[] | u
   return paragraphs;
 }
 
+export interface PaperRichTextSourceCoordinates {
+  text: string;
+  /** Exact half-open ranges of only the separators inserted between structural paragraphs. */
+  structuralDelimiters: Array<{ start: number; end: number }>;
+}
+
+/**
+ * Flatten rich text and retain the provenance of every structural paragraph separator. Newline bytes inside
+ * runs are deliberately absent from `structuralDelimiters`, even when they are adjacent to an inserted `\n`.
+ */
+export function flattenPaperRichTextSource(
+  paragraphs: PaperRichParagraph[] | undefined,
+): PaperRichTextSourceCoordinates {
+  if (!paragraphs || !paragraphs.length) return { text: '', structuralDelimiters: [] };
+  const structuralDelimiters: PaperRichTextSourceCoordinates['structuralDelimiters'] = [];
+  const parts: string[] = [];
+  let cursor = 0;
+  paragraphs.forEach((paragraph, index) => {
+    if (index > 0) {
+      structuralDelimiters.push({ start: cursor, end: cursor + 1 });
+      parts.push('\n');
+      cursor += 1;
+    }
+    if (paragraph.listMarker) {
+      const prefix = `${paragraph.listMarker}\t`;
+      parts.push(prefix);
+      cursor += prefix.length;
+    }
+    for (const run of paragraph.runs) {
+      parts.push(run.text);
+      cursor += run.text.length;
+    }
+  });
+  return { text: parts.join(''), structuralDelimiters };
+}
+
 /** Flatten rich text to plaintext: runs concatenated, paragraphs joined by newlines. Mirrors what the user sees. */
 export function flattenPaperRichText(paragraphs: PaperRichParagraph[] | undefined): string {
-  if (!paragraphs || !paragraphs.length) return '';
-  return paragraphs
-    .map((paragraph) => (paragraph.listMarker ? `${paragraph.listMarker}\t` : '') + paragraph.runs.map((run) => run.text).join(''))
-    .join('\n');
+  return flattenPaperRichTextSource(paragraphs).text;
 }
 
 /** Build single-run rich paragraphs from plaintext (one paragraph per line) — used when a plain frame is
@@ -244,8 +277,8 @@ export function slicePaperRichTextRange(
     const localStart = Math.max(0, Math.min(layout.source.length, start - layout.start));
     const localEnd = Math.max(localStart, Math.min(layout.source.length, end - layout.start));
 
-    // Flow ranges may omit ordinary boundary whitespace. Whitespace alone before the first owned glyph or
-    // after the last owned glyph does not transfer paragraph-start/end geometry to another frame.
+    // A caller range can begin or end inside surrounding whitespace. Whitespace alone before the first owned
+    // glyph or after the last owned glyph does not transfer paragraph-start/end geometry to another frame.
     const ownsParagraphStart = localStart === 0 || layout.source.slice(0, localStart).trim() === '';
     const ownsParagraphEnd = localEnd >= layout.source.length || layout.source.slice(localEnd).trim() === '';
     const sliced: PaperRichParagraphFragment = {

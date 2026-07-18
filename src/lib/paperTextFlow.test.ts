@@ -33,7 +33,7 @@ describe('flowPaperText', () => {
     const result = flowPaperText('aa bb cc', spec, [frame('f1', col(0, 0, 10, 5))], measure);
     expect(result.frames[0].lines.map((line) => line.text)).toEqual(['aa bb']);
     expect(result.fits).toBe(false);
-    expect(result.overset).toBe('cc');
+    expect(result.overset).toBe(' cc');
   });
 
   it('flows the overset from one frame into the next (threading)', () => {
@@ -56,7 +56,7 @@ describe('flowPaperText', () => {
       measure,
     );
     expect(result.frames[0].sourceText).toBe('aa bb');
-    expect(result.frames[1].sourceText).toBe('cc dd');
+    expect(result.frames[1].sourceText).toBe(' cc dd');
   });
 
   it('exposes authoritative source start/end offsets that reproduce each frame slice', () => {
@@ -72,8 +72,8 @@ describe('flowPaperText', () => {
     expect(text.slice(f0.sourceStart, f0.sourceEnd)).toBe(f0.sourceText);
     expect(text.slice(f1.sourceStart, f1.sourceEnd)).toBe(f1.sourceText);
     expect(f0.sourceStart).toBe(0);
-    // Slices are ordered and non-overlapping (the boundary whitespace is the inter-frame separator).
-    expect(f1.sourceStart).toBeGreaterThanOrEqual(f0.sourceEnd);
+    // Plain source ranges are contiguous: every authored boundary byte belongs to one frame.
+    expect(f1.sourceStart).toBe(f0.sourceEnd);
     expect(f1.sourceEnd).toBe(text.length);
   });
 
@@ -109,9 +109,14 @@ describe('flowPaperText', () => {
   });
 
   it.each([
-    { text: 'A\n\nB', tailHeightMm: 9, expectedTail: '\nB' },
-    { text: 'A\n\n\nB', tailHeightMm: 13, expectedTail: '\n\nB' },
-  ])('retains blank paragraphs after the ordinary inter-frame delimiter in $text', ({ text, tailHeightMm, expectedTail }) => {
+    { text: 'A\n\nB', tailHeightMm: 9, expectedTail: '\n\nB', expectedLines: ['', 'B'] },
+    { text: 'A\n\n\nB', tailHeightMm: 13, expectedTail: '\n\n\nB', expectedLines: ['', '', 'B'] },
+  ])('retains every authored paragraph delimiter at a plain inter-frame boundary in $text', ({
+    text,
+    tailHeightMm,
+    expectedTail,
+    expectedLines,
+  }) => {
     const result = flowPaperText(
       text,
       spec,
@@ -121,10 +126,7 @@ describe('flowPaperText', () => {
     expect(result.frames[0].sourceText).toBe('A');
     expect(result.frames[1].sourceText).toBe(expectedTail);
     expect(text.slice(result.frames[1].sourceStart, result.frames[1].sourceEnd)).toBe(expectedTail);
-    expect(result.frames[1].lines.map((line) => line.text)).toEqual([
-      ...Array(expectedTail.lastIndexOf('B')).fill(''),
-      'B',
-    ]);
+    expect(result.frames[1].lines.map((line) => line.text)).toEqual(expectedLines);
   });
 
   it.each([
@@ -151,6 +153,53 @@ describe('flowPaperText', () => {
     );
     expect(result.frames.map((entry) => entry.sourceText)).toEqual(['A', '\n', '\nB']);
     expect(result.frames.map((entry) => text.slice(entry.sourceStart, entry.sourceEnd))).toEqual(['A', '\n', '\nB']);
+  });
+
+  it.each([
+    { delimiter: '\n', widthMm: 100 },
+    { delimiter: '\r', widthMm: 2 },
+    { delimiter: '\r\n', widthMm: 100 },
+  ])('keeps a plain authored $delimiter in the destination range and overset', ({ delimiter, widthMm }) => {
+    const text = `A${delimiter}B`;
+    const threaded = flowPaperText(
+      text,
+      spec,
+      [frame('head', col(0, 0, widthMm, 5)), frame('tail', col(0, 0, 100, 5))],
+      measure,
+    );
+    expect(threaded.frames.map((entry) => entry.sourceText)).toEqual(['A', `${delimiter}B`]);
+    expect(threaded.frames[0].sourceEnd).toBe(1);
+    expect(threaded.frames[1].sourceStart).toBe(1);
+
+    const overset = flowPaperText(text, spec, [frame('head', col(0, 0, widthMm, 5))], measure);
+    expect(overset.frames[0].sourceText).toBe('A');
+    expect(overset.overset).toBe(`${delimiter}B`);
+    expect(overset.frames[0].sourceText + overset.overset).toBe(text);
+  });
+
+  it('omits only an explicitly mapped structural paragraph separator for rich source metrics', () => {
+    const text = 'A\nB';
+    const frames = [frame('head', col(0, 0, 100, 5)), frame('tail', col(0, 0, 100, 5))];
+    const authored = flowPaperText(text, spec, frames, measure, [], { structuralDelimiters: [] });
+    const structural = flowPaperText(text, spec, frames, measure, [], {
+      structuralDelimiters: [{ start: 1, end: 2 }],
+    });
+
+    expect(authored.frames.map((entry) => entry.sourceText)).toEqual(['A', '\nB']);
+    expect(structural.frames.map((entry) => entry.sourceText)).toEqual(['A', 'B']);
+    expect(text.slice(structural.frames[0].sourceEnd, structural.frames[1].sourceStart)).toBe('\n');
+  });
+
+  it('owns a plain-text word separator at an inter-frame boundary', () => {
+    const text = 'A B';
+    const result = flowPaperText(
+      text,
+      spec,
+      [frame('head', col(0, 0, 2, 5)), frame('tail', col(0, 0, 2, 5))],
+      measure,
+    );
+    expect(result.frames.map((entry) => entry.sourceText)).toEqual(['A', ' B']);
+    expect(result.frames[0].sourceEnd).toBe(result.frames[1].sourceStart);
   });
 
   it.each([
