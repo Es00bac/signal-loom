@@ -175,7 +175,7 @@ The July 18 installation completed and passed all of the following:
 - Installed executable byte-compares equal to the freshly packaged executable.
 - Installed `app.asar` byte-compares equal to the freshly packaged archive.
 - Installed executable SHA-256: `134b72e0eb5a85ffaf2dfd85d98fd67b9d242b644297b12362ac995b178ff08f`.
-- Installed `app.asar` SHA-256: `044a014fb2c919c5279b61ceda1043d98ad4f8225b901ee01efcb4b9e8ef8292`.
+- Installed `app.asar` SHA-256: `6ce84a7570728874c48ecea8fb678ce9565ade75685628532d68d7ec1ab4d948`.
 - Installed application size: approximately 1.1 GiB, including the verified font library.
 
 The corrected blank-start implementation also passed 26 focused startup/complete-recovery tests and
