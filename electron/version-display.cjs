@@ -2,7 +2,7 @@
 
 /**
  * Electron Builder requires SemVer package metadata, while Sloom Studio's
- * internal desktop builds use the compact human-facing suffix 0.9.12d.
+ * internal desktop builds use a compact human-facing suffix such as 0.9.12e.
  */
 function formatInternalBuildVersion(version) {
   const value = typeof version === 'string' ? version.trim() : '';

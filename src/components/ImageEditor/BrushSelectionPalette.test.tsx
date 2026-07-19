@@ -68,7 +68,29 @@ describe('BrushSelectionPalette', () => {
       root.render(<BrushSelectionPalette />);
     });
     expect(container.textContent).toContain('My Presets');
-    expect(container.textContent).toContain(pencil.label);
+    expect(container.textContent).toContain('173 brushes');
+    expect(container.textContent).toContain('Graphite & Pencil');
+    expect(container.textContent).toContain('Watercolor');
+    expect(container.textContent).toContain('Soft Round');
+  });
+
+  it('keeps media families collapsed until requested and expands a complete set on demand', () => {
+    act(() => {
+      root.render(<BrushSelectionPalette />);
+    });
+
+    const watercolorGroup = container.querySelector<HTMLElement>('[data-brush-preset-group="Watercolor"]');
+    const trigger = watercolorGroup?.querySelector<HTMLButtonElement>('button[aria-expanded]');
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false');
+    expect(container.textContent).not.toContain('Mop Wash');
+
+    act(() => {
+      trigger?.click();
+    });
+
+    expect(trigger?.getAttribute('aria-expanded')).toBe('true');
+    expect(container.textContent).toContain('Mop Wash');
+    expect(watercolorGroup?.querySelectorAll('[data-brush-preset-preview]')).toHaveLength(9);
   });
 
   it('highlights the active preset and shows a modified badge once a property diverges', () => {
@@ -151,6 +173,11 @@ describe('BrushSelectionPalette', () => {
   it('exposes deterministic preset preview signatures on brush preset tiles', () => {
     act(() => {
       root.render(<BrushSelectionPalette />);
+    });
+
+    const sketchGroup = container.querySelector<HTMLElement>('[data-brush-preset-group="Sketch"]');
+    act(() => {
+      sketchGroup?.querySelector<HTMLButtonElement>('button[aria-expanded]')?.click();
     });
 
     const pencilPreview = container.querySelector<SVGSVGElement>('svg[data-brush-preset-preview="pencil"]');

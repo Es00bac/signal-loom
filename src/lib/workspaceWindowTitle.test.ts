@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildWorkspaceWindowTitle, paperDocumentWindowLabel } from './workspaceWindowTitle';
 
@@ -9,8 +10,17 @@ describe('workspace window titles', () => {
       .toBe('Sloom Studio Paper — The Studio That Grew Sideways');
   });
 
-  it('retains the existing edition title outside Paper', () => {
-    expect(buildWorkspaceWindowTitle('flow', 'Ignored', true)).toBe('Sloom Studio');
-    expect(buildWorkspaceWindowTitle('image', 'Ignored', false)).toBe('Sloom Studio — Community');
+  it('identifies every non-Paper window by the workspace actually displayed there', () => {
+    expect(buildWorkspaceWindowTitle('flow', 'Ignored', true)).toBe('Sloom Studio Flow');
+    expect(buildWorkspaceWindowTitle('image', 'Ignored', true)).toBe('Sloom Studio Image');
+    expect(buildWorkspaceWindowTitle('editor', 'Ignored', true)).toBe('Sloom Studio Video');
+    expect(buildWorkspaceWindowTitle('image', 'Ignored', false)).toBe('Sloom Studio Image — Community');
+  });
+
+  it('drives the native title from the workspace pinned to this window', () => {
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+
+    expect(appSource).toContain('buildWorkspaceWindowTitle(activeWorkspaceView');
+    expect(appSource).not.toContain('buildWorkspaceWindowTitle(workspaceView');
   });
 });

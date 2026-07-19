@@ -9,6 +9,10 @@ import {
   type BrushPresetWorkflow,
   type BrushUnsupportedDynamicsReadinessDescriptor,
 } from './ImageBrushEngine';
+import {
+  EXPANDED_BRUSH_PRESET_GROUPS,
+  EXPANDED_IMAGE_BRUSH_PRESETS,
+} from './ImageBrushMediaLibrary';
 
 export type ImageBrushPresetGroup =
   | 'Sketch'
@@ -17,6 +21,22 @@ export type ImageBrushPresetGroup =
   | 'Comic / Manga'
   | 'FX'
   | 'Utility'
+  | 'Graphite & Pencil'
+  | 'Charcoal & Conté'
+  | 'Pastel & Chalk'
+  | 'Ink & Calligraphy'
+  | 'Markers'
+  | 'Watercolor'
+  | 'Gouache & Tempera'
+  | 'Oils & Acrylics'
+  | 'Bristle & Dry Media'
+  | 'Airbrush & Glaze'
+  | 'Digital Paint'
+  | 'Texture & Stamps'
+  | 'Nature & Organic'
+  | 'Comic & Manga Pro'
+  | 'FX & Light'
+  | 'Blend & Smudge'
   | 'User';
 
 export type ImageBrushPresetCategory =
@@ -213,6 +233,7 @@ export const BRUSH_PRESET_GROUPS: Array<Exclude<ImageBrushPresetGroup, 'User'>> 
   'Comic / Manga',
   'FX',
   'Utility',
+  ...EXPANDED_BRUSH_PRESET_GROUPS as Array<Exclude<ImageBrushPresetGroup, 'User'>>,
 ];
 
 export const IMAGE_BRUSH_PRESET_CATEGORIES: ImageBrushPresetCategory[] = [
@@ -407,6 +428,86 @@ const BRUSH_PRESET_CATEGORY_PROFILE_BY_GROUP: Record<string, ImageBrushPresetSta
     categories: ['utility'],
     useCases: ['paint'],
   },
+  'Graphite & Pencil': {
+    category: 'pencil-inking',
+    categories: ['pencil-inking', 'texture'],
+    useCases: ['linework', 'paint', 'texture'],
+  },
+  'Charcoal & Conté': {
+    category: 'texture',
+    categories: ['texture', 'smudge-retouch'],
+    useCases: ['paint', 'texture', 'blend'],
+  },
+  'Pastel & Chalk': {
+    category: 'texture',
+    categories: ['texture', 'smudge-retouch'],
+    useCases: ['paint', 'texture', 'blend'],
+  },
+  'Ink & Calligraphy': {
+    category: 'pencil-inking',
+    categories: ['pencil-inking', 'hard-round'],
+    useCases: ['ink', 'linework', 'cleanup'],
+  },
+  Markers: {
+    category: 'basic-round',
+    categories: ['basic-round', 'pencil-inking'],
+    useCases: ['paint', 'linework'],
+  },
+  Watercolor: {
+    category: 'smudge-retouch',
+    categories: ['smudge-retouch', 'texture'],
+    useCases: ['paint', 'blend', 'retouch'],
+  },
+  'Gouache & Tempera': {
+    category: 'smudge-retouch',
+    categories: ['smudge-retouch', 'texture'],
+    useCases: ['paint', 'blend', 'texture'],
+  },
+  'Oils & Acrylics': {
+    category: 'smudge-retouch',
+    categories: ['smudge-retouch', 'texture'],
+    useCases: ['paint', 'blend', 'retouch'],
+  },
+  'Bristle & Dry Media': {
+    category: 'texture',
+    categories: ['texture', 'smudge-retouch'],
+    useCases: ['paint', 'texture', 'retouch'],
+  },
+  'Airbrush & Glaze': {
+    category: 'airbrush',
+    categories: ['airbrush', 'soft-round', 'smudge-retouch'],
+    useCases: ['paint', 'blend', 'retouch'],
+  },
+  'Digital Paint': {
+    category: 'basic-round',
+    categories: ['basic-round', 'hard-round', 'soft-round'],
+    useCases: ['paint', 'linework', 'blend'],
+  },
+  'Texture & Stamps': {
+    category: 'texture',
+    categories: ['texture'],
+    useCases: ['texture', 'paint'],
+  },
+  'Nature & Organic': {
+    category: 'texture',
+    categories: ['texture'],
+    useCases: ['texture', 'paint'],
+  },
+  'Comic & Manga Pro': {
+    category: 'pencil-inking',
+    categories: ['pencil-inking', 'texture'],
+    useCases: ['ink', 'linework', 'texture'],
+  },
+  'FX & Light': {
+    category: 'smudge-retouch',
+    categories: ['smudge-retouch', 'airbrush', 'texture'],
+    useCases: ['paint', 'blend', 'texture'],
+  },
+  'Blend & Smudge': {
+    category: 'smudge-retouch',
+    categories: ['smudge-retouch', 'soft-round'],
+    useCases: ['blend', 'retouch', 'paint'],
+  },
   User: {
     category: 'utility',
     categories: ['utility'],
@@ -425,7 +526,7 @@ const BRUSH_PRESET_PREVIEW_SEED = 17;
 const BRUSH_PRESET_PREVIEW_MAX_DABS = 6;
 const BRUSH_PRESET_TILE_VIEW_BOX = '0 0 72 18';
 
-export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
+const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
   {
     id: 'pencil',
     label: 'Pencil',
@@ -628,6 +729,11 @@ export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     group: 'Utility',
     settings: { size: 18, opacity: 1, hardness: 1, flow: 1, spacing: 0.08, pressureSize: 0.25 },
   },
+];
+
+export const IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
+  ...CORE_IMAGE_BRUSH_PRESETS,
+  ...EXPANDED_IMAGE_BRUSH_PRESETS,
 ];
 
 export function getBrushPreset(id: string): ImageBrushPreset | undefined {

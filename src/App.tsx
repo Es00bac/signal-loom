@@ -409,10 +409,6 @@ function FlowApp() {
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const licenseIsCommercial = useSettingsStore((state) => state.license.licensed);
   const activePaperDocumentTitle = usePaperStore((state) => state.document.title);
-  // Paper owns the native titlebar's document identity; other workspaces retain the edition title.
-  useEffect(() => {
-    document.title = buildWorkspaceWindowTitle(workspaceView, activePaperDocumentTitle, licenseIsCommercial);
-  }, [activePaperDocumentTitle, licenseIsCommercial, workspaceView]);
   // AUD-015: a license removal/activation/import in another window rehydrates and re-verifies
   // this renderer too, so every window fail-closes — or unlocks — together.
   useEffect(() => installLicenseCrossWindowSync(), []);
@@ -562,6 +558,12 @@ function FlowApp() {
   );
   const workspaceWindowSenderId = useMemo(() => getWorkspaceWindowSenderId(), []);
   const activeWorkspaceView = windowWorkspaceView ?? workspaceView;
+
+  // Use the workspace pinned to this native window, not the last workspace selected in another
+  // renderer. Otherwise a Flow window can inherit Paper's title when both workspaces are open.
+  useEffect(() => {
+    document.title = buildWorkspaceWindowTitle(activeWorkspaceView, activePaperDocumentTitle, licenseIsCommercial);
+  }, [activePaperDocumentTitle, activeWorkspaceView, licenseIsCommercial]);
 
   useEffect(() => installPaperBeforeUnloadProtection(), []);
 

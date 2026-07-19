@@ -3648,7 +3648,6 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
   };
 
   const hasVisibleMonitors = sourceMonitorVisible || programMonitorVisible;
-  const sourceEntryCount = sourceBinNodes.length;
   const isCompositionRendering = Boolean(activeComposition?.data.isRunning);
   const compositionRenderStatus = typeof activeComposition?.data.statusMessage === 'string'
     ? activeComposition.data.statusMessage
@@ -3820,28 +3819,31 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
       bodyClassName: 'overflow-hidden p-0',
       content: (
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
-          <div className="border-b border-gray-700/60 px-3 py-2">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-[13px] font-semibold text-gray-100">
-                  <Archive size={14} />
-                  Source Library
-                </div>
-                <div className="mt-1 truncate text-[11px] text-gray-500">
-                  Mixed media, generated assets, captions, and reusable timeline elements.
-                </div>
-              </div>
-              <div className="shrink-0 rounded-full border border-cyan-300/15 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-100">
-                {timelineSourceItems.length}
-              </div>
-            </div>
-            <div className="mt-2 grid grid-cols-2 rounded-lg border border-gray-700/60 bg-[#0f131b] p-1">
-              <button className={sourceBinTab === 'media' ? activeTabClassName : inactiveTabClassName} onClick={() => setSourceBinTab('media')} type="button">
+          <div className="border-b border-gray-700/60 px-2 py-2">
+            <div className="flex h-7 min-w-0 items-center gap-1" data-video-source-bin-compact-header="true">
+              <div className="grid min-w-0 flex-1 grid-cols-2 rounded-md border border-gray-700/60 bg-[#0f131b] p-0.5" role="tablist">
+              <button className={sourceBinTab === 'media' ? activeTabClassName : inactiveTabClassName} onClick={() => setSourceBinTab('media')} role="tab" type="button">
                 Library
               </button>
-              <button className={sourceBinTab === 'editorAssets' ? activeTabClassName : inactiveTabClassName} onClick={() => setSourceBinTab('editorAssets')} type="button">
+              <button className={sourceBinTab === 'editorAssets' ? activeTabClassName : inactiveTabClassName} onClick={() => setSourceBinTab('editorAssets')} role="tab" type="button">
                 Design Assets
               </button>
+              </div>
+              <div
+                aria-label={`${sourceBinTab === 'media' ? timelineSourceItems.length : editorAssets.length} items`}
+                className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded border border-gray-700/60 bg-[#111217]/60 px-1.5 text-[10px] font-semibold tabular-nums text-gray-300"
+                title={`${sourceBinTab === 'media' ? timelineSourceItems.length : editorAssets.length} items`}
+              >
+                {sourceBinTab === 'media' ? timelineSourceItems.length : editorAssets.length}
+              </div>
+              {sourceBinTab === 'media' && mediaSourceItems.length > 0 ? (
+                <>
+                  <button aria-label="Hide media pools" className={miniTrackButtonClassName} onClick={() => setSourceBinMediaPoolCollapsed({ image: true, video: true, audio: true })} title="Hide media pools" type="button"><ChevronRight size={12} /></button>
+                  <button aria-label="Show media pools" className={miniTrackButtonClassName} onClick={() => setSourceBinMediaPoolCollapsed({ image: false, video: false, audio: false })} title="Show media pools" type="button"><ChevronDown size={12} /></button>
+                  <button aria-label="Collapse all source items" className={miniTrackButtonClassName} onClick={() => setAllSourceBinItemsCollapsed(true)} title="Collapse all source items" type="button"><ChevronRight size={12} /></button>
+                  <button aria-label="Expand all source items" className={miniTrackButtonClassName} onClick={() => setAllSourceBinItemsCollapsed(false)} title="Expand all source items" type="button"><ChevronDown size={12} /></button>
+                </>
+              ) : null}
             </div>
             {sourceBinTab === 'media' ? (
               <div className="mt-2 flex items-center gap-2 rounded-lg border border-gray-700/60 bg-[#090d13] px-2 py-1.5 text-gray-300">
@@ -3950,40 +3952,6 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                     </button>
                   );
                 })}
-              </div>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-700/60 px-3 py-2 text-[11px] text-gray-400">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span>{sourceEntryCount} entry node{sourceEntryCount === 1 ? '' : 's'}</span>
-              <span>
-                {sourceBinTab === 'media'
-                  ? `${mediaSourceItems.length} of ${timelineSourceItems.length} source${timelineSourceItems.length === 1 ? '' : 's'}`
-                  : `${editorAssets.length} editor asset${editorAssets.length === 1 ? '' : 's'}`}
-              </span>
-            </div>
-            {sourceBinTab === 'media' && mediaSourceItems.length > 0 ? (
-              <div className="flex items-center gap-1">
-                <button
-                  className={miniTrackButtonClassName}
-                  onClick={() => setSourceBinMediaPoolCollapsed({ image: true, video: true, audio: true })}
-                  type="button"
-                >
-                  Hide Pools
-                </button>
-                <button
-                  className={miniTrackButtonClassName}
-                  onClick={() => setSourceBinMediaPoolCollapsed({ image: false, video: false, audio: false })}
-                  type="button"
-                >
-                  Show Pools
-                </button>
-                <button className={miniTrackButtonClassName} onClick={() => setAllSourceBinItemsCollapsed(true)} type="button">
-                  Collapse All
-                </button>
-                <button className={miniTrackButtonClassName} onClick={() => setAllSourceBinItemsCollapsed(false)} type="button">
-                  Expand All
-                </button>
               </div>
             ) : null}
           </div>
@@ -4465,18 +4433,13 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
           {sourceBinVisible ? (
             <>
               <aside className={`${panelClassName} flex min-h-0 shrink-0 flex-col overflow-hidden`} style={{ width: sourceBinWidth }}>
-                <div className="border-b border-gray-700/60 px-3 py-2.5">
-                  <div className="flex items-center gap-2 text-[13px] font-semibold text-gray-100">
-                    <Archive size={14} />
-                    Project Source Bin
-                  </div>
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    Switch between source media and reusable editor assets for timeline compositing.
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 rounded-lg border border-gray-700/60 bg-[#0f131b] p-1">
+                <div className="border-b border-gray-700/60 px-2 py-2">
+                  <div className="flex h-7 min-w-0 items-center gap-1" data-video-source-bin-compact-header="legacy">
+                  <div className="grid min-w-0 flex-1 grid-cols-2 rounded-md border border-gray-700/60 bg-[#0f131b] p-0.5" role="tablist">
                     <button
                       className={sourceBinTab === 'media' ? activeTabClassName : inactiveTabClassName}
                       onClick={() => setSourceBinTab('media')}
+                      role="tab"
                       type="button"
                     >
                       Media
@@ -4484,10 +4447,21 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                     <button
                       className={sourceBinTab === 'editorAssets' ? activeTabClassName : inactiveTabClassName}
                       onClick={() => setSourceBinTab('editorAssets')}
+                      role="tab"
                       type="button"
                     >
                       Video Assets
                     </button>
+                  </div>
+                  <div className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded border border-gray-700/60 bg-[#111217]/60 px-1.5 text-[10px] font-semibold tabular-nums text-gray-300">
+                    {sourceBinTab === 'media' ? timelineSourceItems.length : editorAssets.length}
+                  </div>
+                  {sourceBinTab === 'media' && mediaSourceItems.length > 0 ? (
+                    <>
+                      <button aria-label="Collapse all source items" className={miniTrackButtonClassName} onClick={() => setAllSourceBinItemsCollapsed(true)} title="Collapse all source items" type="button"><ChevronRight size={12} /></button>
+                      <button aria-label="Expand all source items" className={miniTrackButtonClassName} onClick={() => setAllSourceBinItemsCollapsed(false)} title="Expand all source items" type="button"><ChevronDown size={12} /></button>
+                    </>
+                  ) : null}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {sourceBinTab === 'media' ? (
@@ -4577,48 +4551,6 @@ export function VideoWorkspace({ getNewFlowNodePosition }: ManualEditorWorkspace
                       {paperStoryboardImportStatus ? (
                         <span className="min-w-0 truncate text-indigo-100/75">{paperStoryboardImportStatus}</span>
                       ) : null}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-700/60 px-3 py-2 text-[11px] text-gray-400">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span>{sourceEntryCount} entry node{sourceEntryCount === 1 ? '' : 's'}</span>
-                    <span>
-                      {sourceBinTab === 'media'
-                        ? `${mediaSourceItems.length} media asset${mediaSourceItems.length === 1 ? '' : 's'}`
-                        : `${editorAssets.length} editor asset${editorAssets.length === 1 ? '' : 's'}`}
-                    </span>
-                  </div>
-                  {sourceBinTab === 'media' && mediaSourceItems.length > 0 ? (
-                    <div className="flex items-center gap-1">
-                      <button
-                        className={miniTrackButtonClassName}
-                        onClick={() => setSourceBinMediaPoolCollapsed({ image: true, video: true, audio: true })}
-                        type="button"
-                      >
-                        Hide Pools
-                      </button>
-                      <button
-                        className={miniTrackButtonClassName}
-                        onClick={() => setSourceBinMediaPoolCollapsed({ image: false, video: false, audio: false })}
-                        type="button"
-                      >
-                        Show Pools
-                      </button>
-                      <button
-                        className={miniTrackButtonClassName}
-                        onClick={() => setAllSourceBinItemsCollapsed(true)}
-                        type="button"
-                      >
-                        Collapse All
-                      </button>
-                      <button
-                        className={miniTrackButtonClassName}
-                        onClick={() => setAllSourceBinItemsCollapsed(false)}
-                        type="button"
-                      >
-                        Expand All
-                      </button>
                     </div>
                   ) : null}
                 </div>

@@ -24,7 +24,7 @@ describe('ImageBrushPresets', () => {
     const byId = (categories: string[]) => categories.sort();
 
     expect(byId(basicRound.map((preset) => preset.id))).toEqual(expect.arrayContaining(['hardRound', 'softRound']));
-    expect(softRound.map((preset) => preset.id)).toEqual(['softRound']);
+    expect(softRound.map((preset) => preset.id)).toContain('softRound');
     expect(hardRound.map((preset) => preset.id)).toContain('hardRound');
     expect(byId(inking.map((preset) => preset.id))).toEqual(expect.arrayContaining(['pencil', 'inker', 'brushPen', 'calligraphyChisel', 'technicalLiner']));
     expect(byId(airbrush.map((preset) => preset.id))).toContain('airbrush');
@@ -112,7 +112,7 @@ describe('ImageBrushPresets', () => {
   });
 
   it('provides a broader standard brush library for painting, inking, manga, effects, and erasing', () => {
-    expect(IMAGE_BRUSH_PRESETS.length).toBeGreaterThanOrEqual(24);
+    expect(IMAGE_BRUSH_PRESETS).toHaveLength(173);
     expect(IMAGE_BRUSH_PRESETS.map((preset) => preset.id)).toEqual(expect.arrayContaining([
       'pencil',
       'hardRound',
@@ -146,7 +146,23 @@ describe('ImageBrushPresets', () => {
       'Comic / Manga',
       'FX',
       'Utility',
+      'Graphite & Pencil',
+      'Charcoal & Conté',
+      'Pastel & Chalk',
+      'Watercolor',
+      'Oils & Acrylics',
+      'Digital Paint',
+      'Texture & Stamps',
+      'FX & Light',
+      'Blend & Smudge',
     ]));
+    expect(IMAGE_BRUSH_PRESETS.filter((preset) => preset.id.startsWith('media-'))).toHaveLength(144);
+    expect(IMAGE_BRUSH_PRESETS.some((preset) => (preset.settings.pressureColor ?? 0) > 0)).toBe(true);
+    expect(IMAGE_BRUSH_PRESETS.some((preset) => (preset.settings.tiltColor ?? 0) > 0)).toBe(true);
+    expect(IMAGE_BRUSH_PRESETS.some((preset) => preset.settings.rotationFollowsTwist)).toBe(true);
+    expect(IMAGE_BRUSH_PRESETS.some((preset) => (preset.settings.angleJitter ?? 0) > 0)).toBe(true);
+    expect(IMAGE_BRUSH_PRESETS.some((preset) => preset.settings.wetMedia)).toBe(true);
+    expect(IMAGE_BRUSH_PRESETS.some((preset) => preset.settings.mixerEnabled)).toBe(true);
   });
 
   it('applies a preset without discarding the current color unless preset supplies one', () => {

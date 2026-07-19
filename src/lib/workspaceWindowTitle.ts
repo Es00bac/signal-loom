@@ -2,6 +2,13 @@ import type { WorkspaceView } from '../types/flow';
 
 const SLOOM_STUDIO_PAPER_PREFIX = /^sloom studio(?: paper)?\s*(?:[—–-]|:)\s*/i;
 
+const WORKSPACE_WINDOW_LABEL: Record<WorkspaceView, string> = {
+  flow: 'Sloom Studio Flow',
+  image: 'Sloom Studio Image',
+  paper: 'Sloom Studio Paper',
+  editor: 'Sloom Studio Video',
+};
+
 export function paperDocumentWindowLabel(title: string): string {
   const normalized = title.trim().replace(SLOOM_STUDIO_PAPER_PREFIX, '').trim();
   return normalized || 'Untitled Paper Layout';
@@ -13,7 +20,9 @@ export function buildWorkspaceWindowTitle(
   licenseIsCommercial: boolean,
 ): string {
   if (workspaceView === 'paper') {
-    return `Sloom Studio Paper — ${paperDocumentWindowLabel(paperDocumentTitle)}`;
+    const title = `${WORKSPACE_WINDOW_LABEL.paper} — ${paperDocumentWindowLabel(paperDocumentTitle)}`;
+    return licenseIsCommercial ? title : `${title} — Community`;
   }
-  return licenseIsCommercial ? 'Sloom Studio' : 'Sloom Studio — Community';
+  const title = WORKSPACE_WINDOW_LABEL[workspaceView];
+  return licenseIsCommercial ? title : `${title} — Community`;
 }

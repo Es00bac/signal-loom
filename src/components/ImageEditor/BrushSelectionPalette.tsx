@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useImageEditorStore } from '../../store/imageEditorStore';
 import {
@@ -9,6 +10,7 @@ import {
   exportUserBrushPresetPack,
   importUserBrushPresetPack,
   type ImageBrushPreset,
+  type ImageBrushPresetGroup,
 } from './ImageBrushPresets';
 import { normalizeBrushSettings } from './ImageBrushEngine';
 import { resolveActiveBrushState } from './brushActiveState';
@@ -22,20 +24,24 @@ export function BrushSelectionPalette() {
   const deleteCustomBrushPreset = useSettingsStore((s) => s.deleteCustomBrushPreset);
   const setCustomBrushPresets = useSettingsStore((s) => s.setCustomBrushPresets);
 
-  const groupedPresets = BRUSH_PRESET_GROUPS.map((group) => ({
+  const activeBrush = resolveActiveBrushState(settings, [...IMAGE_BRUSH_PRESETS, ...customBrushPresets]);
+  const groupedPresets = useMemo(() => BRUSH_PRESET_GROUPS.map((group) => ({
     group,
     presets: IMAGE_BRUSH_PRESETS.filter((preset) => preset.group === group),
-  })).filter((entry) => entry.presets.length > 0);
-
-  const activeBrush = resolveActiveBrushState(settings, [...IMAGE_BRUSH_PRESETS, ...customBrushPresets]);
+  })).filter((entry) => entry.presets.length > 0), []);
+  const activeBuiltInGroup = IMAGE_BRUSH_PRESETS.find((preset) => preset.id === activeBrush.activePresetId)?.group;
 
   const [presetName, setPresetName] = useState('');
   const [renamePresetId, setRenamePresetId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [presetPackJson, setPresetPackJson] = useState('');
   const [presetPackError, setPresetPackError] = useState('');
+  const [expandedGroups, setExpandedGroups] = useState<Set<ImageBrushPresetGroup>>(
+    () => new Set([activeBuiltInGroup ?? BRUSH_PRESET_GROUPS[0]]),
+  );
 
   const applyPreset = (preset: ImageBrushPreset) => {
+    setExpandedGroups((current) => current.has(preset.group) ? current : new Set([...current, preset.group]));
     set(applyBrushPreset(settings, preset));
   };
 
@@ -79,25 +85,68 @@ export function BrushSelectionPalette() {
   };
 
   const isActive = (preset: ImageBrushPreset) => activeBrush.activePresetId === preset.id;
+  const toggleGroup = (group: ImageBrushPresetGroup) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-3 text-xs text-cyan-100/60">
       <div>
-        <label className="mb-1 block">Presets</label>
-        {groupedPresets.map((group) => (
-          <div className="mb-2" key={group.group}>
-            <div className="mb-1 text-[10px] uppercase tracking-[0.14em] text-cyan-100/35">{group.group}</div>
-            <div className="grid grid-cols-2 gap-1">
-              {group.presets.map((preset) => (
-                <PresetTile
-                  active={isActive(preset)}
-                  modified={isActive(preset) && activeBrush.modified}
-                  key={preset.id}
-                  onClick={() => applyPreset(preset)}
-                  preset={preset}
-                />
-              ))}
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold text-cyan-50/80">Brush Library</div>
+            <div className="text-[10px] text-cyan-100/35">
+              {IMAGE_BRUSH_PRESETS.length} brushes · {groupedPresets.length} collapsible sets
             </div>
+          </div>
+          <div className="flex shrink-0 gap-1">
+            <button
+              className="rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-1 text-[10px] text-cyan-100/55 hover:border-cyan-400/40 hover:text-white"
+              onClick={() => setExpandedGroups(new Set())}
+              type="button"
+            >
+              Collapse
+            </button>
+            <button
+              className="rounded border border-cyan-300/10 bg-[#252630] px-1.5 py-1 text-[10px] text-cyan-100/55 hover:border-cyan-400/40 hover:text-white"
+              onClick={() => setExpandedGroups(new Set(groupedPresets.map((entry) => entry.group)))}
+              type="button"
+            >
+              Expand
+            </button>
+          </div>
+        </div>
+        {groupedPresets.map((group) => (
+          <div className="mb-1 overflow-hidden rounded border border-cyan-300/10 bg-[#151822]" data-brush-preset-group={group.group} key={group.group}>
+            <button
+              aria-controls={`brush-preset-group-${group.group.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}
+              aria-expanded={expandedGroups.has(group.group)}
+              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.11em] text-cyan-100/55 hover:bg-cyan-400/5 hover:text-cyan-50"
+              onClick={() => toggleGroup(group.group)}
+              type="button"
+            >
+              {expandedGroups.has(group.group) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <span className="min-w-0 flex-1 truncate">{group.group}</span>
+              <span className="rounded bg-cyan-100/5 px-1.5 py-0.5 text-[9px] tabular-nums text-cyan-100/35">{group.presets.length}</span>
+            </button>
+            {expandedGroups.has(group.group) ? (
+              <div className="grid grid-cols-2 gap-1 border-t border-cyan-300/10 p-1" id={`brush-preset-group-${group.group.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}`}>
+                {group.presets.map((preset) => (
+                  <PresetTile
+                    active={isActive(preset)}
+                    modified={isActive(preset) && activeBrush.modified}
+                    key={preset.id}
+                    onClick={() => applyPreset(preset)}
+                    preset={preset}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>

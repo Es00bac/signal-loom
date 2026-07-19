@@ -643,14 +643,6 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         className="pointer-events-none relative z-20 flex items-center gap-2"
         data-topbar-left-controls="true"
       >
-        <div className="pointer-events-auto flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-cyan-300/25 bg-[#0b1421] shadow-[0_0_18px_rgba(34,211,238,0.16)]" data-testid="app-icon-container" title={`${workspaceView.charAt(0).toUpperCase() + workspaceView.slice(1)} ${t('nav.workspaceSuffix')}`}>
-          <img
-            alt={`${workspaceView} Icon`}
-            className="h-full w-full object-contain p-1.5"
-            src={activeIcon}
-          />
-        </div>
-
         {showIntegratedMenu && appMenuStyle === 'compact' ? (
           <div
             ref={appMenuRef}
