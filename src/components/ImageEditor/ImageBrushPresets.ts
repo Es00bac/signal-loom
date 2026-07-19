@@ -529,17 +529,20 @@ const BRUSH_PRESET_TILE_VIEW_BOX = '0 0 72 18';
 const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
   {
     id: 'pencil',
-    label: 'Pencil',
+    label: 'HB / No. 2 Pencil',
     group: 'Sketch',
     // Graphite on paper: tone builds up rather than laying down flat (flow < 1), pressure mostly
     // darkens (pressureOpacity) with only a little width gain, a fine paper-tooth grain breaks the
     // stroke, and a soft-ish edge avoids the hard ink look. Tilt lays the lead on its side —
     // widening + flattening the tip toward the lean direction, like a real pencil.
     settings: {
-      size: 4, opacity: 1, hardness: 0.82, flow: 0.9, spacing: 0.06,
-      pressureSize: 0.55, pressureOpacity: 0.6, pressureFlow: 0.4, scatter: 0.05,
-      texture: 'fine-grain', textureScale: 0.7, textureDepth: 0.4,
-      tiltSize: 1, tiltRoundness: 0.85, tiltAngle: 1,
+      size: 4, opacity: 0.68, hardness: 0.24, flow: 0.5, spacing: 0.04,
+      pressureSize: 0.16, pressureOpacity: 0.86, pressureFlow: 0.6,
+      pressureHardness: 0.28, pressureCurve: 'sshape', scatter: 0.085,
+      sizeJitter: 0.09, opacityJitter: 0.14, flowJitter: 0.08,
+      texture: 'fine-grain', textureScale: 0.62, textureDepth: 0.66,
+      tiltSize: 0.72, tiltRoundness: 0.82, tiltAngle: 1, tiltOpacity: 0.16,
+      tiltFlow: 0.1, rotationFollowsTwist: true, smoothing: 0.18,
     },
   },
   {
@@ -549,8 +552,9 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     // Felt marker: ink is nearly pressure-insensitive and pools darker at the stroke edge
     // (wetEdges); a chisel-ish tip with a crisp felt edge.
     settings: {
-      size: 24, opacity: 0.72, hardness: 0.7, flow: 0.85, spacing: 0.12,
-      roundness: 0.7, angleDeg: 8, pressureSize: 0.08, pressureOpacity: 0.1, wetEdges: true,
+      size: 24, opacity: 0.76, hardness: 0.74, flow: 0.62, spacing: 0.055,
+      roundness: 0.7, angleDeg: 8, pressureSize: 0.06, pressureOpacity: 0.08,
+      pressureFlow: 0.1, wetEdges: true, smoothing: 0.2,
     },
   },
   {
@@ -558,7 +562,7 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     label: 'Charcoal',
     group: 'Sketch',
     // Charcoal stick: dusty chalk grain, laid on its side via tilt; pressure mostly darkens.
-    settings: { size: 34, opacity: 0.62, hardness: 0.2, flow: 0.52, spacing: 0.16, scatter: 0.22, roundness: 0.65, pressureOpacity: 0.5, pressureFlow: 0.55, texture: 'chalk', textureScale: 1, textureDepth: 0.55, tiltSize: 0.8, tiltRoundness: 0.7, tiltAngle: 1 },
+    settings: { size: 30, opacity: 0.58, hardness: 0.2, flow: 0.4, spacing: 0.09, scatter: 0.26, roundness: 0.62, pressureSize: 0.24, pressureOpacity: 0.84, pressureFlow: 0.64, pressureCurve: 'hard', sizeJitter: 0.18, opacityJitter: 0.2, flowJitter: 0.12, texture: 'chalk', textureScale: 1, textureDepth: 0.72, tiltSize: 1, tiltRoundness: 0.92, tiltAngle: 1, tiltOpacity: 0.2, tiltFlow: 0.12, rotationFollowsTwist: true },
   },
   {
     id: 'textureStipple',
@@ -571,19 +575,19 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'inker',
     label: 'Inker',
     group: 'Ink',
-    settings: { size: 10, opacity: 1, hardness: 1, flow: 1, spacing: 0.05, pressureSize: 0.85, smoothing: 0.25 },
+    settings: { size: 10, opacity: 1, hardness: 1, flow: 1, spacing: 0.035, pressureSize: 0.88, pressureOpacity: 0.02, pressureFlow: 0.03, pressureCurve: 'sshape', smoothing: 0.32 },
   },
   {
     id: 'brushPen',
     label: 'Brush Pen',
     group: 'Ink',
-    settings: { size: 28, opacity: 0.95, hardness: 0.78, flow: 0.92, spacing: 0.06, roundness: 0.42, angleDeg: 22, pressureSize: 0.9, pressureOpacity: 0.15, smoothing: 0.45 },
+    settings: { size: 28, opacity: 0.98, hardness: 0.82, flow: 0.94, spacing: 0.035, roundness: 0.42, angleDeg: 22, pressureSize: 0.92, pressureOpacity: 0.1, pressureFlow: 0.08, pressureRoundness: 0.26, pressureCurve: 'sshape', tiltAngle: 0.78, tiltRoundness: 0.46, rotationFollowsTwist: true, smoothing: 0.46 },
   },
   {
     id: 'calligraphyChisel',
     label: 'Calligraphy Chisel',
     group: 'Ink',
-    settings: { size: 30, opacity: 1, hardness: 0.92, flow: 0.84, spacing: 0.07, tipShape: 'square', roundness: 0.34, angleDeg: 42, pressureSize: 0.55, smoothing: 0.24 },
+    settings: { size: 30, opacity: 1, hardness: 0.96, flow: 0.92, spacing: 0.03, tipShape: 'square', roundness: 0.22, angleDeg: 42, pressureSize: 0.1, pressureOpacity: 0, pressureFlow: 0.04, pressureRoundness: 0.18, tiltAngle: 0.28, tiltRoundness: 0.18, rotationFollowsTwist: true, smoothing: 0.24 },
   },
   {
     id: 'technicalLiner',
@@ -596,14 +600,14 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     id: 'airbrush',
     label: 'Airbrush',
     group: 'Paint',
-    settings: { size: 80, opacity: 0.3, hardness: 0.05, flow: 0.35, spacing: 0.06, pressureFlow: 0.8, smoothing: 0.35 },
+    settings: { size: 80, opacity: 0.24, hardness: 0.04, flow: 0.18, spacing: 0.035, pressureSize: 0.22, pressureOpacity: 0.42, pressureFlow: 0.9, velocityOpacity: 0.28, smoothing: 0.44 },
   },
   {
     id: 'dryBrush',
     label: 'Dry Brush',
     group: 'Paint',
     // Dry brush: paint skips over the canvas tooth, leaving a broken grainy stroke.
-    settings: { size: 42, opacity: 0.8, hardness: 0.55, flow: 0.42, spacing: 0.2, scatter: 0.3, roundness: 0.5, angleDeg: 18, pressureFlow: 0.6, texture: 'canvas-grain', textureScale: 1, textureDepth: 0.6 },
+    settings: { size: 42, opacity: 0.82, hardness: 0.54, flow: 0.38, spacing: 0.12, scatter: 0.2, roundness: 0.5, angleDeg: 18, pressureSize: 0.22, pressureOpacity: 0.14, pressureFlow: 0.76, sizeJitter: 0.08, flowJitter: 0.14, paintLoad: 0.76, loadFalloff: 0.0012, texture: 'canvas-grain', textureScale: 1, textureDepth: 0.66, dualBrush: true, tiltAngle: 0.7, tiltRoundness: 0.5, rotationFollowsTwist: true },
   },
   {
     id: 'watercolorWash',
@@ -611,21 +615,21 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     group: 'Paint',
     // Watercolor: transparent pigment that pools darker at the drying edge (wetEdges) and settles
     // into the paper grain.
-    settings: { size: 96, opacity: 0.28, hardness: 0.03, flow: 0.18, spacing: 0.08, scatter: 0.05, pressureFlow: 0.85, smoothing: 0.4, wetEdges: true, texture: 'canvas-grain', textureScale: 1.4, textureDepth: 0.18 },
+    settings: { size: 96, opacity: 0.24, hardness: 0.03, flow: 0.16, spacing: 0.045, scatter: 0.04, pressureSize: 0.2, pressureOpacity: 0.3, pressureFlow: 0.92, smoothing: 0.38, wetEdges: true, wetMedia: true, wetMix: 0.78, wetLoad: 0.64, wetPull: 0.58, mixerEnabled: true, smudgeLength: 0.74, smudgeRadius: 24, colorRate: 0.18, mixMode: 'spectral', smudgeMode: 'dulling', texture: 'fine-grain', textureScale: 1.4, textureDepth: 0.3 },
   },
   {
     id: 'gouacheFlat',
     label: 'Gouache Flat',
     group: 'Paint',
     // Gouache: flat, fully opaque matte paint with a faint canvas tooth.
-    settings: { size: 48, opacity: 1, hardness: 0.66, flow: 0.65, spacing: 0.1, tipShape: 'square', roundness: 0.58, angleDeg: 6, pressureFlow: 0.35, texture: 'canvas-grain', textureScale: 1.2, textureDepth: 0.15 },
+    settings: { size: 48, opacity: 0.96, hardness: 0.7, flow: 0.68, spacing: 0.075, tipShape: 'square', roundness: 0.52, angleDeg: 6, pressureSize: 0.28, pressureOpacity: 0.08, pressureFlow: 0.52, pressureRoundness: 0.38, texture: 'canvas-grain', textureScale: 1.1, textureDepth: 0.18, tiltAngle: 0.65, tiltRoundness: 0.5, rotationFollowsTwist: true },
   },
   {
     id: 'oilBristle',
     label: 'Oil Bristle',
     group: 'Paint',
     // Oil bristle: thick paint dragged by stiff bristles, raking the canvas grain.
-    settings: { size: 58, opacity: 0.9, hardness: 0.5, flow: 0.54, spacing: 0.16, scatter: 0.16, roundness: 0.66, angleDeg: 14, pressureFlow: 0.52, smoothing: 0.28, texture: 'canvas-grain', textureScale: 0.9, textureDepth: 0.4 },
+    settings: { size: 58, opacity: 0.96, hardness: 0.58, flow: 0.62, spacing: 0.075, scatter: 0.12, roundness: 0.58, angleDeg: 14, pressureSize: 0.28, pressureOpacity: 0.06, pressureFlow: 0.62, smoothing: 0.28, mixerEnabled: true, smudgeLength: 0.74, smudgeRadius: 20, colorRate: 0.58, mixMode: 'spectral', smudgeMode: 'smearing', paintLoad: 0.9, loadFalloff: 0.0008, texture: 'canvas-grain', textureScale: 0.9, textureDepth: 0.48, dualBrush: true, tiltAngle: 0.7, tiltRoundness: 0.52, rotationFollowsTwist: true },
   },
   {
     id: 'cloudGlaze',
@@ -650,7 +654,7 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     label: 'Dry Bristle',
     group: 'Paint',
     // Dry bristle: separates into individual bristle streaks over the canvas tooth as paint runs out.
-    settings: { size: 18, opacity: 1, hardness: 0.85, flow: 0.85, spacing: 0.07, scatter: 0.18, fadeLength: 6, paintLoad: 1, loadFalloff: 0.004, texture: 'canvas-grain', textureScale: 0.8, textureDepth: 0.5 },
+    settings: { size: 18, opacity: 0.88, hardness: 0.72, flow: 0.52, spacing: 0.08, scatter: 0.2, pressureSize: 0.18, pressureFlow: 0.78, sizeJitter: 0.08, flowJitter: 0.16, fadeLength: 4, paintLoad: 0.78, loadFalloff: 0.0014, texture: 'hatch', textureScale: 0.65, textureDepth: 0.72, dualBrush: true, tiltAngle: 0.7, tiltRoundness: 0.5, rotationFollowsTwist: true },
   },
   {
     id: 'mangaInker',
@@ -661,10 +665,11 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
   },
   {
     id: 'screentoneDots',
-    label: 'Screentone Dots',
+    label: 'Screentone Stipple',
     group: 'Comic / Manga',
-    // Screentone: lay an even tone and let the halftone-dots texture punch the real dot pattern.
-    settings: { size: 28, opacity: 0.85, hardness: 1, flow: 1, spacing: 0.12, scatter: 0, pressureSize: 0, pressureOpacity: 0, texture: 'dots', textureScale: 1, textureDepth: 0.9 },
+    // The current parametric engine cannot tile a full screentone sheet inside one dab. This tool
+    // stays honest by laying a visible, regular dot trail that the artist can hatch into an area.
+    settings: { size: 5, opacity: 0.85, hardness: 1, flow: 1, spacing: 1.25, scatter: 0.1, pressureSize: 0, pressureOpacity: 0, pressureFlow: 0, texture: 'dots', textureScale: 0.8, textureDepth: 0.9 },
   },
   {
     id: 'speedLine',
@@ -677,14 +682,14 @@ const CORE_IMAGE_BRUSH_PRESETS: ImageBrushPreset[] = [
     label: 'Storyboard Blue',
     group: 'Comic / Manga',
     // Non-photo blue pencil: a blue graphite — same paper tooth + pressure-darkening as the Pencil.
-    settings: { size: 8, opacity: 0.9, hardness: 0.8, flow: 0.85, spacing: 0.06, pressureSize: 0.5, pressureOpacity: 0.5, scatter: 0.05, texture: 'fine-grain', textureScale: 0.7, textureDepth: 0.35, color: '#38bdf8' },
+    settings: { size: 5, opacity: 0.62, hardness: 0.22, flow: 0.46, spacing: 0.04, pressureSize: 0.15, pressureOpacity: 0.84, pressureFlow: 0.58, pressureCurve: 'sshape', scatter: 0.08, sizeJitter: 0.08, opacityJitter: 0.13, texture: 'fine-grain', textureScale: 0.62, textureDepth: 0.64, tiltSize: 0.7, tiltRoundness: 0.82, tiltAngle: 1, color: '#38bdf8' },
   },
   {
     id: 'halftoneBlock',
-    label: 'Halftone Block',
+    label: 'Halftone Square Stipple',
     group: 'Comic / Manga',
-    // Halftone block: blocky tone broken by a coarse halftone-dot texture.
-    settings: { size: 18, opacity: 0.7, hardness: 1, flow: 0.92, spacing: 0.18, tipShape: 'square', roundness: 0.72, scatter: 0.08, pressureSize: 0.12, texture: 'dots', textureScale: 1.2, textureDepth: 0.6 },
+    // A coarser square-dot trail for patterned shading; named for what this engine actually paints.
+    settings: { size: 9, opacity: 0.72, hardness: 1, flow: 0.92, spacing: 1.15, tipShape: 'square', roundness: 0.58, scatter: 0.18, pressureSize: 0.08, pressureOpacity: 0, texture: 'dots', textureScale: 1.2, textureDepth: 0.68 },
   },
   {
     id: 'fxSpark',
@@ -768,8 +773,12 @@ export function applyBrushPreset(
   current: BrushSettings,
   preset: ImageBrushPreset,
 ): BrushSettings {
+  // A preset is a complete tool identity, not a partial mutation of the previously selected
+  // brush. Starting from `current` allowed wet-media, mixer, texture, jitter, tilt, and velocity
+  // controls to leak from one preset into the next (for example, a pencil selected after a wet
+  // mixer could remain a wet mixer). Normalize the preset against the engine defaults and retain
+  // only the artist's current colour unless the preset intentionally supplies one.
   return normalizeBrushSettings({
-    ...current,
     ...preset.settings,
     presetId: preset.id,
     color: preset.settings.color ?? current.color,

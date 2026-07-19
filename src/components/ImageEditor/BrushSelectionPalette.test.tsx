@@ -183,7 +183,7 @@ describe('BrushSelectionPalette', () => {
     const pencilPreview = container.querySelector<SVGSVGElement>('svg[data-brush-preset-preview="pencil"]');
     expect(pencilPreview).not.toBeNull();
     expect(pencilPreview?.getAttribute('data-brush-preset-preview-signature')).toBe(
-      '4:0.06:0.72:0.15:17:6,9->66,9:61',
+      '4:0.04:0.72:0.18:17:6,9->66,9:61',
     );
 
     const hardRoundPreview = container.querySelector<SVGSVGElement>('svg[data-brush-preset-preview="hardRound"]');

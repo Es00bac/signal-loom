@@ -171,14 +171,45 @@ describe('ImageBrushPresets', () => {
     expect(applyBrushPreset(current, getBrushPreset('marker')!)).toMatchObject({
       presetId: 'marker',
       size: 24,
-      opacity: 0.72,
-      hardness: 0.7,
-      flow: 0.85,
-      spacing: 0.12,
+      opacity: 0.76,
+      hardness: 0.74,
+      flow: 0.62,
+      spacing: 0.055,
       roundness: 0.7,
       color: '#ff00ff',
     });
     expect(applyBrushPreset(current, getBrushPreset('storyboardBlue')!).color).toBe('#38bdf8');
+  });
+
+  it('does not leak the previous brush engine into the newly selected tool', () => {
+    const current = {
+      ...DEFAULT_BRUSH_SETTINGS,
+      color: '#31c48d',
+      mixerEnabled: true,
+      wetMedia: true,
+      wetEdges: true,
+      wetMix: 0.9,
+      wetPull: 0.8,
+      texture: 'spatter',
+      textureDepth: 0.9,
+      dualBrush: true,
+      scatter: 1.5,
+      sizeJitter: 0.8,
+      velocitySize: 0.7,
+    };
+    const pencil = getBrushPreset('media-graphite-2b-sketch');
+
+    expect(pencil).toBeDefined();
+    const applied = applyBrushPreset(current, pencil!);
+
+    expect(applied.color).toBe('#31c48d');
+    expect(applied.mixerEnabled).toBe(false);
+    expect(applied.wetMedia).toBe(false);
+    expect(applied.wetEdges).toBe(false);
+    expect(applied.dualBrush).toBe(false);
+    expect(applied.velocitySize).toBe(0);
+    expect(applied.scatter).toBe(pencil!.settings.scatter ?? 0);
+    expect(applied.texture).toBe(pencil!.settings.texture);
   });
 
   it('round-trips user preset packs through JSON export and import helpers', () => {
@@ -319,7 +350,7 @@ describe('ImageBrushPresets', () => {
 
     const pencil = descriptor?.presets.find((preset) => preset.id === 'pencil');
     expect(pencil).toMatchObject({
-      label: 'Pencil',
+      label: 'HB / No. 2 Pencil',
       origin: 'built-in',
       tags: expect.arrayContaining(['origin:built-in', 'group:sketch', 'workflow:sketch', 'dynamic:pressure']),
       preview: {
@@ -335,7 +366,7 @@ describe('ImageBrushPresets', () => {
       },
       unsupportedWarnings: [],
     });
-    expect(pencil?.preview.signature).toBe('4:0.06:0.72:0.15:17:6,9->66,9:61');
+    expect(pencil?.preview.signature).toBe('4:0.04:0.72:0.18:17:6,9->66,9:61');
 
     const user = descriptor?.presets.find((preset) => preset.id === 'user-imported-mixer');
     expect(user?.tags).toEqual(expect.arrayContaining([
