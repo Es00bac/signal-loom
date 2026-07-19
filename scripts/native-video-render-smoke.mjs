@@ -16,6 +16,8 @@ import {
   buildNativeVideoRenderSmokeProjectDocument,
   buildNativeVideoRenderSmokeRendererEnvironment,
   buildNativeVideoRenderSmokeSettingsStorage,
+  isNativeSmokeRealAppTarget,
+  resolveNativeSmokeElectronExecutable,
 } from './native-smoke-lib.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -128,12 +130,7 @@ function launchNativeRenderer(outputPath) {
 }
 
 function launchElectron(rootDir) {
-  const electronCli = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
-  const args = process.platform === 'win32'
-    ? [`--remote-debugging-port=${remoteDebuggingPort}`, '.']
-    : [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`, '.'];
-  const command = process.platform === 'win32' ? electronCli : process.execPath;
-  const child = spawn(command, args, {
+  const child = spawn(resolveNativeSmokeElectronExecutable(), [`--remote-debugging-port=${remoteDebuggingPort}`, '.'], {
     cwd: repoRoot,
     env: buildNativeVideoRenderSmokeEnvironment({ baseEnv: process.env, rootDir }),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -172,14 +169,8 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
-      if (signalLoomTarget?.webSocketDebuggerUrl) {
-        return signalLoomTarget;
-      }
-      const fallbackTarget = targets.find((target) => target.webSocketDebuggerUrl);
-      if (fallbackTarget) {
-        return fallbackTarget;
-      }
+      const realTarget = targets.find(isNativeSmokeRealAppTarget);
+      if (realTarget) return realTarget;
     } catch {
       // Electron may still be starting.
     }
@@ -426,7 +417,9 @@ async function readVideoRenderState(webSocketDebuggerUrl) {
         } catch (error) {
           result.render.fetchError = error instanceof Error ? error.message : String(error);
           const bridge = window.signalLoomNative;
-          const snapshot = bridge ? await bridge.getSourceLibrarySnapshot() : undefined;
+          const claim = bridge ? (await bridge.getNativeState()).projectAuthority : undefined;
+          if (claim && bridge?.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
+          const snapshot = bridge ? await bridge.getSourceLibrarySnapshot({ claim }) : undefined;
           const items = (snapshot?.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
           const videoItem = [...items].reverse().find((item) => item.kind === 'video' && (item.nativeFilePath || item.assetUrl));
           result.render.sourceLibraryVideoItem = videoItem

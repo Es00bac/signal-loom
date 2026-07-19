@@ -1927,42 +1927,20 @@ export const useSourceBinStore = create<SourceBinState>()(
             ? await file.text().catch(() => undefined)
             : undefined;
 
+          const transientAssetUrl = createObjectAssetUrl(file);
           try {
-            const storedAsset = scratchDirectoryHandle
-              ? await storeScratchAssetBlob({
-                  scratchDirectoryHandle,
-                  item: {
-                    id,
-                    label: file.name,
-                    kind,
-                    mimeType,
-                  },
-                  blob: file,
-                })
-              : await saveImportedAsset(file);
-            importedItems.unshift({
+            const persistedItem = await persistLibraryAssetItemWithFallback({
               id,
               label: file.name,
               kind,
               mimeType,
-              assetId: scratchDirectoryHandle ? undefined : 'id' in storedAsset ? storedAsset.id : undefined,
-              scratchFileName: scratchDirectoryHandle && 'fileName' in storedAsset ? storedAsset.fileName : undefined,
-              assetUrl: 'assetUrl' in storedAsset ? storedAsset.assetUrl : storedAsset.dataUrl,
-              text,
+              dataUrl: transientAssetUrl ?? await blobToDataUrl(file),
+              blob: file,
               createdAt: Date.now(),
-            });
-          } catch (error) {
-            const recoveryDataUrl = await blobToDataUrl(file).catch(() => createObjectAssetUrl(file));
-            const fallbackItem = createFallbackLibraryAssetItem({
-              id,
-              label: file.name,
-              kind,
-              mimeType,
-              dataUrl: recoveryDataUrl,
-              text,
-            });
-            importedItems.unshift(fallbackItem);
-            reportSourceLibraryDurabilityFailure(fallbackItem, error);
+            }, scratchDirectoryHandle);
+            importedItems.unshift({ ...persistedItem, text });
+          } finally {
+            if (transientAssetUrl) revokeObjectUrl(transientAssetUrl);
           }
         }
 

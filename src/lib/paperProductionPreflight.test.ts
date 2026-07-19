@@ -7,10 +7,9 @@ import type { PdfxValidationReport } from './paperPdfxValidate';
 import type { PaperRenderPlan } from './paperRenderPlan';
 import { exportValidatedPaperPdfx, preflightPaperProduction } from './paperProductionPreflight';
 
-const SHA = 'a'.repeat(64);
-
 function assetRef(mimeType = 'application/vnd.iccprofile'): BinaryAssetRef {
-  return { id: `sha256:${SHA}`, sha256: SHA, mimeType, byteLength: 8 };
+  const sha256 = (mimeType.startsWith('image/') ? 'b' : 'a').repeat(64);
+  return { id: `sha256:${sha256}`, sha256, mimeType, byteLength: 8 };
 }
 
 function exactProfile(): PaperManagedIccProfile {

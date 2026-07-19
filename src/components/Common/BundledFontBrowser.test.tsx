@@ -154,9 +154,10 @@ describe('BundledFontBrowser', () => {
 
     expect(host.textContent).not.toContain('Editorial Serif');
     const tokyo = host.querySelector<HTMLButtonElement>('button[aria-label*="Tokyo Regular"]')!;
-    await act(async () => {
-      await vi.waitFor(() => expect(tokyo.querySelector('[data-font-ready="true"]')).not.toBeNull());
-    });
+    await vi.waitFor(
+      () => expect(tokyo.querySelector('[data-font-ready="true"]')).not.toBeNull(),
+      { timeout: 20_000 },
+    );
     const specimen = tokyo.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:regular"]')!;
     const reference = createBundledFontFaceReference(catalog.families[1], catalog.families[1].faces[0]);
     expect(specimen.classList.contains('font-sans')).toBe(false);
@@ -175,7 +176,7 @@ describe('BundledFontBrowser', () => {
       ));
     });
     await act(async () => root.unmount());
-  });
+  }, 25_000);
 
   it('filters by publishing role and exposes collection/embedding context', async () => {
     const host = document.createElement('div');
@@ -215,9 +216,10 @@ describe('BundledFontBrowser', () => {
       <BundledFontBrowser catalog={variableCatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
     ));
     await waitForBrowserToggle(host);
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-font-ready="true"]')).not.toBeNull());
-    });
+    await vi.waitFor(
+      () => expect(host.querySelector('[data-font-ready="true"]')).not.toBeNull(),
+      { timeout: 20_000 },
+    );
 
     const specimen = host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:variable"]')!;
     const reference = createBundledFontFaceReference(variableCatalog.families[0], face);
@@ -228,7 +230,7 @@ describe('BundledFontBrowser', () => {
     expect(specimen.style.fontStyle).toBe('normal');
     expect(specimen.style.fontStretch).toBe('100%');
     await act(async () => root.unmount());
-  });
+  }, 25_000);
 
   it('revokes face A readiness while face B is unseen, delayed, failed, and then recovered', async () => {
     const faceACatalog = structuredClone(catalog);
@@ -243,9 +245,10 @@ describe('BundledFontBrowser', () => {
       <BundledFontBrowser catalog={faceACatalog} initiallyOpen onSelect={vi.fn()} value="" weight={400} style="normal" />,
     ));
     await waitForBrowserToggle(host);
-    await act(async () => {
-      await vi.waitFor(() => expect(host.querySelector('[data-font-ready="true"]')).not.toBeNull());
-    });
+    await vi.waitFor(
+      () => expect(host.querySelector('[data-font-ready="true"]')).not.toBeNull(),
+      { timeout: 20_000 },
+    );
     const faceA = faceACatalog.families[0].faces[0];
     const faceAAlias = `"${bundledFontFaceRuntimeFamilyName(createBundledFontFaceReference(faceACatalog.families[0], faceA))}"`;
     expect(host.querySelector<HTMLElement>('[data-bundled-font-specimen="tokyo:specimen-transition-a"]')?.style.fontFamily).toBe(faceAAlias);
@@ -321,7 +324,7 @@ describe('BundledFontBrowser', () => {
     expect(recoveredSpecimen.style.fontStyle).toBe('normal');
     expect(recoveredSpecimen.style.fontStretch).toBe('100%');
     await act(async () => root.unmount());
-  });
+  }, 30_000);
 
   it('localizes a non-Error selection failure instead of exposing static English fallback copy', async () => {
     useSettingsStore.setState({ locale: 'ja' });

@@ -234,8 +234,8 @@ describe('combined Flow runtime reconciliation', () => {
       prompt: 'before',
     });
     useSourceBinStore.setState({
-      addAssetItem: vi.fn(async (item, targetBinId) => {
-        const added = await originalAddAssetItem(item, targetBinId);
+      addAssetItem: vi.fn(async (item, targetBinId, options) => {
+        const added = await originalAddAssetItem(item, targetBinId, options);
         useFlowStore.getState().updateNodeData(nodeId, 'prompt', 'edited during Source publication');
         return added;
       }),

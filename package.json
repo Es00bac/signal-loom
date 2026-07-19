@@ -1,8 +1,10 @@
 {
   "name": "signal-loom",
   "private": true,
-  "version": "0.9.12-g",
+  "version": "0.9.13",
   "description": "A studio for generative media: node-based Flow, a layered Image editor, print/comic Paper layout, and a Video timeline — local-first, bring-your-own-key.",
+  "homepage": "https://sloom.studio/",
+  "desktopName": "signal-loom.desktop",
   "license": "SEE LICENSE IN LICENSE",
   "author": {
     "name": "Sloom Software",
@@ -191,6 +193,7 @@
     "linux": {
       "category": "AudioVideo",
       "icon": "build/icons/icon.png",
+      "syncDesktopName": true,
       "target": [
         "AppImage",
         "deb",

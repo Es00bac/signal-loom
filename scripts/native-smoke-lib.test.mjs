@@ -11,6 +11,7 @@ import {
   buildNativeRealProjectSoakOptions,
   evaluateNativeRealProjectSoakBudgets,
   formatNativeRealProjectSoakBudgetFailure,
+  isNativeSmokeRealAppTarget,
   buildNativeSmokePaperImagesRequest,
   buildNativeSmokePaperPdfRequest,
   buildNativeSmokePaperOsFileDropExpression,
@@ -63,6 +64,23 @@ describe('native smoke helpers', () => {
 
   it('tracks every workspace expected in the native release-gate window smoke', () => {
     expect(NATIVE_SMOKE_WORKSPACES).toEqual(['flow', 'editor', 'image', 'paper']);
+  });
+
+  it('distinguishes the real app target from transient startup and license targets', () => {
+    expect(isNativeSmokeRealAppTarget({
+      url: 'file:///opt/sloom/resources/app.asar/dist/index.html?workspace=flow',
+      webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/app',
+    })).toBe(true);
+    expect(isNativeSmokeRealAppTarget({
+      url: 'about:blank',
+      title: 'License',
+      webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/license',
+    })).toBe(false);
+    expect(isNativeSmokeRealAppTarget({
+      url: 'file:///tmp/startup.html',
+      title: 'Sloom Studio is starting',
+      webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/splash',
+    })).toBe(false);
   });
 
   it('builds deterministic Paper PDF and webcomic image export requests', () => {
@@ -215,8 +233,16 @@ describe('native smoke helpers', () => {
         activeCompositionId: 'native-video-render-composition',
       },
     });
-    expect(project.flow.nodes).toHaveLength(1);
+    expect(project.flow.nodes).toHaveLength(2);
     expect(project.flow.nodes[0]).toMatchObject({
+      id: 'native-video-render-contract-input',
+      type: 'videoGen',
+      data: {
+        mediaMode: 'import',
+        resultType: 'video',
+      },
+    });
+    expect(project.flow.nodes[1]).toMatchObject({
       id: 'native-video-render-composition',
       type: 'composition',
       data: {
@@ -226,7 +252,7 @@ describe('native smoke helpers', () => {
         editorExportPresetPlan: { presetId: 'review-h264-1080p' },
       },
     });
-    expect(project.flow.nodes[0].data.editorVisualClips[0]).toMatchObject({
+    expect(project.flow.nodes[1].data.editorVisualClips[0]).toMatchObject({
       id: 'native-video-render-clip',
       sourceNodeId: 'native-video-render-source-image',
       sourceKind: 'image',
@@ -236,6 +262,12 @@ describe('native smoke helpers', () => {
         color: '#22d3ee',
       },
     });
+    expect(project.flow.edges).toEqual([{
+      id: 'native-video-render-contract-edge',
+      source: 'native-video-render-contract-input',
+      target: 'native-video-render-composition',
+      targetHandle: 'composition-video',
+    }]);
     expect(project.sourceBin.bins[0].items[0]).toMatchObject({
       id: 'native-video-render-source-image',
       label: 'Native video render source',

@@ -2991,6 +2991,7 @@ function FlowApp() {
       className={`signal-loom-themed density-${interfaceDensity} w-screen h-screen overflow-hidden flex flex-col relative font-sans`}
       data-mobile-phone-interface={mobilePhoneInterface.enabled ? mobilePhoneInterface.orientation : undefined}
       data-mobile-phone-interface-mode={mobilePhoneInterface.enabled ? mobileChromeMode : undefined}
+      data-native-startup-settled={nativeStartupSettled ? 'true' : 'false'}
       data-source-library-renderer-item-ids={sourceLibraryRendererItemIds}
       style={interfaceThemeStyle}
     >

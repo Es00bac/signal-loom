@@ -1,4 +1,7 @@
+import { createRequire } from 'node:module';
 import { basename, join } from 'node:path';
+
+const require = createRequire(import.meta.url);
 
 // 2×2 RGBA PNG: matches the smoke Image document's declared canvas and exercises Chromium's
 // production decoder. The older 1×1 grayscale+alpha fixture was accepted structurally but
@@ -14,6 +17,23 @@ const DEFAULT_REAL_PROJECT_SOAK_CYCLES = 6;
 const DEFAULT_REAL_PROJECT_SOAK_DELAY_MS = 250;
 const DEFAULT_FLOW_WORKSPACE_SWITCH_BUDGET_MS = 1200;
 const DEFAULT_RENDERER_HEAP_BUDGET_MB = 768;
+
+export function resolveNativeSmokeElectronExecutable() {
+  const executable = require('electron');
+  if (typeof executable !== 'string' || executable.length === 0) {
+    throw new Error('The Electron package did not resolve to an executable path.');
+  }
+  return executable;
+}
+
+export function isNativeSmokeRealAppTarget(target) {
+  return Boolean(
+    target?.webSocketDebuggerUrl
+    && typeof target.url === 'string'
+    && target.url.startsWith('file://')
+    && target.url.includes('index.html'),
+  );
+}
 
 function buildNativeSmokeElectronEnvironment(baseEnv = process.env, platform = process.platform) {
   const nextEnv = { ...baseEnv };
@@ -291,11 +311,27 @@ export function buildNativeVideoRenderSmokeProjectDocument({ now = Date.now() } 
     savedAt: now,
     flow: {
       version: 3,
-      nodes: [{
-        id: 'native-video-render-composition',
-        type: 'composition',
-        position: { x: 0, y: 0 },
-        data: {
+      nodes: [
+        {
+          id: 'native-video-render-contract-input',
+          type: 'videoGen',
+          position: { x: -360, y: 0 },
+          data: {
+            label: 'Native video render contract input',
+            customTitle: 'Native video render contract input',
+            mediaMode: 'import',
+            sourceAssetName: 'native-video-render-contract-input.mp4',
+            sourceAssetMimeType: 'video/mp4',
+            sourceAssetUrl: SMOKE_PNG_DATA_URL,
+            result: SMOKE_PNG_DATA_URL,
+            resultType: 'video',
+          },
+        },
+        {
+          id: 'native-video-render-composition',
+          type: 'composition',
+          position: { x: 0, y: 0 },
+          data: {
           label: 'Native Video Render Smoke',
           customTitle: 'Native Video Render Smoke',
           aspectRatio: '16:9',
@@ -332,9 +368,15 @@ export function buildNativeVideoRenderSmokeProjectDocument({ now = Date.now() } 
             },
           }],
           editorAudioClips: [],
+          },
         },
+      ],
+      edges: [{
+        id: 'native-video-render-contract-edge',
+        source: 'native-video-render-contract-input',
+        target: 'native-video-render-composition',
+        targetHandle: 'composition-video',
       }],
-      edges: [],
     },
     editor: {
       workspaceView: 'editor',
@@ -436,6 +478,7 @@ export function buildNativeSmokePaperOsFileDropExpression({
   pageNumber = 1,
   ensurePageCount,
   verifySaveOpenRoundTrip = false,
+  performDrop = true,
 } = {}) {
   const targetPageNumber = normalizePositiveInteger(pageNumber, 1);
   const requiredPageCount = Math.max(targetPageNumber, normalizePositiveInteger(ensurePageCount, targetPageNumber));
@@ -453,10 +496,20 @@ export function buildNativeSmokePaperOsFileDropExpression({
       const targetPageSelector = ${JSON.stringify(targetPageSelector)};
       const targetPageFrameSelector = '[data-paper-frame="true"][data-paper-frame-page-number="' + pageNumber + '"]';
       const verifySaveOpenRoundTrip = ${JSON.stringify(Boolean(verifySaveOpenRoundTrip))};
+      const performDrop = ${JSON.stringify(Boolean(performDrop))};
       const expectedEnvelope = ${JSON.stringify(`Page ${targetPageNumber} imports`)};
       const expectedStatus = ${JSON.stringify(`Imported 1 image into Page ${targetPageNumber} imports.`)};
       const workspace = new URL(location.href).searchParams.get('workspace') || 'flow';
       const bridge = window.signalLoomNative;
+      const getConfirmedClaim = async () => {
+        const claim = (await bridge.getNativeState()).projectAuthority;
+        if (claim && bridge.confirmProjectAdoption) {
+          const confirmation = await bridge.confirmProjectAdoption(claim);
+          if (!confirmation?.ok) throw new Error('Paper smoke could not confirm project authority.');
+        }
+        return claim;
+      };
+      const claim = await getConfirmedClaim();
 
       const getSourceItems = (snapshot) => (snapshot?.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
       const findExpectedSourceItem = (items) => items.find((item) => (
@@ -483,7 +536,7 @@ export function buildNativeSmokePaperOsFileDropExpression({
         let snapshotEnvelopeId;
         let snapshotItemId;
         if (bridge?.getSourceLibrarySnapshot) {
-          const snapshot = await bridge.getSourceLibrarySnapshot();
+          const snapshot = await bridge.getSourceLibrarySnapshot({ claim });
           const items = getSourceItems(snapshot);
           const item = findExpectedSourceItem(items);
           itemCount = items.length;
@@ -511,6 +564,7 @@ export function buildNativeSmokePaperOsFileDropExpression({
           snapshotItemId,
           itemCount,
           roundTripExpected: verifySaveOpenRoundTrip,
+          dropPerformed: performDrop,
           bodyExcerpt: text.slice(0, 2000),
         };
       };
@@ -549,24 +603,26 @@ export function buildNativeSmokePaperOsFileDropExpression({
 
       page.scrollIntoView({ block: 'center', inline: 'center' });
       await sleep(100);
-      const rect = page.getBoundingClientRect();
-      const center = {
-        x: Math.round(rect.left + rect.width * 0.45),
-        y: Math.round(rect.top + rect.height * 0.35),
-      };
-      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-      const file = new File([bytes], fileName, { type: mimeType, lastModified });
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
+      if (performDrop) {
+        const rect = page.getBoundingClientRect();
+        const center = {
+          x: Math.round(rect.left + rect.width * 0.45),
+          y: Math.round(rect.top + rect.height * 0.35),
+        };
+        const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+        const file = new File([bytes], fileName, { type: mimeType, lastModified });
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
 
-      for (const type of ['dragenter', 'dragover', 'drop']) {
-        page.dispatchEvent(new DragEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          clientX: center.x,
-          clientY: center.y,
-          dataTransfer,
-        }));
+        for (const type of ['dragenter', 'dragover', 'drop']) {
+          page.dispatchEvent(new DragEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX: center.x,
+            clientY: center.y,
+            dataTransfer,
+          }));
+        }
       }
 
       let latest = await readState();
@@ -581,7 +637,7 @@ export function buildNativeSmokePaperOsFileDropExpression({
           && latest.hasItemName
           && latest.hasMime
           && latest.hasLinkedFrame
-          && latest.status
+          && (!performDrop || latest.status)
           && latest.snapshotHasEnvelope
           && latest.snapshotHasItem
         ) {
@@ -623,7 +679,12 @@ export function buildNativeSmokePaperOsFileDropExpression({
         const roundTripStartedAt = Date.now();
         await sleep(200);
         while (Date.now() - roundTripStartedAt < 15000) {
-          const opened = await bridge.openProjectFile();
+          const roundTripClaim = await getConfirmedClaim();
+          const opened = await bridge.openProjectFile({ claim: roundTripClaim });
+          if (opened?.rejected || !opened?.transactionId) {
+            await sleep(250);
+            continue;
+          }
           const document = opened?.document;
           const sourceItems = (document?.sourceBin?.bins ?? []).flatMap((bin) => bin.items ?? []);
           const item = findExpectedSourceItem(sourceItems);
@@ -646,6 +707,7 @@ export function buildNativeSmokePaperOsFileDropExpression({
             roundTripHasLinkedFrame: Boolean(linkedFrame),
             roundTripOpenedName: document?.name,
           };
+          await bridge.cancelProjectSwitch({ transactionId: opened.transactionId });
           if (
             latestRoundTrip.roundTripHasEnvelope
             && latestRoundTrip.roundTripHasItem
@@ -687,9 +749,18 @@ export function buildNativeSmokePaperOsFileDropWorkspacePropagationExpression({
         paper: 'Paper',
       };
 
+      const getConfirmedClaim = async () => {
+        const claim = (await bridge.getNativeState()).projectAuthority;
+        if (claim && bridge.confirmProjectAdoption) {
+          const confirmation = await bridge.confirmProjectAdoption(claim);
+          if (!confirmation?.ok) throw new Error('Workspace propagation smoke could not confirm project authority.');
+        }
+        return claim;
+      };
+
       const getSnapshotItems = async () => {
         if (!bridge?.getSourceLibrarySnapshot) return [];
-        const snapshot = await bridge.getSourceLibrarySnapshot();
+        const snapshot = await bridge.getSourceLibrarySnapshot({ claim: await getConfirmedClaim() });
         return (snapshot.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
       };
 
@@ -789,9 +860,18 @@ export function buildNativeSmokeProjectImportWorkspacePropagationExpression({
         paper: 'Paper',
       };
 
+      const getConfirmedClaim = async () => {
+        const claim = (await bridge.getNativeState()).projectAuthority;
+        if (claim && bridge.confirmProjectAdoption) {
+          const confirmation = await bridge.confirmProjectAdoption(claim);
+          if (!confirmation?.ok) throw new Error('Project import smoke could not confirm project authority.');
+        }
+        return claim;
+      };
+
       const getSnapshotItems = async () => {
         if (!bridge?.getSourceLibrarySnapshot) return [];
-        const snapshot = await bridge.getSourceLibrarySnapshot();
+        const snapshot = await bridge.getSourceLibrarySnapshot({ claim: await getConfirmedClaim() });
         return (snapshot.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
       };
 
@@ -900,7 +980,12 @@ export function buildNativeSmokeProjectImportWorkspacePropagationExpression({
         const roundTripStartedAt = Date.now();
         await sleep(200);
         while (Date.now() - roundTripStartedAt < 15000) {
-          const opened = await bridge.openProjectFile();
+          const roundTripClaim = await getConfirmedClaim();
+          const opened = await bridge.openProjectFile({ claim: roundTripClaim });
+          if (opened?.rejected || !opened?.transactionId) {
+            await sleep(250);
+            continue;
+          }
           const document = opened?.document;
           const sourceItems = (document?.sourceBin?.bins ?? []).flatMap((bin) => bin.items ?? []);
           const item = findExpectedSourceItem(sourceItems);
@@ -913,6 +998,7 @@ export function buildNativeSmokeProjectImportWorkspacePropagationExpression({
             roundTripHasAssetUrl: typeof item?.assetUrl === 'string' && item.assetUrl.length > 0,
             roundTripOpenedName: document?.name,
           };
+          await bridge.cancelProjectSwitch({ transactionId: opened.transactionId });
           if (
             latestRoundTrip.roundTripHasEnvelope
             && latestRoundTrip.roundTripHasItem
@@ -1050,15 +1136,68 @@ export function buildNativeSmokeBridgeExpression() {
     (async () => {
       const bridge = window.signalLoomNative;
       if (!bridge) return { error: 'native bridge missing' };
-      await bridge.clearProjectPath();
-      const save = await bridge.saveProjectFile(${JSON.stringify(buildNativeSmokeProjectDocument())});
-      const open = await bridge.openProjectFile();
-      const imported = await bridge.importMediaFiles({ scratchDirectoryPath: save.scratchDirectoryPath });
-      const pdf = await bridge.exportPaperPdf(${JSON.stringify(buildNativeSmokePaperPdfRequest())});
-      const images = await bridge.exportPaperImages(${JSON.stringify(buildNativeSmokePaperImagesRequest())});
+      const bounded = (phase, promise, timeoutMs = 30000) => Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error(phase + ' timed out after ' + timeoutMs + 'ms')),
+          timeoutMs,
+        )),
+      ]);
+      const adopt = async (claim, phase) => {
+        if (!claim || !bridge.confirmProjectAdoption) return;
+        const confirmation = await bridge.confirmProjectAdoption(claim);
+        if (!confirmation?.ok) {
+          throw new Error(phase + ' project authority adoption failed: ' + JSON.stringify(confirmation));
+        }
+      };
+      const initial = await bridge.getNativeState();
+      let claim = initial.projectAuthority;
+      await adopt(claim, 'initial');
+
+      const clearPrepared = await bounded('blank project preparation', bridge.clearProjectPath({ claim }));
+      if (clearPrepared?.rejected || !clearPrepared?.transactionId) {
+        return { error: 'blank project preparation failed: ' + JSON.stringify(clearPrepared) };
+      }
+      const clearCommit = await bounded('blank project commit', bridge.commitProjectSwitch({ transactionId: clearPrepared.transactionId }));
+      if (clearCommit?.rejected || !clearCommit?.authority) {
+        return { error: 'blank project commit failed: ' + JSON.stringify(clearCommit) };
+      }
+      claim = clearCommit.authority;
+      await adopt(claim, 'blank');
+
+      const save = await bounded('project save', bridge.saveProjectFile({
+        document: ${JSON.stringify(buildNativeSmokeProjectDocument())},
+        claim,
+      }));
+      if (save?.rejected || save?.canceled || !save?.authority) {
+        return { error: 'project save failed: ' + JSON.stringify(save) };
+      }
+      claim = save.authority;
+
+      const openPrepared = await bounded('project open preparation', bridge.openProjectFile({ claim }));
+      if (openPrepared?.rejected || openPrepared?.canceled || !openPrepared?.transactionId) {
+        return { error: 'project open preparation failed: ' + JSON.stringify(openPrepared) };
+      }
+      const openCommit = await bounded('project open commit', bridge.commitProjectSwitch({ transactionId: openPrepared.transactionId }));
+      if (openCommit?.rejected || !openCommit?.authority) {
+        return { error: 'project open commit failed: ' + JSON.stringify(openCommit) };
+      }
+      claim = openCommit.authority;
+      await adopt(claim, 'open');
+      const open = {
+        ...openPrepared,
+        ...openCommit,
+        document: openPrepared.document ?? openCommit.document,
+      };
+      const imported = await bounded('native media import', bridge.importMediaFiles({
+        scratchDirectoryPath: save.scratchDirectoryPath,
+        claim,
+      }));
+      const pdf = await bounded('Paper PDF export', bridge.exportPaperPdf(${JSON.stringify(buildNativeSmokePaperPdfRequest())}));
+      const images = await bounded('Paper image export', bridge.exportPaperImages(${JSON.stringify(buildNativeSmokePaperImagesRequest())}));
       const workspaceWindows = [];
       for (const workspace of ${JSON.stringify(NATIVE_SMOKE_WORKSPACES)}) {
-        workspaceWindows.push(await bridge.openWorkspaceWindow(workspace));
+        workspaceWindows.push(await bounded('open ' + workspace + ' workspace', bridge.openWorkspaceWindow(workspace)));
       }
 
       return {
@@ -1108,16 +1247,16 @@ export function assertNativeSmokeResult(result) {
     throw new Error('Native renderer showed a recovery boundary.');
   }
   if (result.save?.canceled || !result.save?.filePath || result.save.sourceItems < 1) {
-    throw new Error('Native .sloom save did not return a saved project with a source item.');
+    throw new Error(`Native .sloom save did not return a saved project with a source item: ${JSON.stringify(result.save)}`);
   }
   if (result.open?.canceled || !result.open?.filePath || result.open?.name !== 'Native Smoke' || result.open.sourceItems < 1) {
-    throw new Error('Native .sloom open did not restore the saved smoke project.');
+    throw new Error(`Native .sloom open did not restore the saved smoke project: ${JSON.stringify(result.open)}`);
   }
   if (result.open?.imageLayerBitmapDataPrefix !== 'data:image/png') {
     throw new Error('Native .sloom round-trip dropped the Image layer pixel payload (bitmapData) — saved canvases would blank on reopen.');
   }
   if (result.imported?.canceled || result.imported?.count < 1) {
-    throw new Error('Native media import did not return an item.');
+    throw new Error(`Native media import did not return an item: ${JSON.stringify(result.imported)}`);
   }
   if (result.imported?.error) {
     throw new Error(`Native media import failed: ${result.imported.error}`);
@@ -1205,7 +1344,7 @@ export function assertNativePaperOsFileDropSmokeResult(result, {
   if (!result.hasLinkedFrame) {
     throw new Error(`Native Paper OS file-drop smoke did not place a linked image frame on page ${pageNumber}: ${JSON.stringify(result)}`);
   }
-  if (!result.status) {
+  if (result.dropPerformed !== false && !result.status) {
     throw new Error(`Native Paper OS file-drop smoke did not show the import completion status: ${JSON.stringify(result)}`);
   }
   if (requireRoundTrip) {

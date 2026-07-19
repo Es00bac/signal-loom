@@ -23,6 +23,14 @@ describe('Electron main process source guards', () => {
     expect(source).toMatch(/async function readdirScratchDirectory[\s\S]*return await readdir\(scratchDirectoryPath/);
   });
 
+  it('imports the promise-based file copier used by native media materialization', () => {
+    const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
+
+    expect(source).toMatch(/import \{[^}]*\bcopyFile\b[^}]*\} from 'node:fs\/promises'/);
+    expect(source).toMatch(/await copyFile\(materializationSourcePath, targetPath\)/);
+    expect(source).toMatch(/await copyFile\(filePath, storedPath\)/);
+  });
+
   it('supports an explicit Electron userData directory for isolated smoke runs', () => {
     const source = readFileSync(join(process.cwd(), 'electron/main.mjs'), 'utf8');
 

@@ -118,9 +118,7 @@ describe('application smoke tests', () => {
   });
 
   it('can execute a tiny proxied text graph request and surface telemetry', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
         result: 'proxied result',
         resultType: 'text',
         statusMessage: 'Generated through smoke proxy',
@@ -130,8 +128,10 @@ describe('application smoke tests', () => {
           provider: 'proxy',
           totalTokens: 2,
         },
-      }),
-    });
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
     vi.stubGlobal('fetch', fetchMock);
 
     const node = {

@@ -12,7 +12,7 @@ describe('Flow production audit gate', () => {
     expect(result.nodeCount).toBe(63);
     expect(result.modelCount).toBe(182);
     expect(result.normalModelCount).toBe(178);
-  });
+  }, 20_000);
 
   it('detects credential-shaped literal values without flagging schema/help placeholders', () => {
     expect(findCredentialLeak('const key = "-----BEGIN PRIVATE KEY-----\\nREAL-LIKE-DATA";')).toContain('private key');

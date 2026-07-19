@@ -16,6 +16,8 @@ import {
   buildNativeSmokeStressRenameLabel,
   buildNativeSmokeStressSourceLibraryItem,
   formatNativeRealProjectSoakBudgetFailure,
+  isNativeSmokeRealAppTarget,
+  resolveNativeSmokeElectronExecutable,
 } from './native-smoke-lib.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -79,13 +81,8 @@ function getProjectPath(argv, env) {
 }
 
 function launchElectron(paths) {
-  const electronCli = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
   const launchArgs = buildNativeSmokeElectronLaunchArgs({ remoteDebuggingPort, platform: process.platform });
-  const args = process.platform === 'win32'
-    ? launchArgs
-    : [electronCli, ...launchArgs];
-  const command = process.platform === 'win32' ? electronCli : process.execPath;
-  const child = spawn(command, args, {
+  const child = spawn(resolveNativeSmokeElectronExecutable(), launchArgs, {
     cwd: repoRoot,
     env: buildNativeRealProjectSmokeEnvironment({
       baseEnv: process.env,
@@ -282,9 +279,11 @@ async function applySourceLibraryChangeFromWorkspace(target, change) {
         await sleep(100);
       }
       const automation = window.signalLoomAutomation;
+      const claim = (await bridge.getNativeState()).projectAuthority;
+      if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
       const nativeResult = automation?.applySourceLibraryChange
-        ? await automation.applySourceLibraryChange(change)
-        : await bridge.applySourceLibraryChange(change);
+        ? await automation.applySourceLibraryChange({ change, claim })
+        : await bridge.applySourceLibraryChange({ claim, change });
       if (typeof BroadcastChannel === 'function') {
         const channel = new BroadcastChannel('signal-loom-workspace-window-commands');
         channel.postMessage({
@@ -333,7 +332,9 @@ async function waitForSourceLibraryItemStateInWorkspace(target, { itemId, label,
       let lastState = {};
 
       while (Date.now() - startedAt < 8000) {
-        const snapshot = await bridge.getSourceLibrarySnapshot();
+        const claim = (await bridge.getNativeState()).projectAuthority;
+        if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
+        const snapshot = await bridge.getSourceLibrarySnapshot({ claim });
         const items = (snapshot.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
         const item = items.find((candidate) => candidate.id === itemId);
         const bodyText = document.body?.innerText || '';
@@ -379,7 +380,9 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
           await sleep(50);
         }
         const workspace = new URL(location.href).searchParams.get('workspace') || 'flow';
-        const snapshot = await bridge.getSourceLibrarySnapshot();
+        const claim = (await bridge.getNativeState()).projectAuthority;
+        if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
+        const snapshot = await bridge.getSourceLibrarySnapshot({ claim });
         const sourceItems = (snapshot.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
         const rendererItemIds = (document.querySelector('[data-source-library-renderer-item-ids]')?.getAttribute('data-source-library-renderer-item-ids') || '')
           .split(/\\s+/)
@@ -481,10 +484,8 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
-      if (signalLoomTarget?.webSocketDebuggerUrl) return signalLoomTarget;
-      const fallbackTarget = targets.find((target) => target.webSocketDebuggerUrl);
-      if (fallbackTarget) return fallbackTarget;
+      const realTarget = targets.find(isNativeSmokeRealAppTarget);
+      if (realTarget) return realTarget;
     } catch {
       // Electron may still be starting.
     }

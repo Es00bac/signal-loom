@@ -30,6 +30,7 @@ import {
   buildNativeRealProjectSmokePaths,
   buildNativeRealProjectStartupState,
   buildNativeSmokeElectronLaunchArgs,
+  resolveNativeSmokeElectronExecutable,
 } from './native-smoke-lib.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -161,11 +162,8 @@ async function checkRenderServiceHealth(url) {
 }
 
 function launchElectron(paths) {
-  const electronCli = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
   const launchArgs = buildNativeSmokeElectronLaunchArgs({ remoteDebuggingPort, platform: process.platform });
-  const args = process.platform === 'win32' ? launchArgs : [electronCli, ...launchArgs];
-  const command = process.platform === 'win32' ? electronCli : process.execPath;
-  const child = spawn(command, args, {
+  const child = spawn(resolveNativeSmokeElectronExecutable(), launchArgs, {
     cwd: repoRoot,
     env: {
       ...buildNativeRealProjectSmokeEnvironment({ baseEnv: process.env, rootDir: paths.rootDir, projectPath: paths.projectPath }),

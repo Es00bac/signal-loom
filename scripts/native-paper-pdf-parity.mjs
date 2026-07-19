@@ -9,6 +9,8 @@ import {
   buildNativeRealProjectSmokeEnvironment,
   buildNativeRealProjectSmokePaths,
   buildNativeRealProjectStartupState,
+  isNativeSmokeRealAppTarget,
+  resolveNativeSmokeElectronExecutable,
 } from './native-smoke-lib.mjs';
 import { buildNativeWindowPageCrop } from './native-paper-pdf-parity-lib.mjs';
 
@@ -102,12 +104,7 @@ function getProjectPath(argv, env) {
 }
 
 function launchElectron(paths) {
-  const electronCli = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
-  const args = process.platform === 'win32'
-    ? [`--remote-debugging-port=${remoteDebuggingPort}`, '.']
-    : [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`, '.'];
-  const command = process.platform === 'win32' ? electronCli : process.execPath;
-  const child = spawn(command, args, {
+  const child = spawn(resolveNativeSmokeElectronExecutable(), [`--remote-debugging-port=${remoteDebuggingPort}`, '.'], {
     cwd: repoRoot,
     env: buildNativeRealProjectSmokeEnvironment({
       baseEnv: process.env,
@@ -466,10 +463,10 @@ async function exportPaperPdfFromPaperWorkspace(webSocketDebuggerUrl, expectedPa
         const paperWorkspace = document.querySelector('[data-signal-loom-paper-workspace="true"]');
         const readyPageCount = Number(paperWorkspace?.getAttribute('data-paper-page-count') || '0');
         const splashGone = !bodyText.includes('Opening Project') && !bodyText.includes('Starting New Project');
-        const button = Array.from(document.querySelectorAll('button'))
-          .find((candidate) => candidate.textContent?.trim() === 'PDF');
-        if (button && splashGone && readyPageCount >= expectedPaperPages) {
-          button.click();
+        if (splashGone && readyPageCount >= expectedPaperPages) {
+          window.dispatchEvent(new CustomEvent('signal-loom:native-renderer-command', {
+            detail: { command: 'paper:export-pdf' },
+          }));
           clicked = true;
           break;
         }
@@ -503,7 +500,7 @@ async function exportPaperPdfFromPaperWorkspace(webSocketDebuggerUrl, expectedPa
   if (result.readyPageCount < expectedPaperPages) {
     throw new Error(`PDF parity Paper export did not wait for the expected page count: ${JSON.stringify(result)}`);
   }
-      if (!result.clicked) throw new Error('PDF parity Paper export could not find the PDF button.');
+  if (!result.clicked) throw new Error('PDF parity Paper export could not dispatch the export command.');
   if (result.statusLine?.includes('failed') || result.statusLine?.includes('canceled')) {
     throw new Error(`PDF parity Paper export did not finish successfully: ${JSON.stringify(result)}`);
   }
@@ -601,10 +598,8 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
-      if (signalLoomTarget?.webSocketDebuggerUrl) return signalLoomTarget;
-      const fallbackTarget = targets.find((target) => target.webSocketDebuggerUrl);
-      if (fallbackTarget) return fallbackTarget;
+      const realTarget = targets.find(isNativeSmokeRealAppTarget);
+      if (realTarget) return realTarget;
     } catch {
       // Electron may still be starting.
     }

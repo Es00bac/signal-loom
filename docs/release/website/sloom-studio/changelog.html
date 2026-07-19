@@ -115,11 +115,39 @@
 
   <div class="cl-list">
 
+    <!-- ───── 0.9.13 ───── -->
+    <section class="release" id="v0-9-13">
+      <div class="release-head">
+        <span class="release-ver">0.9.13</span>
+        <span class="current-badge">Current</span>
+        <span class="release-date">July 18, 2026</span>
+      </div>
+      <p class="release-summary">The audit-repair and creative-fidelity release. Two independent audits produced 79 tracked findings; this build reconciles all 79, then adds a professionally calibrated 173-brush Image library and faithful Wacom stylus orientation.</p>
+
+      <div class="cl-group">
+        <h3>New &amp; expanded</h3>
+        <ul class="cl-items">
+          <li><strong>173 professional Image brushes in 22 collapsible sets.</strong> Graphite, charcoal, pastel, ink, markers, watercolor, gouache, oils, acrylics, dry media, airbrushes, digital paint, pixel art, texture, organic, effects and blending tools now use deliberately tuned pressure, tilt, rotation, velocity, texture, paint-load, color and wet-mixing dynamics.</li>
+          <li><strong>Exact Paper typography from editor to export.</strong> Managed fonts, variable faces, drop caps, leading, hard line breaks, contextual wrapping, balanced text, ruby, emphasis marks and tate-chu-yoko now share the same layout truth in the editor and exported pages.</li>
+          <li><strong>Complete portable Paper workspaces.</strong> Multi-tab Paper state, managed images, exact font bytes, licenses and ICC profiles travel and synchronize as one verified workspace instead of an active-document-only metadata shell.</li>
+        </ul>
+      </div>
+      <div class="cl-group fix">
+        <h3>Correctness repairs</h3>
+        <ul class="cl-items">
+          <li><strong>Projects and windows.</strong> Saves are bound to the correct project authority; stale windows cannot overwrite a newer project; startup opens a clean blank workspace unless reopening is requested; recovery, external-open and dirty-document transitions are serialized and explicit.</li>
+          <li><strong>Flow execution.</strong> Runs remain owned by the workspace and inputs that started them. Cancellation reaches provider work, paid jobs are not accidentally resubmitted, stale upstream results are invalidated, cache identities are stable, and provider outputs, metadata and usage survive supported direct/proxy paths.</li>
+          <li><strong>Image durability.</strong> Dirty layered documents ask before closing, histories and named snapshots freeze their pixels, selection state follows the real mask, Source Library fallbacks remain recoverable, and preset-specific wet/texture/mixer state no longer leaks into the next brush.</li>
+          <li><strong>Wacom direction fidelity.</strong> Azimuth now controls actual brush orientation independently of altitude: a physical 90-degree left-to-up or up-to-right stylus sweep produces the same full 90-degree brush rotation.</li>
+          <li><strong>Paper and Video output.</strong> Placed PDFs, managed fonts, raster/vector composition, comic duration, browser video export, retry cleanup and exact output ownership were corrected across preview, save, sync and export paths.</li>
+        </ul>
+      </div>
+    </section>
+
     <!-- ───── 0.9.10 ───── -->
     <section class="release" id="v0-9-10">
       <div class="release-head">
         <span class="release-ver">0.9.10</span>
-        <span class="current-badge">Current</span>
         <span class="release-date">July 2026</span>
       </div>
       <p class="release-summary">The cross-device release: the phone &harr; browser Image baton pass now carries every stroke both ways, live, verified end-to-end on real hardware; the commercial license activates on Android with the same offline key as desktop; and the professional print-production pipeline ships conformant PDF/X-1a/X-4 export with real CMYK/ICC and named spot Separation plates, plus a structurally valid Adobe IDML package export.</p>

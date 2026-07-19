@@ -11,11 +11,11 @@ vi.mock('../../lib/projectLibrary', async (importOriginal) => {
 });
 vi.mock('../../lib/assetStore', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/assetStore')>();
-  return { ...actual, loadImportedAssetRecord: vi.fn() };
+  return { ...actual, loadImportedAssetAsDataUrl: vi.fn() };
 });
 // The host's universal source-asset endpoint is the primary served-session resolver (it serves
 // native-file/scratch-backed items too). Default it to "no hosted bytes" so the existing assetId
-// fallback tests still exercise loadImportedAssetRecord; the native-file test opts in.
+// fallback tests still exercise loadImportedAssetAsDataUrl; the native-file test opts in.
 vi.mock('../../lib/remoteHostClient', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/remoteHostClient')>();
   return { ...actual, fetchRemoteHostSourceAssetDataUrl: vi.fn(() => Promise.resolve(null)) };
@@ -35,7 +35,7 @@ import {
 } from './ImageSourceDocument';
 import { clearImageClipboard, copyLayerPixelsToClipboard } from './ImageEditorClipboard';
 import { isRemoteLanClient } from '../../lib/projectLibrary';
-import { loadImportedAssetRecord } from '../../lib/assetStore';
+import { loadImportedAssetAsDataUrl } from '../../lib/assetStore';
 import { fetchRemoteHostSourceAssetDataUrl } from '../../lib/remoteHostClient';
 
 class FakeContext {
@@ -78,7 +78,7 @@ describe('ImageSourceDocument', () => {
     })) as unknown as typeof createImageBitmap;
     // Default every test to a non-served (desktop/Electron/native) session.
     vi.mocked(isRemoteLanClient).mockReturnValue(false);
-    vi.mocked(loadImportedAssetRecord).mockReset();
+    vi.mocked(loadImportedAssetAsDataUrl).mockReset();
     vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockReset();
     vi.mocked(fetchRemoteHostSourceAssetDataUrl).mockResolvedValue(null);
   });
@@ -673,12 +673,11 @@ describe('ImageSourceDocument', () => {
     // desktop browser cannot fetch (the cause of the "NetworkError" open failure). The bytes must be
     // resolved through the host asset API by assetId instead.
     vi.mocked(isRemoteLanClient).mockReturnValue(true);
-    vi.mocked(loadImportedAssetRecord).mockResolvedValue({
+    vi.mocked(loadImportedAssetAsDataUrl).mockResolvedValue({
       id: 'asset-cover',
       name: 'Cover Art',
-      mimeType: 'image/png',
       dataUrl: 'data:image/png;base64,HOSTRESOLVED',
-      createdAt: 1,
+      mimeType: 'image/png',
     });
 
     const seenUrls: string[] = [];
@@ -697,7 +696,7 @@ describe('ImageSourceDocument', () => {
       },
     );
 
-    expect(loadImportedAssetRecord).toHaveBeenCalledWith('asset-cover');
+    expect(loadImportedAssetAsDataUrl).toHaveBeenCalledWith('asset-cover');
     // The bitmap loaded from the host-resolved data URL, not the unreachable phone-local blob URL.
     expect(seenUrls).toEqual(['data:image/png;base64,HOSTRESOLVED']);
     expect(doc.layers[0].bitmap).toBe(bitmap);
@@ -705,12 +704,11 @@ describe('ImageSourceDocument', () => {
 
   it('refreshes source-linked layer bitmaps through the host asset API in served LAN sessions', async () => {
     vi.mocked(isRemoteLanClient).mockReturnValue(true);
-    vi.mocked(loadImportedAssetRecord).mockResolvedValue({
+    vi.mocked(loadImportedAssetAsDataUrl).mockResolvedValue({
       id: 'asset-cover',
       name: 'Cover Art',
-      mimeType: 'image/png',
       dataUrl: 'data:image/png;base64,HOSTREFRESH',
-      createdAt: 1,
+      mimeType: 'image/png',
     });
 
     const seenUrls: string[] = [];
@@ -723,7 +721,7 @@ describe('ImageSourceDocument', () => {
       },
     );
 
-    expect(loadImportedAssetRecord).toHaveBeenCalledWith('asset-cover');
+    expect(loadImportedAssetAsDataUrl).toHaveBeenCalledWith('asset-cover');
     expect(seenUrls).toEqual(['data:image/png;base64,HOSTREFRESH']);
   });
 
@@ -753,7 +751,7 @@ describe('ImageSourceDocument', () => {
 
     expect(fetchRemoteHostSourceAssetDataUrl).toHaveBeenCalledWith('cover-art');
     // Resolved purely by item id — the assetId-keyed IndexedDB path is never consulted.
-    expect(loadImportedAssetRecord).not.toHaveBeenCalled();
+    expect(loadImportedAssetAsDataUrl).not.toHaveBeenCalled();
     expect(seenUrls).toEqual(['data:image/png;base64,HOSTITEM']);
     expect(doc.layers[0].bitmap).toBe(bitmap);
   });
@@ -778,7 +776,7 @@ describe('ImageSourceDocument', () => {
     );
 
     expect(fetchRemoteHostSourceAssetDataUrl).toHaveBeenCalledWith('cover-art');
-    expect(loadImportedAssetRecord).not.toHaveBeenCalled();
+    expect(loadImportedAssetAsDataUrl).not.toHaveBeenCalled();
     expect(seenUrls).toEqual(['data:image/png;base64,HOSTITEMREFRESH']);
   });
 

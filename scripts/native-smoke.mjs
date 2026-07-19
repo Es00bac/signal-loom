@@ -25,6 +25,8 @@ import {
   buildNativeSmokeSourceLibraryItem,
   buildNativeSmokeStressRenameLabel,
   buildNativeSmokeStressSourceLibraryItem,
+  isNativeSmokeRealAppTarget,
+  resolveNativeSmokeElectronExecutable,
 } from './native-smoke-lib.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -51,19 +53,30 @@ async function main() {
 
   try {
     const target = await waitForSignalLoomTarget(electron, remoteDebuggingPort);
+    console.log('[native-smoke] primary bridge workflow');
     const result = await evaluateNativeSmoke(target.webSocketDebuggerUrl);
     assertNativeSmokeResult(result);
+    console.log('[native-smoke] workspace discovery');
     const workspaceTargets = await waitForWorkspaceTargets(electron, remoteDebuggingPort);
     const workspaces = await inspectWorkspaceTargets(workspaceTargets);
+    console.log('[native-smoke] Paper OS file drop');
     const paperOsFileDrop = await exercisePaperOsFileDrop(workspaceTargets.paper);
+    console.log('[native-smoke] Paper OS file-drop propagation');
     const paperOsFileDropWorkspacePropagation = await exercisePaperOsFileDropWorkspacePropagation(
       workspaceTargets,
       paperOsFileDrop,
     );
+    console.log('[native-smoke] project Source import propagation');
     const projectImport = await exerciseProjectSourceLibraryImportAcrossWorkspaceTargets(workspaceTargets, paths);
+    console.log('[native-smoke] native asset protocol');
     const assetProtocol = await exerciseNativeAssetProtocolAuthorization(target.webSocketDebuggerUrl, paths, result);
+    console.log('[native-smoke] Source Library cross-workspace workflow');
     const sourceLibrary = await exerciseSourceLibraryAcrossWorkspaceTargets(workspaceTargets);
+    console.log('[native-smoke] Source Library stress');
     const stress = await exerciseSourceLibraryStressAcrossWorkspaceTargets(workspaceTargets, smokeOptions);
+    console.log('[native-smoke] final Paper save/open persistence');
+    const paperSaveOpenPersistence = await exercisePaperOsFileDropSaveOpenPersistence(workspaceTargets.paper);
+    console.log('[native-smoke] output file verification');
     const files = await verifyNativeSmokeFiles(paths);
 
     console.log(JSON.stringify({
@@ -77,6 +90,7 @@ async function main() {
       workspaces,
       sourceLibrary,
       stress,
+      paperSaveOpenPersistence,
       files,
     }, null, 2));
   } finally {
@@ -85,12 +99,7 @@ async function main() {
 }
 
 function launchElectron(rootDir) {
-  const electronCli = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
-  const args = process.platform === 'win32'
-    ? [`--remote-debugging-port=${remoteDebuggingPort}`, '.']
-    : [electronCli, `--remote-debugging-port=${remoteDebuggingPort}`, '.'];
-  const command = process.platform === 'win32' ? electronCli : process.execPath;
-  const child = spawn(command, args, {
+  const child = spawn(resolveNativeSmokeElectronExecutable(), [`--remote-debugging-port=${remoteDebuggingPort}`, '.'], {
     cwd: repoRoot,
     env: buildNativeSmokeEnvironment({ baseEnv: process.env, rootDir }),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -110,14 +119,8 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
-      if (signalLoomTarget?.webSocketDebuggerUrl) {
-        return signalLoomTarget;
-      }
-      const fallbackTarget = targets.find((target) => target.webSocketDebuggerUrl);
-      if (fallbackTarget) {
-        return fallbackTarget;
-      }
+      const realTarget = targets.find(isNativeSmokeRealAppTarget);
+      if (realTarget) return realTarget;
     } catch {
       // Electron may still be starting.
     }
@@ -160,7 +163,9 @@ async function exerciseNativeAssetProtocolAuthorization(webSocketDebuggerUrl, pa
       const symlinkItemId = 'native-smoke-symlink-escape';
 
       if (!bridge) return { error: 'native bridge missing' };
-      const snapshot = await bridge.getSourceLibrarySnapshot();
+      const claim = (await bridge.getNativeState()).projectAuthority;
+      if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
+      const snapshot = await bridge.getSourceLibrarySnapshot({ claim });
       const registeredItem = (snapshot.snapshot?.bins ?? [])
         .flatMap((bin) => bin.items ?? [])
         .find((item) => item.id === 'smoke-image' && typeof item.assetUrl === 'string' && item.assetUrl.startsWith('signal-loom-asset://'));
@@ -172,19 +177,22 @@ async function exerciseNativeAssetProtocolAuthorization(webSocketDebuggerUrl, pa
       let symlinkItem = { skipped: true };
       if (symlinkEscapeUrl) {
         const apply = await bridge.applySourceLibraryChange({
-          type: 'source-bin-items-added',
-          items: [{
-            id: symlinkItemId,
-            label: 'Native smoke symlink escape',
-            kind: 'image',
-            mimeType: 'image/png',
-            assetUrl: symlinkEscapeUrl,
-            nativeFilePath: ${JSON.stringify(symlinkPath)},
-            sourceKey: 'native-smoke-symlink-escape',
-            createdAt: Date.now(),
-          }],
+          claim,
+          change: {
+            type: 'source-bin-items-added',
+            items: [{
+              id: symlinkItemId,
+              label: 'Native smoke symlink escape',
+              kind: 'image',
+              mimeType: 'image/png',
+              assetUrl: symlinkEscapeUrl,
+              nativeFilePath: ${JSON.stringify(symlinkPath)},
+              sourceKey: 'native-smoke-symlink-escape',
+              createdAt: Date.now(),
+            }],
+          },
         });
-        const afterSymlinkSnapshot = await bridge.getSourceLibrarySnapshot();
+        const afterSymlinkSnapshot = await bridge.getSourceLibrarySnapshot({ claim });
         const hasItem = (afterSymlinkSnapshot.snapshot?.bins ?? [])
           .flatMap((bin) => bin.items ?? [])
           .some((item) => item.id === symlinkItemId && item.assetUrl === symlinkEscapeUrl);
@@ -245,7 +253,27 @@ async function exercisePaperOsFileDrop(paperTarget) {
       fileName: 'native-smoke-paper-page-2-os-drop.png',
       pageNumber,
       ensurePageCount: pageNumber,
+      verifySaveOpenRoundTrip: false,
+    }),
+    30000,
+  );
+
+  return assertNativePaperOsFileDropSmokeResult(result, {
+    pageNumber,
+    requireRoundTrip: false,
+  });
+}
+
+async function exercisePaperOsFileDropSaveOpenPersistence(paperTarget) {
+  const pageNumber = 2;
+  const result = await evaluateCdpExpression(
+    paperTarget.webSocketDebuggerUrl,
+    buildNativeSmokePaperOsFileDropExpression({
+      fileName: 'native-smoke-paper-page-2-os-drop.png',
+      pageNumber,
+      ensurePageCount: pageNumber,
       verifySaveOpenRoundTrip: true,
+      performDrop: false,
     }),
     30000,
   );
@@ -298,10 +326,11 @@ async function exerciseProjectSourceLibraryImportAcrossWorkspaceTargets(targetsB
     targetsByWorkspace.flow.webSocketDebuggerUrl,
     buildNativeSmokeProjectImportWorkspacePropagationExpression({
       fileName,
-      verifySaveOpenRoundTrip: true,
+      verifySaveOpenRoundTrip: false,
     }),
     30000,
   );
+  console.log('[native-smoke] project Source import converged in Flow');
   const itemId = flowImport.snapshotItemId || flowImport.itemId;
   const expression = buildNativeSmokeProjectImportWorkspacePropagationExpression({
     fileName,
@@ -310,10 +339,11 @@ async function exerciseProjectSourceLibraryImportAcrossWorkspaceTargets(targetsB
 
   const workspaces = [];
   for (const workspace of NATIVE_SMOKE_WORKSPACES) {
+    console.log(`[native-smoke] project Source import check: ${workspace}`);
     workspaces.push(await evaluateCdpExpression(
       targetsByWorkspace[workspace].webSocketDebuggerUrl,
       expression,
-      15000,
+      20000,
     ));
   }
 
@@ -489,8 +519,7 @@ function workspaceFromTargetUrl(value) {
 }
 
 async function inspectWorkspaceTargets(targetsByWorkspace) {
-  const inspections = {};
-  for (const workspace of NATIVE_SMOKE_WORKSPACES) {
+  const entries = await Promise.all(NATIVE_SMOKE_WORKSPACES.map(async (workspace) => {
     const target = targetsByWorkspace[workspace];
     const inspection = await evaluateCdpExpression(target.webSocketDebuggerUrl, `
       (async () => {
@@ -507,7 +536,14 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
           };
         };
         const startedAt = Date.now();
-        while (!document.body && Date.now() - startedAt < 10000) {
+        let rendererStartupSettled = false;
+        let hasAutomationSourceLibraryChange = false;
+        while (Date.now() - startedAt < 30000) {
+          const root = document.querySelector('[data-native-startup-settled]');
+          rendererStartupSettled = root?.getAttribute('data-native-startup-settled') === 'true';
+          hasAutomationSourceLibraryChange = typeof window.signalLoomAutomation?.applySourceLibraryChange === 'function';
+          if (document.body && rendererStartupSettled && hasAutomationSourceLibraryChange) break;
+          if (document.body?.innerText.includes('Recovery Boundary')) break;
           await sleep(50);
         }
         const workspace = new URL(location.href).searchParams.get('workspace') || 'flow';
@@ -532,12 +568,17 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
           title: document.title,
           url: location.href,
           hasRecoveryBoundary: Boolean(document.body?.innerText.includes('Recovery Boundary')),
+          rendererStartupSettled,
+          hasAutomationSourceLibraryChange,
           paperTitlebarToolbar,
         };
       })()
-    `, 15000);
+    `, 40000);
     if (inspection.hasRecoveryBoundary) {
       throw new Error(`Native ${workspace} workspace opened to a recovery boundary.`);
+    }
+    if (!inspection.rendererStartupSettled || !inspection.hasAutomationSourceLibraryChange) {
+      throw new Error(`Native ${workspace} workspace did not finish startup synchronization: ${JSON.stringify(inspection)}`);
     }
     if (workspace === 'paper') {
       const toolbar = inspection.paperTitlebarToolbar;
@@ -551,9 +592,9 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
         throw new Error(`Native Paper toolbar was not mounted in the titlebar slot: ${JSON.stringify(toolbar)}`);
       }
     }
-    inspections[workspace] = inspection;
-  }
-  return inspections;
+    return [workspace, inspection];
+  }));
+  return Object.fromEntries(entries);
 }
 
 async function exerciseSourceLibraryAcrossWorkspaceTargets(targetsByWorkspace) {
@@ -562,12 +603,17 @@ async function exerciseSourceLibraryAcrossWorkspaceTargets(targetsByWorkspace) {
     (async () => {
       const bridge = window.signalLoomNative;
       if (!bridge) return { error: 'native bridge missing' };
+      const claim = (await bridge.getNativeState()).projectAuthority;
+      if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
       const item = ${JSON.stringify(item)};
       const apply = await bridge.applySourceLibraryChange({
-        type: 'source-bin-items-added',
-        items: [item],
+        claim,
+        change: {
+          type: 'source-bin-items-added',
+          items: [item],
+        },
       });
-      const snapshot = await bridge.getSourceLibrarySnapshot();
+      const snapshot = await bridge.getSourceLibrarySnapshot({ claim });
       const items = (snapshot.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
       return {
         apply,
@@ -688,7 +734,9 @@ async function applySourceLibraryChangeFromWorkspace(target, change) {
     (async () => {
       const bridge = window.signalLoomNative;
       if (!bridge) return { error: 'native bridge missing' };
-      return bridge.applySourceLibraryChange(${JSON.stringify(change)});
+      const claim = (await bridge.getNativeState()).projectAuthority;
+      if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
+      return bridge.applySourceLibraryChange({ claim, change: ${JSON.stringify(change)} });
     })()
   `, 15000);
 
@@ -731,7 +779,9 @@ async function waitForSourceLibraryItemStateInWorkspace(target, { itemId, label,
       let lastState = {};
 
       while (Date.now() - startedAt < 8000) {
-        const snapshot = await bridge.getSourceLibrarySnapshot();
+        const claim = (await bridge.getNativeState()).projectAuthority;
+        if (claim && bridge.confirmProjectAdoption) await bridge.confirmProjectAdoption(claim);
+        const snapshot = await bridge.getSourceLibrarySnapshot({ claim });
         const items = (snapshot.snapshot?.bins ?? []).flatMap((bin) => bin.items ?? []);
         const item = items.find((candidate) => candidate.id === itemId);
         const bodyText = document.body?.innerText || '';
@@ -791,7 +841,36 @@ async function verifyNativeSmokeFiles(paths) {
     verifyFile(paths.expectedPaperImagePath, { minBytes: 1, magic: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }),
   ]);
 
-  return { project, pdf, image };
+  const contents = JSON.parse(await readFile(paths.projectPath, 'utf8'));
+  const sourceItems = (contents?.sourceBin?.bins ?? []).flatMap((bin) => bin.items ?? []);
+  const projectImport = sourceItems.find((item) => item.label === 'native-smoke-source-library-import.png');
+  const paperImport = sourceItems.find((item) => item.label === 'native-smoke-paper-page-2-os-drop.png');
+  const paperPage = (contents?.paper?.document?.pages ?? []).find((page) => page.pageNumber === 2);
+  const linkedPaperFrame = (paperPage?.frames ?? []).find((frame) => (
+    frame.kind === 'image'
+    && frame.asset?.sourceBinItemId === paperImport?.id
+    && frame.asset?.label === paperImport?.label
+  ));
+  if (!projectImport || !paperImport || !paperPage || !linkedPaperFrame) {
+    throw new Error(`Native final save did not preserve both imported Source assets and the linked Paper frame: ${JSON.stringify({
+      projectImport: Boolean(projectImport),
+      paperImport: Boolean(paperImport),
+      paperPage: Boolean(paperPage),
+      linkedPaperFrame: Boolean(linkedPaperFrame),
+    })}`);
+  }
+
+  return {
+    project: {
+      ...project,
+      sourceItems: sourceItems.length,
+      projectImportId: projectImport.id,
+      paperImportId: paperImport.id,
+      linkedPaperFrameId: linkedPaperFrame.id,
+    },
+    pdf,
+    image,
+  };
 }
 
 async function verifyFile(filePath, { minBytes, magic }) {

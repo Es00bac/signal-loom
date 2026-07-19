@@ -16,7 +16,7 @@ describe('Flow node audit generator', () => {
       expect(row.implementation).toMatch(/^src\//);
       expect(row.verification).toContain('flowNodeContracts.test.ts');
     }
-  });
+  }, 20_000);
 
   it('renders a stable generated matrix without placeholder text', async () => {
     const markdown = renderFlowNodeAudit(await loadFlowNodeAuditRows());

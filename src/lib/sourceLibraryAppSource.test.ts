@@ -37,7 +37,8 @@ describe('App Source Library native sync source guards', () => {
     // Native two-phase New/Open authorize through the guarded policy, then hand the minted
     // capability plus the bookkeeping primitive to the closed renderer transaction.
     expect(source).toMatch(/requestBlankProjectReplacementAuthorization\(\{[\s\S]*key: 'app:new-project'/);
-    expect(source).toMatch(/requestProjectReplacementAuthorization\(\{[\s\S]*key: 'app:open-project'/);
+    expect(source).toMatch(/applyPreparedNativeProjectOpen[\s\S]*requestProjectReplacementAuthorization\(\{[\s\S]*key: authorizationKey/);
+    expect(source).toMatch(/case 'file:open':[\s\S]*applyPreparedNativeProjectOpen\(result, 'app:open-project'\)/);
     expect(source).toMatch(/case 'file:new':[\s\S]*prepareProjectDocumentTransaction\(undefined, \{[\s\S]*transactionBookkeeping: 'reset-source-library-native-sync'/);
     expect(source).toMatch(/case 'file:open':[\s\S]*prepareProjectDocumentTransaction\(result\.document, \{[\s\S]*transactionBookkeeping: 'reset-source-library-native-sync'/);
     expect(source).not.toContain('beforeReplace:');

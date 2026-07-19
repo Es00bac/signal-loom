@@ -538,6 +538,58 @@ describe('source bin live workspace sync', () => {
     expect(mocks.saveImportedAsset).not.toHaveBeenCalled();
   });
 
+  it('materializes browser-picked project imports into the native scratch directory before broadcasting them', async () => {
+    const materializeSourceAsset = vi.fn().mockResolvedValue({
+      item: {
+        id: 'native-project-import-1',
+        label: 'imported-panel.png',
+        kind: 'image',
+        mimeType: 'image/png',
+        assetUrl: 'signal-loom-asset://asset/native-project-import-1',
+        nativeFilePath: '/project/project.sloom-assets/native-project-import-1-imported-panel.png',
+        scratchFileName: 'native-project-import-1-imported-panel.png',
+        createdAt: 12,
+      },
+    });
+    const applySourceLibraryChange = vi.fn().mockResolvedValue({ ok: true, version: 8 });
+    vi.stubGlobal('window', {
+      signalLoomNative: {
+        materializeSourceAsset,
+        applySourceLibraryChange,
+      },
+    });
+
+    const [item] = await useSourceBinStore.getState().importFiles([
+      new File([new Uint8Array([137, 80, 78, 71])], 'imported-panel.png', { type: 'image/png' }),
+    ]);
+
+    expect(materializeSourceAsset).toHaveBeenCalledWith(expect.objectContaining({
+      id: expect.any(String),
+      label: 'imported-panel.png',
+      kind: 'image',
+      mimeType: 'image/png',
+      binaryData: expect.any(Uint8Array),
+    }));
+    expect(item).toMatchObject({
+      assetUrl: 'signal-loom-asset://asset/native-project-import-1',
+      nativeFilePath: '/project/project.sloom-assets/native-project-import-1-imported-panel.png',
+      scratchFileName: 'native-project-import-1-imported-panel.png',
+      envelopeId: 'project-imports',
+      envelopeLabel: 'Project imports',
+    });
+    expect(applySourceLibraryChange).toHaveBeenCalledWith(expect.objectContaining({
+      claim: TEST_AUTHORITY,
+      change: expect.objectContaining({
+        type: 'source-bin-items-added',
+        items: [expect.objectContaining({
+          assetUrl: 'signal-loom-asset://asset/native-project-import-1',
+          envelopeId: 'project-imports',
+        })],
+      }),
+    }));
+    expect(mocks.saveImportedAsset).not.toHaveBeenCalled();
+  });
+
   it('broadcasts Flow-generated connected media after source-library ingestion', async () => {
     await useSourceBinStore.getState().ingestConnectedItems([
       {

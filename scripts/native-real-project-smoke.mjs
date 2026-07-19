@@ -11,6 +11,8 @@ import {
   buildNativeRealProjectSmokeEnvironment,
   buildNativeRealProjectSmokePaths,
   buildNativeRealProjectStartupState,
+  isNativeSmokeRealAppTarget,
+  resolveNativeSmokeElectronExecutable,
 } from './native-smoke-lib.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -41,7 +43,7 @@ async function main() {
     const flowTarget = await waitForSignalLoomTarget(electron, remoteDebuggingPort);
     const startup = await inspectStartupProjectAndOpenWorkspaces(flowTarget.webSocketDebuggerUrl);
     const workspaceTargets = await waitForWorkspaceTargets(electron, remoteDebuggingPort);
-    const workspaces = await inspectWorkspaceTargets(workspaceTargets);
+    const workspaces = await inspectWorkspaceTargets(workspaceTargets, startup.paperPages);
     const paperExport = await exportPaperPdfFromPaperWorkspace(
       workspaceTargets.paper.webSocketDebuggerUrl,
       startup.paperPages,
@@ -68,13 +70,8 @@ function getProjectPath(argv, env) {
 }
 
 function launchElectron(paths) {
-  const electronCli = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'electron.cmd' : 'electron');
   const launchArgs = buildNativeSmokeElectronLaunchArgs({ remoteDebuggingPort, platform: process.platform });
-  const args = process.platform === 'win32'
-    ? launchArgs
-    : [electronCli, ...launchArgs];
-  const command = process.platform === 'win32' ? electronCli : process.execPath;
-  const child = spawn(command, args, {
+  const child = spawn(resolveNativeSmokeElectronExecutable(), launchArgs, {
     cwd: repoRoot,
     env: buildNativeRealProjectSmokeEnvironment({
       baseEnv: process.env,
@@ -108,9 +105,20 @@ async function inspectStartupProjectAndOpenWorkspaces(webSocketDebuggerUrl) {
         if (state.startupProject?.document) break;
         await sleep(250);
       }
-      const document = state?.startupProject?.document;
-      const paperDocument = document?.paper?.document;
-      const sourceItems = (document?.sourceBin?.bins ?? []).reduce((total, bin) => total + (bin.items?.length ?? 0), 0);
+      const projectDocument = state?.startupProject?.document;
+      const paperDocument = projectDocument?.paper?.document;
+      const sourceItems = (projectDocument?.sourceBin?.bins ?? []).reduce((total, bin) => total + (bin.items?.length ?? 0), 0);
+      let rendererStartupSettled = false;
+      let rendererSourceItems = 0;
+      while (Date.now() - startedAt < 90000) {
+        const root = document.querySelector('[data-native-startup-settled]');
+        rendererStartupSettled = root?.getAttribute('data-native-startup-settled') === 'true';
+        rendererSourceItems = (root?.getAttribute('data-source-library-renderer-item-ids') || '')
+          .split(/\\s+/)
+          .filter(Boolean).length;
+        if (rendererStartupSettled && rendererSourceItems >= sourceItems) break;
+        await sleep(250);
+      }
       const workspaceWindows = [];
       for (const workspace of ${JSON.stringify(NATIVE_SMOKE_WORKSPACES)}) {
         const startedAt = performance.now();
@@ -122,20 +130,25 @@ async function inspectStartupProjectAndOpenWorkspaces(webSocketDebuggerUrl) {
       return {
         currentProjectPath: state?.currentProjectPath,
         scratchDirectoryPath: state?.currentScratchDirectoryPath,
-        projectName: document?.name,
+        projectName: projectDocument?.name,
         sourceItems,
+        rendererStartupSettled,
+        rendererSourceItems,
         paperTitle: paperDocument?.title,
         paperPages: paperDocument?.pages?.length ?? 0,
         workspaceWindows,
-        bodyHasRecovery: Boolean(document.body?.innerText.includes('Recovery Boundary')),
+        bodyHasRecovery: Boolean(globalThis.document.body?.innerText.includes('Recovery Boundary')),
       };
     })()
-  `, 90000);
+  `, 105000);
 
   if (result.error) throw new Error(String(result.error));
   if (result.bodyHasRecovery) throw new Error('Real-project smoke opened Flow to a recovery boundary.');
   if (!result.currentProjectPath || !result.projectName) {
     throw new Error(`Real-project startup did not load a native project: ${JSON.stringify(result)}`);
+  }
+  if (!result.rendererStartupSettled || result.rendererSourceItems < result.sourceItems) {
+    throw new Error(`Real-project Flow renderer did not finish adopting the startup project before workspace launch: ${JSON.stringify(result)}`);
   }
   if (result.paperPages < 1) {
     throw new Error(`Real-project startup did not load a Paper document with pages: ${JSON.stringify(result)}`);
@@ -228,10 +241,8 @@ async function waitForSignalLoomTarget(electron, port) {
     }
     try {
       const targets = await fetch(url).then((response) => response.json());
-      const signalLoomTarget = targets.find((target) => target.title === 'Sloom Studio' || target.title === 'Signal Loom');
-      if (signalLoomTarget?.webSocketDebuggerUrl) return signalLoomTarget;
-      const fallbackTarget = targets.find((target) => target.webSocketDebuggerUrl);
-      if (fallbackTarget) return fallbackTarget;
+      const realTarget = targets.find(isNativeSmokeRealAppTarget);
+      if (realTarget) return realTarget;
     } catch {
       // Electron may still be starting.
     }
@@ -267,9 +278,8 @@ async function waitForWorkspaceTargets(electron, port) {
   throw new Error(`Timed out waiting for real-project workspace targets. Found: ${[...found.keys()].join(', ') || 'none'}.`);
 }
 
-async function inspectWorkspaceTargets(targetsByWorkspace) {
-  const inspections = {};
-  for (const workspace of NATIVE_SMOKE_WORKSPACES) {
+async function inspectWorkspaceTargets(targetsByWorkspace, expectedPaperPages) {
+  const entries = await Promise.all(NATIVE_SMOKE_WORKSPACES.map(async (workspace) => {
     const target = targetsByWorkspace[workspace];
     const inspection = await evaluateCdpExpression(target.webSocketDebuggerUrl, `
       (async () => {
@@ -288,6 +298,16 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
         const startedAt = Date.now();
         const workspace = new URL(location.href).searchParams.get('workspace') || 'flow';
         let paperTitlebarToolbar;
+        let rendererStartupSettled = false;
+        let paperPageCount = 0;
+        while (Date.now() - startedAt < 90000) {
+          const root = document.querySelector('[data-native-startup-settled]');
+          rendererStartupSettled = root?.getAttribute('data-native-startup-settled') === 'true';
+          paperPageCount = Number(document.querySelector('[data-signal-loom-paper-workspace="true"]')?.getAttribute('data-paper-page-count') || '0');
+          if (rendererStartupSettled && (workspace !== 'paper' || paperPageCount >= ${JSON.stringify(expectedPaperPages)})) break;
+          if (document.body?.innerText.includes('Recovery Boundary')) break;
+          await sleep(100);
+        }
         if (workspace === 'paper') {
           while (Date.now() - startedAt < 60000) {
             paperTitlebarToolbar = readPaperTitlebarToolbar();
@@ -309,14 +329,22 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
           url: location.href,
           hasRecoveryBoundary: Boolean(document.body?.innerText.includes('Recovery Boundary')),
           hasAutomationSourceLibraryChange: typeof window.signalLoomAutomation?.applySourceLibraryChange === 'function',
+          rendererStartupSettled,
+          paperPageCount,
           paperTitlebarToolbar,
         };
       })()
-    `, 70000);
+    `, 100000);
     if (inspection.hasRecoveryBoundary) {
       throw new Error(`Real-project ${workspace} workspace opened to a recovery boundary.`);
     }
+    if (!inspection.rendererStartupSettled) {
+      throw new Error(`Real-project ${workspace} workspace did not finish startup adoption: ${JSON.stringify(inspection)}`);
+    }
     if (workspace === 'paper') {
+      if (inspection.paperPageCount < expectedPaperPages) {
+        throw new Error(`Real-project Paper workspace did not adopt all ${expectedPaperPages} pages: ${JSON.stringify(inspection)}`);
+      }
       const toolbar = inspection.paperTitlebarToolbar;
       if (
         !toolbar?.hasSlot
@@ -328,9 +356,9 @@ async function inspectWorkspaceTargets(targetsByWorkspace) {
         throw new Error(`Real-project Paper toolbar was not mounted in the titlebar slot: ${JSON.stringify(toolbar)}`);
       }
     }
-    inspections[workspace] = inspection;
-  }
-  return inspections;
+    return [workspace, inspection];
+  }));
+  return Object.fromEntries(entries);
 }
 
 function workspaceFromTargetUrl(value) {
