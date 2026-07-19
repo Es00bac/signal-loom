@@ -21,6 +21,7 @@ This directory explains the two July 16 correctness audits and the repair sprint
 6. [06-sources-method-and-glossary.md](06-sources-method-and-glossary.md) — frozen sources, status accounting, terminology, and provenance.
 7. [07-internal-build-0.9.12d.md](07-internal-build-0.9.12d.md) — the internal desktop build that packages the repaired code, the sale-copy change, and hands-on startup, exact-font, drop-cap, and raster-export follow-ups.
 8. [08-paper-editor-export-wysiwyg-follow-up.md](08-paper-editor-export-wysiwyg-follow-up.md) — the eight-commit Paper typography/layout convergence pass and its all-16-page editor/export proof.
+9. [09-public-release-0.9.13.md](09-public-release-0.9.13.md) — the final public package, platform artifacts, publication destinations, and release-level verification.
 
 The Markdown files are the canonical Notebook source set. They remain portable, searchable, and readable without a report runtime.
 
