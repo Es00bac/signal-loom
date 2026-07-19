@@ -205,6 +205,44 @@ describe('composePaperTextFrame', () => {
     expect(requests.every((request) => request.variations?.opsz === 16)).toBe(true);
   });
 
+  it('maps a selected variable face weight to HarfBuzz like CSS export', async () => {
+    const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
+    let document = createDefaultPaperDocument({ title: 'Variable weight fixture' });
+    const added = addFrameToPaperPage(document, document.pages[0].id, {
+      id: 'variable-weight-frame',
+      kind: 'text',
+      xMm: 0,
+      yMm: 0,
+      widthMm: 80,
+      heightMm: 30,
+    });
+    const boldVariable = face(700, {
+      variableAxes: { wght: { min: 100, default: 400, max: 900 } },
+    });
+    document = { ...added.document, importedFonts: [boldVariable] };
+    const frame = {
+      ...document.pages[0].frames[0],
+      text: '日本語《にほんご》',
+      typography: {
+        ...document.pages[0].frames[0].typography,
+        fontFamily: 'Fixture Sans',
+        fontWeight: '700',
+      },
+    };
+    const shaper = fixtureShaper();
+
+    await composePaperTextFrame(frame, document, async () => ({
+      ...shaper,
+      shape: (request) => {
+        requests.push(request);
+        return shaper.shape(request);
+      },
+    }));
+
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((request) => request.variations?.wght === 700)).toBe(true);
+  });
+
   it('resolves mixed run kerning and numeric features before managed shaping', async () => {
     const requests: Array<Parameters<PaperTextShaper['shape']>[0]> = [];
     await composeFixture([

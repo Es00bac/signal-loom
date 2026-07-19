@@ -1039,14 +1039,32 @@ async function resolveStyle(
   const fontSizePt = run.fontSizePt ? baseSize : isRaisedOrLowered ? baseSize * 0.7 : baseSize;
   const authoredVariations = run.fontVariationSettings ?? typography.fontVariationSettings ?? selection.face.variationSettings;
   const normalizedVariations = normalizePaperFontVariationSettings(authoredVariations, selection.face.variableAxes);
+  // CSS automatically maps the selected face descriptors onto a variable font's registered axes. HarfBuzz
+  // does not: without explicit coordinates it shapes and outlines the font at each axis default. That made a
+  // managed face registered as weight 700 paint at the variable font's default weight 400 in the editor, while
+  // browser-based export correctly painted 700. Mirror CSS's descriptor-to-axis mapping before adding optical
+  // sizing, while preserving any coordinate explicitly authored on the run, frame, or managed face.
+  const descriptorVariations: Record<string, number> = { ...(normalizedVariations ?? {}) };
+  const setDescriptorAxis = (tag: string, value: number | undefined) => {
+    const axis = selection.face.variableAxes[tag];
+    if (!axis || descriptorVariations[tag] !== undefined || value === undefined || !Number.isFinite(value)) return;
+    descriptorVariations[tag] = Math.min(axis.max, Math.max(axis.min, value));
+  };
+  setDescriptorAxis('wght', selection.face.weight);
+  setDescriptorAxis('wdth', selection.face.stretchPercent);
+  setDescriptorAxis('ital', selection.face.style === 'italic' ? 1 : 0);
+  setDescriptorAxis(
+    'slnt',
+    selection.face.style === 'oblique' ? -(selection.face.obliqueAngleDeg ?? 14) : 0,
+  );
   const autoOpticalSizing = authoredVariations?.opsz === undefined && Boolean(selection.face.variableAxes.opsz);
   const variations = autoOpticalSizing ? {
-    ...(normalizedVariations ?? {}),
+    ...descriptorVariations,
     opsz: Math.min(
       selection.face.variableAxes.opsz!.max,
       Math.max(selection.face.variableAxes.opsz!.min, fontSizePt * CSS_PX_PER_PT),
     ),
-  } : normalizedVariations;
+  } : Object.keys(descriptorVariations).length ? descriptorVariations : undefined;
   const script = scriptFor(run.text, vertical);
   const resolved: Omit<ResolvedStyle, 'key'> = {
     face: selection.face,
