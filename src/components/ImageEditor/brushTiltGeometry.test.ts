@@ -69,14 +69,31 @@ describe('applyBrushTiltDynamics', () => {
     expect(r.size).toBeGreaterThan(100);       // grown
   });
 
-  it('steers the angle toward the lean direction, scaled by tilt amount', () => {
-    // A barely-tilted pen barely steers; a flat pen steers most of the way.
+  it('maps physical azimuth directly without compressing rotation by altitude', () => {
+    // Inclination controls footprint size/roundness, but identical azimuth must yield
+    // identical rotation at both ordinary and low holding angles.
     const mild = applyBrushTiltDynamics({ ...base, tilt: resolveBrushTiltState({ tiltX: 0, tiltY: 45 }), settings: SETTINGS });
-    expect(mild.angleDeg).toBeGreaterThan(5);
-    expect(mild.angleDeg).toBeLessThan(85);
     const flat = applyBrushTiltDynamics({ ...base, tilt: resolveBrushTiltState({ tiltX: 0, tiltY: 80 }), settings: SETTINGS });
-    expect(flat.angleDeg).toBeGreaterThan(mild.angleDeg);
-    expect(Math.abs(flat.angleDeg - 90)).toBeLessThan(20); // azimuth 90, nearly there
+    expect(mild.angleDeg).toBeCloseTo(90, 5);
+    expect(flat.angleDeg).toBeCloseTo(90, 5);
+  });
+
+  it('preserves the full left-up-right stylus azimuth sweep at a 45-degree altitude', () => {
+    const angleFor = (tiltX: number, tiltY: number) => normalizeDegrees(applyBrushTiltDynamics({
+      ...base,
+      tilt: resolveBrushTiltState({ tiltX, tiltY }),
+      settings: SETTINGS,
+    }).angleDeg);
+
+    const left = angleFor(-45, 0);
+    const up = angleFor(0, -45);
+    const right = angleFor(45, 0);
+
+    expect(left).toBeCloseTo(180, 5);
+    expect(up).toBeCloseTo(270, 5);
+    expect(right).toBeCloseTo(0, 5);
+    expect(normalizeDegrees(up - left)).toBeCloseTo(90, 5);
+    expect(normalizeDegrees(right - up)).toBeCloseTo(90, 5);
   });
 
   it('rotates the tip with barrel twist when enabled', () => {

@@ -132,8 +132,13 @@ export function applyBrushTiltDynamics(input: BrushTiltDynamicsInput): BrushTilt
     // Grow with tilt: a laid-down tip covers much more (drawing with the side of the lead,
     // not just the point). tiltSize 1 widens up to ~4x at full tilt.
     size = size * (1 + clamp(settings.tiltSize, 0, 1) * amount * MAX_TILT_SIZE_GROWTH);
-    // Steer the tip's long axis toward the lean direction.
-    const steer = clamp(settings.tiltAngle, 0, 1) * amount;
+    // Steer the tip's long axis toward the lean direction. Azimuth is a direction,
+    // not a magnitude: changing the pen's altitude must not compress its rotation.
+    // Previously this was also multiplied by `amount`, so a pen held at a typical
+    // 45-degree altitude turned a physical 90-degree sweep into only 45 degrees.
+    // Keep altitude responsible for footprint squash/growth while `tiltAngle` alone
+    // controls how strongly the authored tip angle follows the physical azimuth.
+    const steer = clamp(settings.tiltAngle, 0, 1);
     angleDeg = angleDeg + shortestAngleDelta(angleDeg, tilt.azimuthDeg) * steer;
   }
 
