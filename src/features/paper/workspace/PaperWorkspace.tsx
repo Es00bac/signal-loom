@@ -4121,6 +4121,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           showFindChange={isPanelVisible(PAPER_DOCKABLE_PANEL_IDS.findChange, { treatCollapsedAsShown: false })}
           onToggleGrid={() => togglePaperViewOptionFromTopStrip('showGrid', 'Grid')}
           onToggleGuides={() => togglePaperViewOptionFromTopStrip('showGuides', 'Guides')}
+          onToggleTextBaselines={() => togglePaperViewOptionFromTopStrip('showTextBaselines', 'Text baselines')}
           onToggleFrameEdges={() => togglePaperViewOptionFromTopStrip('showFrameEdges', 'Frame edges')}
           onToggleSnapToGrid={() => togglePaperSnapFromTopStrip('snapToGrid', 'snap to grid')}
           onToggleSnapToGuides={() => togglePaperSnapFromTopStrip('snapToGuides', 'snap to guides')}
@@ -4138,6 +4139,7 @@ const finalizePaperPrintUpscaleAndPackage = useCallback(async () => {
           showInspector={isPanelVisible(PAPER_DOCKABLE_PANEL_IDS.inspector)}
           showGrid={document.view.showGrid}
           showGuides={document.view.showGuides}
+          showTextBaselines={document.view.showTextBaselines}
           showFrameEdges={document.view.showFrameEdges}
           showRulers={document.view.showRulers}
           showSpreads={document.view.showSpreads}
@@ -6552,6 +6554,7 @@ export function PaperTopStrip({
   showFindChange,
   onToggleGrid,
   onToggleGuides,
+  onToggleTextBaselines,
   onToggleFrameEdges,
   onToggleSnapToGrid,
   onToggleSnapToGuides,
@@ -6566,6 +6569,7 @@ export function PaperTopStrip({
   onZoomOut,
   showGrid,
   showGuides,
+  showTextBaselines,
   showFrameEdges,
   showInspector,
   showRulers,
@@ -6611,6 +6615,7 @@ export function PaperTopStrip({
   showFindChange: boolean;
   onToggleGrid: () => void;
   onToggleGuides: () => void;
+  onToggleTextBaselines: () => void;
   onToggleFrameEdges: () => void;
   onToggleSnapToGrid: () => void;
   onToggleSnapToGuides: () => void;
@@ -6625,6 +6630,7 @@ export function PaperTopStrip({
   onZoomOut: () => void;
   showGrid: boolean;
   showGuides: boolean;
+  showTextBaselines: boolean;
   showFrameEdges: boolean;
   showInspector: boolean;
   showRulers: boolean;
@@ -6694,23 +6700,16 @@ export function PaperTopStrip({
 
   return (
     <div
+      aria-label={`Paper controls for ${docTitle}`}
       className={`flex min-w-0 items-center gap-3 ${
         isTitlebar
           ? 'h-11 w-full overflow-hidden bg-transparent'
           : 'min-h-14 justify-between bg-[#0d1725]/95 backdrop-blur'
       }`}
+      data-paper-document-title={docTitle}
       data-paper-topbar-controls="true"
       data-paper-topbar-placement={placement}
     >
-      <div className={`min-w-0 items-center gap-3 ${isTitlebar ? 'hidden shrink-0 min-[1800px]:flex' : 'flex'}`}>
-        <div className="hidden h-8 w-8 items-center justify-center rounded-lg border border-cyan-300/15 bg-cyan-400/10 text-cyan-100 md:flex">
-          <BookOpen size={16} />
-        </div>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-white">{docTitle}</div>
-          <div className="text-[11px] uppercase tracking-[0.18em] text-cyan-100/45">Paper layout and print export</div>
-        </div>
-      </div>
       <div className={`flex items-center gap-1.5 ${isTitlebar ? 'min-w-max flex-1 overflow-x-auto overflow-y-hidden pr-2 [scrollbar-width:none]' : 'min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]'}`}>
         <StripButton icon={<FilePlus2 size={13} />} label={t('paper.strip.new')} onClick={onNew} />
         <StripButton icon={<FilePlus2 size={13} />} label={t('paper.strip.page')} onClick={onAddPage} />
@@ -6918,6 +6917,7 @@ export function PaperTopStrip({
         <ToggleStripButton active={showRulers} icon={<Ruler size={13} />} label={t('paper.view.rulers')} onClick={onToggleRulers} />
         <ToggleStripButton active={showGuides} icon={<Columns3 size={13} />} label={t('paper.view.guides')} onClick={onToggleGuides} />
         <ToggleStripButton active={showGrid} icon={<Grid3X3 size={13} />} label={t('paper.view.grid')} onClick={onToggleGrid} />
+        <ToggleStripButton active={showTextBaselines} icon={<Captions size={13} />} label={t('paper.view.textBaselines')} onClick={onToggleTextBaselines} />
         <ToggleStripButton active={showFrameEdges} icon={<SquareDashed size={13} />} label={t('paper.view.frameEdges')} onClick={onToggleFrameEdges} />
         <ToggleStripButton active={snapToGuides} icon={<Magnet size={13} />} label={t('paper.view.snapGuides')} onClick={onToggleSnapToGuides} />
         <ToggleStripButton active={snapToGrid} icon={<Magnet size={13} />} label={t('paper.view.snapGrid')} onClick={onToggleSnapToGrid} />
@@ -8312,6 +8312,46 @@ function usePaperFrameContentOverset(ref: React.RefObject<HTMLElement | null>, d
   return overset;
 }
 
+/**
+ * Browser-native and active-edit text cannot expose HarfBuzz's exact line origins. Keep the global baseline
+ * switch useful for those frames by drawing their own leading rhythm inside the text box. Managed preview
+ * frames draw exact composed baselines in PaperManagedTextLayer instead. This overlay is editor-only.
+ */
+function PaperTextBaselineRhythmOverlay({ frame, zoom }: { frame: PaperFrame; zoom: number }) {
+  const textBox = resolvePaperTextBox(frame);
+  const isBubble = frame.kind === 'speechBubble' || frame.kind === 'thoughtBubble';
+  const vertical = frame.typography.writingMode === 'vertical-rl';
+  const leadingPx = Math.max(2, frame.typography.leadingPt * PT_TO_PX * zoom);
+  const fontSizePx = Math.max(1, frame.typography.fontSizePt * PT_TO_PX * zoom);
+  const insetPx = paperFrameContentPaddingPx(frame, zoom);
+  const baselineOffsetPx = Math.min(leadingPx - 0.5, Math.max(1, fontSizePx * 0.82));
+  const lineColor = 'rgba(34, 211, 238, 0.78)';
+  const style: React.CSSProperties = {
+    left: isBubble ? `${textBox.xPercent}%` : insetPx,
+    top: isBubble ? `${textBox.yPercent}%` : insetPx,
+    width: isBubble ? `${textBox.widthPercent}%` : `calc(100% - ${insetPx * 2}px)`,
+    height: isBubble ? `${textBox.heightPercent}%` : `calc(100% - ${insetPx * 2}px)`,
+    transform: isBubble && textBox.rotationDeg ? `rotate(${textBox.rotationDeg}deg)` : undefined,
+    transformOrigin: 'center',
+    backgroundImage: vertical
+      ? `repeating-linear-gradient(to left, transparent 0, transparent ${Math.max(0, leadingPx - 1)}px, ${lineColor} ${Math.max(0, leadingPx - 1)}px, ${lineColor} ${leadingPx}px)`
+      : `repeating-linear-gradient(to bottom, transparent 0, transparent ${Math.max(0, leadingPx - 1)}px, ${lineColor} ${Math.max(0, leadingPx - 1)}px, ${lineColor} ${leadingPx}px)`,
+    backgroundPosition: vertical
+      ? `${Math.max(0, fontSizePx * 0.5 - leadingPx)}px 0`
+      : `0 ${baselineOffsetPx - leadingPx}px`,
+  };
+
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute z-40 overflow-hidden"
+      data-paper-editor-overlay="text-baselines"
+      data-paper-text-baseline-mode="leading-rhythm"
+      style={style}
+    />
+  );
+}
+
 function PaperFrameView({
   canvasZIndex,
   frame,
@@ -8396,6 +8436,7 @@ function PaperFrameView({
 }) {
   const [textEditing, setTextEditing] = useState(false);
   const [textDraft, setTextDraft] = useState(frame.text ?? '');
+  const [managedTextReady, setManagedTextReady] = useState(false);
   const managedTextDocument = usePaperStore((state) => state.document);
   const sourceBins = useSourceBinStore((state) => state.bins);
   const sourceItem = useMemo(
@@ -8703,6 +8744,8 @@ function PaperFrameView({
                 document={managedTextDocument}
                 frame={frame}
                 onDoubleClick={beginTextEdit}
+                onReadyChange={setManagedTextReady}
+                showBaselines={managedTextDocument.view.showTextBaselines}
                 style={{ ...paperManagedTextLayerStyle(frame, zoom), zIndex: 45 }}
                 zoom={zoom}
               />
@@ -8730,6 +8773,8 @@ function PaperFrameView({
                 document={managedTextDocument}
                 frame={frame}
                 onDoubleClick={beginTextEdit}
+                onReadyChange={setManagedTextReady}
+                showBaselines={managedTextDocument.view.showTextBaselines}
                 style={{ ...paperManagedTextLayerStyle(frame, zoom), zIndex: 1 }}
                 zoom={zoom}
               />
@@ -8757,6 +8802,13 @@ function PaperFrameView({
           </div>
         )}
       </div>
+      {managedTextDocument.view.showTextBaselines
+        && isPaperInlineTextFrame(frame)
+        && !frame.table
+        && !frame.textArcPercent
+        && (!managedTextEligible || !managedTextReady || textEditing) ? (
+          <PaperTextBaselineRhythmOverlay frame={frame} zoom={zoom} />
+        ) : null}
       {isOverset ? (
         <div
           className="pointer-events-none absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-red-500 text-[9px] font-bold leading-none text-white shadow"

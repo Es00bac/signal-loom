@@ -37,6 +37,8 @@ export interface PaperManagedTextLayerProps {
   glyphPathFor?: (face: PaperManagedFontFace, glyphId: number, variations?: Record<string, number>) => string | undefined;
   onReadyChange?: (ready: boolean) => void;
   onDoubleClick?: MouseEventHandler<SVGSVGElement>;
+  /** Editor-only composed line guides. They are never used by Paper's export renderers. */
+  showBaselines?: boolean;
   style?: CSSProperties;
 }
 
@@ -176,6 +178,7 @@ export function PaperManagedTextLayer({
   glyphPathFor,
   onReadyChange,
   onDoubleClick,
+  showBaselines = false,
   style,
 }: PaperManagedTextLayerProps) {
   const [automatic, setAutomatic] = useState<ManagedLayerState>();
@@ -269,6 +272,37 @@ export function PaperManagedTextLayer({
       viewBox={`${bounds.xPt} ${bounds.yPt} ${bounds.widthPt} ${bounds.heightPt}`}
     >
       {composition.paragraphBoxes?.map((box, index) => <PaperManagedParagraphBox box={box} key={`paragraph-${index}`} />)}
+      {showBaselines ? (
+        <g
+          data-paper-editor-overlay="text-baselines"
+          fill="none"
+          opacity={0.8}
+          pointerEvents="none"
+          stroke="#22d3ee"
+          strokeDasharray="3 2"
+          strokeWidth={0.55}
+        >
+          {composition.lines.map((line, lineIndex) => composition.writingMode === 'vertical-rl' ? (
+            <line
+              key={`baseline-${lineIndex}`}
+              vectorEffect="non-scaling-stroke"
+              x1={line.originXPt}
+              x2={line.originXPt}
+              y1={line.layoutBounds?.yPt ?? bounds.yPt}
+              y2={(line.layoutBounds?.yPt ?? bounds.yPt) + (line.layoutBounds?.heightPt ?? bounds.heightPt)}
+            />
+          ) : (
+            <line
+              key={`baseline-${lineIndex}`}
+              vectorEffect="non-scaling-stroke"
+              x1={line.layoutBounds?.xPt ?? bounds.xPt}
+              x2={(line.layoutBounds?.xPt ?? bounds.xPt) + (line.layoutBounds?.widthPt ?? bounds.widthPt)}
+              y1={line.originYPt}
+              y2={line.originYPt}
+            />
+          ))}
+        </g>
+      ) : null}
       {composition.lines.flatMap((line, lineIndex) => line.runs.map((run, runIndex) => (
         <PaperManagedGlyphRun key={`${lineIndex}-${runIndex}`} pathFor={pathFor} run={run} />
       )))}

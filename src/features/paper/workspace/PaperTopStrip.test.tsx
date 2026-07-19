@@ -48,6 +48,7 @@ describe('PaperTopStrip titlebar placement', () => {
         showFindChange={false}
         onToggleGrid={noop}
         onToggleGuides={noop}
+        onToggleTextBaselines={noop}
         onToggleFrameEdges={noop}
         onToggleSnapToGrid={noop}
         onToggleSnapToGuides={noop}
@@ -69,6 +70,7 @@ describe('PaperTopStrip titlebar placement', () => {
         showGrid={false}
         showFrameEdges={false}
         showGuides
+        showTextBaselines={false}
         showInspector
         showRulers
         showSpreads
@@ -83,7 +85,8 @@ describe('PaperTopStrip titlebar placement', () => {
 
     expect(html).toContain('data-paper-topbar-controls="true"');
     expect(html).toContain('data-paper-topbar-placement="titlebar"');
-    expect(html).toContain('Chronicle');
+    expect(html).toContain('data-paper-document-title="Chronicle"');
+    expect(html).not.toContain('Paper layout and print export');
     expect(html).toContain('PDF');
     expect(html).toContain('KDP');
     expect(html).toContain('Web PNG');
@@ -93,6 +96,7 @@ describe('PaperTopStrip titlebar placement', () => {
     expect(html).toContain('Preflight found 3 warnings');
     expect(html).toContain('Snap Guides');
     expect(html).toContain('Snap Grid');
+    expect(html).toContain('Text baselines');
     expect(html).toContain('overflow-x-auto');
     expect(html).toContain('min-w-max');
     expect(html).toContain('shrink-0');
@@ -129,6 +133,7 @@ describe('PaperTopStrip titlebar placement', () => {
         showFindChange={false}
         onToggleGrid={noop}
         onToggleGuides={noop}
+        onToggleTextBaselines={noop}
         onToggleFrameEdges={noop}
         onToggleSnapToGrid={noop}
         onToggleSnapToGuides={noop}
@@ -150,6 +155,7 @@ describe('PaperTopStrip titlebar placement', () => {
         showGrid={false}
         showFrameEdges={false}
         showGuides
+        showTextBaselines
         showInspector
         showRulers
         showSpreads

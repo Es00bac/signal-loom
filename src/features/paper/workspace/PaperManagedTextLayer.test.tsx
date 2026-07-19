@@ -138,4 +138,29 @@ describe('PaperManagedTextLayer', () => {
     expect(host.textContent).toBe('');
     expect(variations).toEqual([{ opsz: 18 }]);
   });
+
+  it('draws exact composed line origins only when the editor baseline overlay is enabled', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+
+    await act(async () => {
+      root.render(
+        <PaperManagedTextLayer
+          composition={composition()}
+          glyphPathFor={() => 'M0 0 L1000 0 L1000 1000 Z'}
+          showBaselines
+          zoom={1}
+        />,
+      );
+    });
+
+    const overlay = host.querySelector('[data-paper-editor-overlay="text-baselines"]');
+    expect(overlay).not.toBeNull();
+    const baseline = overlay?.querySelector('line');
+    expect(baseline?.getAttribute('y1')).toBe('10');
+    expect(baseline?.getAttribute('y2')).toBe('10');
+  });
 });

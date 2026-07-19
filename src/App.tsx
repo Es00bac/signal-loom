@@ -244,6 +244,7 @@ import { useImageEditorStore } from './store/imageEditorStore';
 import { saveImageDocumentAsSlimg, openSlimgDocument } from './components/ImageEditor/ImageSlimgCodec';
 import { classifyOpenedFile } from './lib/signalLoomFileRouting';
 import { usePaperStore } from './store/paperStore';
+import { buildWorkspaceWindowTitle } from './lib/workspaceWindowTitle';
 import { openStandaloneSlpprDocument } from './lib/paperStandaloneDocumentOpen';
 import { applySlimgFileUpdateToLocalFlow, openLinkedImageDocumentFromItem } from './lib/imageLinkedEdit';
 import { useDockablePanelStore } from './store/dockablePanelStore';
@@ -407,10 +408,11 @@ function FlowApp() {
   const refreshCatalogs = useCatalogStore((state) => state.refreshCatalogs);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
   const licenseIsCommercial = useSettingsStore((state) => state.license.licensed);
-  // Edition in the title bar (licensing spec Part 2 §3). Licensed builds keep the clean title.
+  const activePaperDocumentTitle = usePaperStore((state) => state.document.title);
+  // Paper owns the native titlebar's document identity; other workspaces retain the edition title.
   useEffect(() => {
-    document.title = licenseIsCommercial ? 'Sloom Studio' : 'Sloom Studio — Community';
-  }, [licenseIsCommercial]);
+    document.title = buildWorkspaceWindowTitle(workspaceView, activePaperDocumentTitle, licenseIsCommercial);
+  }, [activePaperDocumentTitle, licenseIsCommercial, workspaceView]);
   // AUD-015: a license removal/activation/import in another window rehydrates and re-verifies
   // this renderer too, so every window fail-closes — or unlocks — together.
   useEffect(() => installLicenseCrossWindowSync(), []);

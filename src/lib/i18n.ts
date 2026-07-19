@@ -977,6 +977,7 @@ export const MESSAGES = {
   'paper.view.rulers': { en: 'Rulers', ja: 'ルーラー' },
   'paper.view.guides': { en: 'Guides', ja: 'ガイド' },
   'paper.view.grid': { en: 'Grid', ja: 'グリッド' },
+  'paper.view.textBaselines': { en: 'Text baselines', ja: 'テキスト基線' },
   'paper.view.frameEdges': { en: 'Frame edges', ja: 'フレーム枠' },
   'paper.view.spreads': { en: 'Spreads', ja: '見開き' },
   'paper.view.startOnRight': { en: 'Start R', ja: '右起点' },

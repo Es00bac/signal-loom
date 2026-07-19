@@ -518,6 +518,9 @@ export interface PaperDocument {
     showGrid: boolean;
     showBaselineGrid: boolean;
     showGuides: boolean;
+    /** Non-printing line baselines for every text-bearing frame. Exact managed compositions expose their
+     * composed baselines; browser/editing previews use the frame's own leading rhythm. */
+    showTextBaselines: boolean;
     /** Light, non-printing frame outlines shown only in the editor (like guides/grid) so borderless frames
      * stay easy to see and grab. Never drawn in print/PDF/flatten export. */
     showFrameEdges: boolean;

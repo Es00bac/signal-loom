@@ -47,4 +47,16 @@ describe('FlowSourceBinSidebar production dialog wiring', () => {
     expect(catalog).toContain('Source Library storage needs attention');
     expect(catalog).toContain('復旧用コピー');
   });
+
+  it('uses one compact functional header instead of repeating a title and explanatory paragraph', () => {
+    const source = readFileSync(new URL('./FlowSourceBinSidebar.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('data-source-bin-compact-header="true"');
+    expect(source).not.toContain("t('sourceBin.saved.eyebrow')");
+    expect(source).not.toContain("t('sourceBin.saved.title')");
+    expect(source).not.toContain("t('sourceBin.saved.desc')");
+    expect(source).toContain(`aria-label={t('sourceBin.newBin')}`);
+    expect(source).toContain(`aria-label={t('sourceBin.collapseAll')}`);
+    expect(source).toContain(`aria-label={t('sourceBin.expandAll')}`);
+  });
 });

@@ -488,24 +488,80 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
 
       {sidebarPresentation.contentOpen ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="border-b border-gray-700/60 px-4 py-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-blue-200/80">
-                  {isSourceLibraryMode ? t('sourceBin.saved.eyebrow') : t('sourceBin.generated.eyebrow')}
-                </div>
-                <div className="mt-1 text-base font-semibold text-white">
-                  {isSourceLibraryMode ? t('sourceBin.saved.title') : t('sourceBin.generated.title')}
-                </div>
+          <div className="border-b border-gray-700/60 px-2 py-2">
+            <div className="flex h-7 min-w-0 items-center gap-1" data-source-bin-compact-header="true">
+              <div className="flex min-w-0 flex-1 items-center overflow-hidden rounded-md border border-gray-700/60 bg-[#0d131d] p-0.5" role="tablist">
+                <button
+                  aria-selected={isSourceLibraryMode}
+                  className={`min-w-0 flex-1 truncate rounded px-1.5 py-1 text-[10px] font-semibold leading-none transition-colors ${
+                    isSourceLibraryMode ? 'bg-blue-200/15 text-blue-100' : 'text-gray-400 hover:text-white'
+                  }`}
+                  onClick={() => setSidebarMode('source-library')}
+                  role="tab"
+                  title={t('sourceBin.tab.library')}
+                  type="button"
+                >
+                  {t('sourceBin.tab.library')}
+                </button>
+                <button
+                  aria-selected={isGeneratedPoolMode}
+                  className={`min-w-0 flex-1 truncate rounded px-1.5 py-1 text-[10px] font-semibold leading-none transition-colors ${
+                    isGeneratedPoolMode ? 'bg-blue-200/15 text-blue-100' : 'text-gray-400 hover:text-white'
+                  }`}
+                  onClick={() => setSidebarMode('generated-pool')}
+                  role="tab"
+                  title={t('sourceBin.tab.generated')}
+                  type="button"
+                >
+                  {t('sourceBin.tab.generated')}
+                </button>
               </div>
-              <div className="rounded-full border border-gray-700/60 bg-[#111217]/60 px-3 py-1 text-xs text-gray-300">
-                {locale === 'ja'
+              <div
+                aria-label={locale === 'ja'
                   ? tf('sourceBin.itemCount', { count: currentModeVisibleCount })
                   : `${currentModeVisibleCount} item${currentModeVisibleCount === 1 ? '' : 's'}`}
+                className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded border border-gray-700/60 bg-[#111217]/60 px-1.5 text-[10px] font-semibold tabular-nums text-gray-300"
+                title={locale === 'ja'
+                  ? tf('sourceBin.itemCount', { count: currentModeVisibleCount })
+                  : `${currentModeVisibleCount} item${currentModeVisibleCount === 1 ? '' : 's'}`}
+              >
+                {currentModeVisibleCount}
               </div>
-            </div>
-            <div className="mt-2 text-xs leading-5 text-gray-400">
-              {isSourceLibraryMode ? t('sourceBin.saved.desc') : t('sourceBin.generated.desc')}
+              {isSourceLibraryMode ? (
+                <>
+                  <button
+                    aria-label={t('sourceBin.newBin')}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-700/60 bg-[#0f131b] text-gray-300 hover:border-gray-500 hover:text-white"
+                    onClick={handleCreateBin}
+                    title={t('sourceBin.newBin')}
+                    type="button"
+                  >
+                    <Plus size={12} />
+                  </button>
+                  {allItems.length > 0 ? (
+                    <>
+                      <button
+                        aria-label={t('sourceBin.collapseAll')}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-700/60 bg-[#0f131b] text-gray-300 hover:border-gray-500 hover:text-white"
+                        onClick={() => setAllItemsCollapsed(true)}
+                        title={t('sourceBin.collapseAll')}
+                        type="button"
+                      >
+                        <ChevronRight size={12} />
+                      </button>
+                      <button
+                        aria-label={t('sourceBin.expandAll')}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-gray-700/60 bg-[#0f131b] text-gray-300 hover:border-gray-500 hover:text-white"
+                        onClick={() => setAllItemsCollapsed(false)}
+                        title={t('sourceBin.expandAll')}
+                        type="button"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
             </div>
             {isSourceLibraryMode && durabilityStatus.state === 'degraded' ? (
               <div className="mt-3 rounded-lg border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
@@ -546,31 +602,7 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                 </div>
               </div>
             ) : null}
-            <div className="mt-2 flex items-center gap-2">
-              <button
-                className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
-                  isSourceLibraryMode
-                    ? 'border-blue-200/60 bg-blue-200/15 text-blue-100'
-                    : 'border-gray-700/70 bg-[#0d131d] text-gray-300 hover:text-white'
-                }`}
-                onClick={() => setSidebarMode('source-library')}
-                type="button"
-              >
-                {t('sourceBin.tab.library')}
-              </button>
-              <button
-                className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
-                  isGeneratedPoolMode
-                    ? 'border-blue-200/60 bg-blue-200/15 text-blue-100'
-                    : 'border-gray-700/70 bg-[#0d131d] text-gray-300 hover:text-white'
-                }`}
-                onClick={() => setSidebarMode('generated-pool')}
-                type="button"
-              >
-                {t('sourceBin.tab.generated')}
-              </button>
-            </div>
-            <label className="mt-3 flex items-center gap-2 rounded-md border border-gray-700/60 bg-[#0b1018] px-2.5 py-2 text-xs text-gray-300 focus-within:border-blue-300/60">
+            <label className="mt-2 flex items-center gap-2 rounded-md border border-gray-700/60 bg-[#0b1018] px-2 py-1.5 text-xs text-gray-300 focus-within:border-blue-300/60">
               <Search size={14} className="shrink-0 text-blue-200/70" />
               <input
                 aria-label={isSourceLibraryMode ? t('sourceBin.search.libraryAria') : t('sourceBin.search.generatedAria')}
@@ -598,26 +630,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                 })}
               </div>
             ) : null}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {isSourceLibraryMode ? (
-                <>
-                  <button
-                    className="inline-flex items-center gap-2 rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-xs font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-                    onClick={handleCreateBin}
-                    type="button"
-                  >
-                    <Plus size={12} />
-                    {t('sourceBin.newBin')}
-                  </button>
-                  {allItems.length > 0 ? (
-                    <>
-                      <SourceBinActionChip icon={<ChevronRight size={12} />} label={t('sourceBin.collapseAll')} onClick={() => setAllItemsCollapsed(true)} />
-                      <SourceBinActionChip icon={<ChevronDown size={12} />} label={t('sourceBin.expandAll')} onClick={() => setAllItemsCollapsed(false)} />
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                <>
+            {isGeneratedPoolMode ? (
+              <div className="mt-2 flex flex-wrap gap-1">
                   <GeneratedPoolFilterButton
                     active={generatedPoolKindFilter === 'all'}
                     count={generatedPoolCounts.all}
@@ -646,9 +660,8 @@ export function FlowSourceBinSidebar({ dockable = false, embeddedDrawer = false,
                     label={t('sourceBin.filter.audio')}
                     onClick={() => setGeneratedPoolKindFilter('audio')}
                   />
-                </>
-              )}
-            </div>
+              </div>
+            ) : null}
             <input
               accept={accept}
               className="hidden"
@@ -1363,19 +1376,6 @@ function MiniImportChip({ label, onClick }: { label: string; onClick: () => void
   );
 }
 
-function SourceBinActionChip({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      className="inline-flex items-center gap-2 rounded-xl border border-gray-700/60 bg-[#0f131b] px-3 py-2 text-xs font-semibold text-gray-200 transition-colors hover:border-gray-500 hover:text-white"
-      onClick={onClick}
-      type="button"
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
 function GeneratedPoolFilterButton({
   active,
   count,
@@ -1391,7 +1391,7 @@ function GeneratedPoolFilterButton({
 }) {
   return (
     <button
-      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors ${
+      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold transition-colors ${
         active
           ? 'border-blue-300/65 bg-blue-300/20 text-blue-100'
           : 'border-gray-700/60 bg-[#0f131b] text-gray-300 hover:border-gray-500 hover:text-white'
