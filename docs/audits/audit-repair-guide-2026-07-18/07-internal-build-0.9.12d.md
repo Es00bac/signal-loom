@@ -117,6 +117,39 @@ on-canvas bounds approximately 28 × 33 pixels versus 8 × 11 pixels. No Paper a
 The implementation and permanent regression evidence are in commit `fdb07b1d`. This is another
 post-audit runtime correction and does not change the 79-finding audit count.
 
+## Completed Paper editor/export WYSIWYG convergence
+
+The complete 16-page origin zine then served as a realistic editor/export proof for the installed
+`0.9.12d` application. It exposed layout decisions that could still differ between Paper's managed
+HarfBuzz composition and the browser layout used by print and raster export even though the text,
+font bytes, and document data were correct. Eight integrated follow-up commits brought those paths
+into agreement:
+
+- frame-level drop caps now mean story-opening caps, appear once in a threaded story, and release
+  the narrowed float lane according to the cap's rendered height and authored leading;
+- complete words move to the next legal line, and contextual HarfBuzz shaping—not isolated
+  grapheme advances—determines whether a candidate line fits;
+- authored balanced display lines and balanced columns retain their intended line and column
+  distribution;
+- automatic optical sizing follows rendered size, including enlarged drop caps, while variable
+  face descriptors map to the appropriate `wght`, `wdth`, `ital`, and `slnt` axes unless an explicit
+  variation overrides them;
+- rich paragraphs retain the same leading in editing and export, and authored newline characters
+  create zero-width hard breaks rather than missing-glyph requests; and
+- ruby, emphasis marks, and vertical tate-chu-yoko use the same authenticated managed-font browser
+  DOM layout in the editor preview and export, while ordinary text remains on the managed HarfBuzz
+  route.
+
+The user-visible expectation is that opening caps, word wrapping, headline and column balance,
+paragraph positions, deliberate line breaks, variable-font weight/posture/optical size, and Japanese
+inline annotations now make the same relevant layout decisions in the editor and Sloom's browser
+print/raster output. This is layout convergence, not a claim of pixel identity across every
+operating system, external PDF viewer, printer, RIP, or press.
+
+The individual corrections, expected behavior, test coverage, and intentional renderer boundary are
+documented in [08-paper-editor-export-wysiwyg-follow-up.md](08-paper-editor-export-wysiwyg-follow-up.md).
+They are post-audit corrections and do not change the 79-finding audit count.
+
 ## Relationship to the audit count
 
 The build packages the integrated audit work, but the sale-copy change and internal letter identifier are later product/release changes. They do not create an 80th or 81st audit finding.
@@ -168,6 +201,17 @@ seven unrelated failures in older Source Library source assertions, LAN Image ho
 preflight fixtures with conflicting synthetic asset metadata, one Flow-store isolation case, and
 the previously recorded provider smoke timeout. None of those failures imports or exercises the
 four files changed by `fdb07b1d`; they are recorded rather than hidden or attributed to this repair.
+
+At the final Paper WYSIWYG tip, the six directly affected suites passed as **6 test files and 132
+tests**: `paperTextComposition`, `paperDocument`, `paperRichTextDom`, `paperJapaneseText`,
+`PaperManagedTextLayer`, and `paperPageFlattenExport`. TypeScript, targeted lint (with only the
+pre-existing `PaperWorkspace` warnings), `git diff --check`, the 3,287-module production build, and
+the font-package checks for 116 families, 430 faces, and 546 payload files also passed. The
+all-16-page editor/export proof exercised the complete origin zine in the installed `0.9.12d` build
+and covered the repaired layout decisions. Its paired page captures and final contact sheet are
+preserved in `/mnt/d/Sloom-Studio-artifacts/2026-07-18-paper-editor-export-wysiwyg/`. The eight
+integrated commits are `317bd5d9`, `f459662a`, `02ef1460`, `30a26fda`, `760f9860`, `91656e37`,
+`f23b7ab5`, and `f2486722`.
 
 One provider-telemetry case in the older general `appSmoke` file continued to time out in its mocked
 request path, including when run alone with a longer timeout. It is outside the startup, project,
