@@ -109,7 +109,11 @@ import {
 import { buildPaperBookletProofHtmlExportRequest, buildPaperBookletProofPdfExportRequest, buildPaperReaderSpreadHtmlExportRequest, buildPaperReaderSpreadPdfExportRequest } from '../../../lib/paperPdfExport';
 import { buildPaperPackageExport } from '../../../lib/paperPackageExport';
 import { createPaperLinkedSourceIdentityGuard } from '../../../lib/paperPlacedDocumentRasterization';
-import { paperEmphasisMarkToCss, tokenizePaperInlineText } from '../../../lib/paperJapaneseText';
+import {
+  paperEmphasisMarkToCss,
+  paperInlineTextUsesBrowserNativeLayout,
+  tokenizePaperInlineText,
+} from '../../../lib/paperJapaneseText';
 import { useI18n } from '../../../lib/useI18n';
 import { translate, type MessageKey } from '../../../lib/i18n';
 import {
@@ -8534,11 +8538,25 @@ function PaperFrameView({
   const hasBrowserOnlyTextPaint = Boolean(
     (frame.textStrokeWidthMm ?? 0) > 0 && frame.textStrokeColor,
   ) || Boolean(frame.textShadowColor);
+  const inlineLayoutSource = (displayRichText ?? frame.richText)
+    ?.map((paragraph) => paragraph.runs.map((run) => run.text).join(''))
+    .join('\n')
+    ?? displayText
+    ?? frame.text
+    ?? '';
+  const usesBrowserNativeInlineLayout = paperInlineTextUsesBrowserNativeLayout(
+    inlineLayoutSource,
+    frame.typography.writingMode === 'vertical-rl',
+  );
   const managedTextEligible = editableTextFrame
     && !textEditing
     && !isThreadContinuation
     && !frame.textArcPercent
     && !hasBrowserOnlyTextPaint
+    // Print/raster export also uses native CSS for ruby, text-emphasis, and tate-chu-yoko. Keeping the exact
+    // managed-font DOM preview visible for these annotations preserves CSS reading distribution and line-box
+    // expansion instead of showing a centered, overlapping HarfBuzz approximation on the canvas.
+    && !usesBrowserNativeInlineLayout
     && (displayText === undefined || displayText === (frame.text ?? ''));
 
   const beginTextEdit = (event: React.MouseEvent<Element>) => {

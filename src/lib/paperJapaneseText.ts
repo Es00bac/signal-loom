@@ -111,6 +111,16 @@ export function tokenizePaperInlineText(text: string, vertical: boolean): PaperI
 }
 
 /**
+ * Browser-native inline annotations own geometry that HarfBuzz glyph positioning alone cannot reproduce:
+ * ruby distributes a reading across its base and expands the CSS line box, while text-emphasis and TCY also
+ * participate in browser line layout. The editor routes these frames through the same authenticated-font DOM
+ * layout used by print/raster export so their canvas preview is genuinely WYSIWYG.
+ */
+export function paperInlineTextUsesBrowserNativeLayout(text: string, vertical: boolean): boolean {
+  return tokenizePaperInlineText(text, vertical).some((token) => token.type !== 'text');
+}
+
+/**
  * Offset-preserving counterpart to {@link tokenizePaperInlineText}. Composition uses this so ruby/emphasis
  * annotations remain tied to authored source offsets instead of losing caret/export identity during parsing.
  */

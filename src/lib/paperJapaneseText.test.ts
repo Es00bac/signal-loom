@@ -10,6 +10,7 @@ import {
   canBreakPaperJapaneseBefore,
   paperEmphasisMarkToCss,
   paperInlineTextToHtml,
+  paperInlineTextUsesBrowserNativeLayout,
   tokenizePaperInlineText,
   tokenizePaperInlineTextWithOffsets,
 } from './paperJapaneseText';
@@ -49,6 +50,13 @@ describe('tokenizePaperInlineText', () => {
 
   it('returns a single text token for plain strings (fast path)', () => {
     expect(tokenizePaperInlineText('ふつうの文章', false)).toEqual([{ type: 'text', text: 'ふつうの文章' }]);
+  });
+
+  it('identifies inline annotations that must share browser layout with export', () => {
+    expect(paperInlineTextUsesBrowserNativeLayout('日本語《にほんご》', false)).toBe(true);
+    expect(paperInlineTextUsesBrowserNativeLayout('《《強調》》', false)).toBe(true);
+    expect(paperInlineTextUsesBrowserNativeLayout('第12巻', true)).toBe(true);
+    expect(paperInlineTextUsesBrowserNativeLayout('Plain managed text', false)).toBe(false);
   });
 
   it('parses narou-style 《《…》》 as an emphasis (圏点) token', () => {
